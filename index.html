@@ -1,0 +1,99 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1" />
+
+<title>rendeer.js</title>
+	<link type="text/css" rel="stylesheet" media="all" href="https://github.com/assets/github-c066013be20516a6aae45467044fa109f18bd0c6.css">
+	<link type="text/css" rel="stylesheet" media="all" href="https://github.com/assets/github2-97081caeb5890bc349a9ff52de33ac5ba1a4b6cc.css">
+	<link type="text/css" rel="stylesheet" media="all" href="https://github.com/assets/styleguide-4a2ef42768c9e616cf8022dec2fe99290430ac2c.css">
+	<link rel="stylesheet" type="text/css" href="style.css" />
+	<style type='text/css'>
+	</style>
+</head>
+<body>
+
+<div id="wrap">
+	<div id="main">
+		<div id="content" class="markdown-body">
+			<h1>rendeer.js</h1>
+			<p>rendeer.js is a lightweight scene graph library, meant to be used in web games. It is meant to be flexible and easy to tweak.</p>
+			<p>Some of the main features are:</p>
+			<ul>
+				<li>Do not generate garbage.</li>
+				<li>Scene graph easy to use.</li>
+			</ul>
+
+			<a name="download"></a>
+			<h2>Download</h2>
+			<p>You can download the full source code from <a href="https://github.com/jagenjo/rendeer.js">GitHub</a>, or use just the library using this link <a href="http://tamats.com/projects/rendeer.js/build/rendeer.js">rendeer.js</a> (<a href="http://tamats.com/projects/rendeer.js/build/rendeer.min.js">compressed version</a>)</p>
+			
+			<a name="usage"></a>
+			<h2>Usage</h2>
+
+			<p>Include the script</p>
+			<pre>&lt;script src="js/rendeer.js"&gt;&lt;/script&gt;</pre>
+
+			<p>Create the scene</p>
+			<pre>var scene = new RD.Stage();</pre>
+
+			<p>Create the renderer</p>
+			<pre>var renderer = new RD.Renderer(window.innerWidth, window.innerHeight);</pre>
+
+			<p>Attach to DOM</p>
+			<pre>document.body.appendChild(renderer.canvas);</pre>
+
+			<p>Get user input</p>
+			<pre>gl.captureMouse();
+renderer.context.onmousedown = function(e) { ... }
+renderer.context.onmousemove = function(e) { ... }
+
+gl.captureKeys();
+renderer.context.onkey = function(e) { ... }
+</pre>
+
+			<p>Create camera</p>
+			<pre>var camera = new RD.Camera();
+camera.perspective( 45, gl.canvas.width / gl.canvas.height, 1, 1000 );
+camera.lookAt( [100,100,100],[0,0,0],[0,1,0] );
+</pre>
+
+			<p>Add scene node</p>
+			<pre>var box = new RD.SceneNode();
+box.color = [1,0,0,1];
+box.mesh = "cube";
+box.position = [0,0,0];
+box.scale([10,10,10]);
+stage.addChild(box);
+</pre>
+
+			<p>Create main loop</p>
+			<pre>requestAnimationFrame(animate);
+function animate() {
+	requestAnimationFrame( animate );
+
+	last = now;
+	now = getTime();
+	var dt = (now - last) * 0.001;
+	renderer.render(stage, camera);
+	stage.update(dt);
+}
+</pre>
+
+			<a name="examples"></a>
+			<h2>Examples</h2>
+			<ul>
+			</ul>
+
+			<a name="doc"></a>
+			<h2>Documentation</h2>
+			<p><a href="doc">Click here to read the documentation</a>, it is automatically generated using yui, and can be located in the doc folder.</p>
+			<p>Check also the <a href="http://glmatrix.net/docs/2.2.0/symbols/vec3.html">gl-matrix documentation</a> to a better understanding of how to operate with matrices and vectors.</p>
+
+		</div>
+	</div>
+</div>
+
+</body>
+</html>
+
