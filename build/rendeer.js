@@ -336,6 +336,12 @@ SceneNode.prototype.getLocalVector = function(v, result)
 	return vec3.transformQuat( result, v, this._rotation );
 }
 
+SceneNode.prototype.getGlobalPosition = function(result)
+{
+	result = result || vec3.create();
+	var m = this.getGlobalMatrix();
+	return vec3.transformMat4(result, result, m );
+}
 
 SceneNode.prototype.getGlobalPoint = function(v, result)
 {
@@ -376,6 +382,118 @@ SceneNode.prototype.propagate = function(method, params)
 		node.propagate(method, params);
 	}
 }
+
+
+function ParticleEmissor() 
+{
+	this._ctor();
+	this.particles = [];
+	this.max_particles = 1000;
+	this.draw_range = [0,this.max_particles*3];
+	this.shader = "particles";
+	this.texture = "white";
+	
+	this.primitive = gl.POINTS;
+	this._vertices = new Float32Array( this.max_particles * 3 );
+	
+	this._mesh = GL.Mesh();
+	this._vertices_buffer = this._mesh.createVertexBuffer("vertices", null, 3, this._vertices, gl.DYNAMIC_DRAW );
+	
+	this.particles_per_second = 10;
+	this.particles_life = 5;
+	
+	this._accumulated_time = 0;
+}
+
+global.ParticleEmissor = RD.ParticleEmissor = ParticleEmissor;
+
+ParticleEmissor.prototype.update = function(dt)
+{
+	var l = this.particles.length;
+	if(!l)
+		return;
+	
+	//update every particle alive (remove the dead ones)
+	var alive = [];
+	for(var i = 0; i < l; i++)
+	{
+		var p = this.particles[i];
+		vec3.scaleAndAdd( p.pos, p.pos, p.vel, dt );
+		if(p.ttl > 0)
+			alive.push(p);
+	}
+	this.particles = alive;
+
+	//Create new ones	
+	var pos = this.getGlobalPosition();
+	var vel = [0,1,0];
+	var life = this.particles_life;
+	
+	if(this.particles_per_second > 0)
+	{
+		var particles_to_create = this.particles_per_second * (dt + this._accumulated_time);
+		this._accumulated_time = (particles_to_create - Math.floor( particles_to_create )) / this.particles_per_second;
+		for(var i = 0; i < particles_to_create; i++)
+			this.particles.push({pos: vec3.clone(pos), vel: vec3.clone(vel), ttl: life});
+	}
+}
+
+ParticleEmissor.prototype.render = function(renderer, camera )
+{
+	this.updateVertices();
+	this._vertices_buffer.uploadRange(0, this.particles.length * 3 * 4); //4 bytes per float
+	
+	var shader = gl.shaders["particles"];
+	if(!shader)
+		gl.shaders["particles"] = new GL.Shader(ParticleEmissor._vertex_shader, ParticleEmissor._pixel_shader);
+	
+	this.range[1] = this.particles.length;
+	Renderer.prototype.renderNode( this, renderer, camera );
+}
+
+ParticleEmissor.prototype.updateVertices = function(mesh)
+{
+	//update mesh
+	var l = this.particles.length;
+	if(!l)
+		return;
+	var vertices = this._vertices;
+	var pos = 0;
+	for(var i = 0; i < l; i++)
+	{
+		var p = this.particles[i];
+		vertices.set( p.pos, pos );
+		pos+=3;
+	}
+}
+
+ParticleEmissor._vertex_shader = '\
+			precision highp float;\
+			attribute vec3 a_vertex;\
+			attribute vec3 a_normal;\
+			attribute vec2 a_coord;\
+			varying vec2 v_coord;\
+			varying vec3 v_normal;\
+			uniform mat4 u_mvp;\
+			uniform mat4 u_model;\
+			void main() {\n\
+				v_coord = a_coord;\n\
+				v_normal = (u_model * vec4(a_normal,0.0)).xyz;\n\
+				gl_Position = u_mvp * vec4(a_vertex,1.0);\n\
+				gl_PointSize = 50.0;\n\
+			}\
+			';
+ParticleEmissor._pixel_shader = '\
+			precision highp float;\
+			varying vec3 v_normal;\
+			varying vec2 v_coord;\
+			uniform vec4 u_color;\
+			uniform sampler2D u_texture;\
+			void main() {\
+			  vec3 N = normalize(v_normal);\
+			  gl_FragColor = u_color * texture2D( u_texture, gl_PointCoord );\
+			}\
+		';
 
 
 
@@ -564,7 +682,11 @@ Renderer.prototype.renderNode = function(node, camera)
 	
 	shader.uniforms( this._uniforms );
 	shader.uniforms( node._uniforms );
-	shader.draw( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive);
+	
+	if(this.draw_range)
+		shader.drawRange( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, this.draw_range[0], this.draw_range[1] );
+	else
+		shader.draw( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive);
 
 	if( node.flags.flip_normals ) gl.frontFace( gl.CCW );
 	if( node.flags.depth_test === false ) gl.enable( gl.DEPTH_TEST );

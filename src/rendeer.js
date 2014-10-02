@@ -1,3 +1,4 @@
+//packer version
 //Rendeer.js lightweight scene container by Javi Agenjo (javi.agenjo@gmail.com) 2014
 
 //main namespace
@@ -33,6 +34,8 @@ SceneNode.prototype._ctor = function()
 	this._local_matrix = mat4.create();
 	this._global_matrix = mat4.create(); //in global space
 	this._must_update_matrix = false;
+	
+	this._render_priority = 10;
 
 	//could be used for many things
 	this._color = vec4.fromValues(1,1,1,1);
@@ -335,6 +338,12 @@ SceneNode.prototype.getLocalVector = function(v, result)
 	return vec3.transformQuat( result, v, this._rotation );
 }
 
+SceneNode.prototype.getGlobalPosition = function(result)
+{
+	result = result || vec3.create();
+	var m = this.getGlobalMatrix();
+	return vec3.transformMat4(result, result, m );
+}
 
 SceneNode.prototype.getGlobalPoint = function(v, result)
 {
@@ -375,6 +384,168 @@ SceneNode.prototype.propagate = function(method, params)
 		node.propagate(method, params);
 	}
 }
+
+
+function ParticleEmissor()  
+{
+	this._ctor();
+	
+	this.particles = [];
+	this.draw_range = [0,this.max_particles*3];
+	this.shader = "particles";
+	this.texture = "white";
+	this.flags.blend = true;
+	this.flags.depth_write = false;
+	this._render_priority = 20;
+	
+	this.max_particles = 1000;
+	this.num_textures = 1; //atlas number of rows and columns
+
+	this.particles_size = 100;
+	this.particles_per_second = 5;
+	this.particles_life = 5;
+	this.particles_damping = 0.5;
+	this.emissor_direction = vec3.fromValues(0,1,0);
+	
+	this._uniforms = { u_pointSize: this.particle_size };
+	
+	this.primitive = gl.POINTS;
+	this._vertices = new Float32Array( this.max_particles * 3 );
+	this._extra = new Float32Array( this.max_particles * 3 );
+	
+	this._mesh = new GL.Mesh();
+	this._vertices_buffer = this._mesh.createVertexBuffer("vertices", null, 3, this._vertices, gl.DYNAMIC_DRAW );
+	this._extra_buffer = this._mesh.createVertexBuffer("extra3", null, 3, this._extra, gl.DYNAMIC_DRAW );
+
+	this._accumulated_time = 0;
+	this._last_particle_id = 0;
+}
+
+extendClass(ParticleEmissor, SceneNode);
+global.ParticleEmissor = RD.ParticleEmissor = ParticleEmissor;
+
+ParticleEmissor.prototype.update = function(dt)
+{
+	var l = this.particles.length;
+	var damping = this.particles_damping;
+	if(l)
+	{
+		//update every particle alive (remove the dead ones)
+		var alive = [];
+		for(var i = 0; i < l; i++)
+		{
+			var p = this.particles[i];
+			vec3.scaleAndAdd( p.pos, p.pos, p.vel, dt );
+			if(damping)
+				vec3.scaleAndAdd( p.vel, p.vel, p.vel, -dt * damping );
+			p.ttl -= dt;
+			if(p.ttl > 0)
+				alive.push(p);
+		}
+		this.particles = alive;
+	}
+
+	//Create new ones	
+	var pos = this.getGlobalPosition();
+	var vel = this.emissor_direction;
+	var life = this.particles_life;
+	var num_textures2 = this.num_textures * this.num_textures;
+	
+	if(this.particles_per_second > 0)
+	{
+		var particles_to_create = this.particles_per_second * (dt + this._accumulated_time);
+		this._accumulated_time = (particles_to_create - Math.floor( particles_to_create )) / this.particles_per_second;
+		particles_to_create = Math.floor( particles_to_create );
+		for(var i = 0; i < particles_to_create; i++)
+		{
+			if(this.particles.length >= this.max_particles)
+				break;
+			var vel = vec3.clone(vel);
+			vel[0] += Math.random() * 0.5;
+			vel[2] += Math.random() * 0.5;
+			this.particles.push({id: this._last_particle_id++, tex: Math.floor(Math.random() * num_textures2) / num_textures2, pos: vec3.clone(pos), vel: vel, ttl: life});
+		}
+	}
+}
+
+ParticleEmissor.prototype.render = function(renderer, camera )
+{
+	this.updateVertices();
+	this._vertices_buffer.uploadRange(0, this.particles.length * 3 * 4); //4 bytes per float
+	this._extra_buffer.uploadRange(0, this.particles.length * 3 * 4); //4 bytes per float
+	
+	var shader = gl.shaders["particles"];
+	if(!shader)
+		gl.shaders["particles"] = new GL.Shader(ParticleEmissor._vertex_shader, ParticleEmissor._pixel_shader);
+	
+	this.draw_range[1] = this.particles.length;
+	var viewport = gl.getViewport();
+	this._uniforms.u_pointSize = this.particles_size / (gl.canvas.width / viewport[2]);
+	this._uniforms.u_color = this.color;
+	this._uniforms.u_texture_info = [ 1 / this.num_textures, this.num_textures * this.num_textures ];
+	mat4.identity( renderer._model_matrix );
+	renderer._mvp_matrix.set( renderer._viewprojection_matrix );
+	renderer.renderNode( this, renderer, camera );
+}
+
+ParticleEmissor.prototype.updateVertices = function(mesh)
+{
+	//update mesh
+	var l = this.particles.length;
+	if(!l)
+		return;
+	var vertices = this._vertices;
+	var extra = this._extra;
+	var pos = 0;
+	var life = this.particles_life;
+	var num_textures2 = this.num_textures * this.num_textures;
+	for(var i = 0; i < l; i++)
+	{
+		var p = this.particles[i];
+		vertices.set( p.pos, pos );
+		extra[pos] = 1;
+		extra[pos+1] = p.ttl / life;
+		if(num_textures2 > 1)
+			extra[pos+2] = p.tex;
+		pos+=3;
+	}
+}
+
+ParticleEmissor._vertex_shader = '\
+			precision highp float;\
+			attribute vec3 a_vertex;\
+			attribute vec3 a_extra3;\
+			varying vec2 v_coord;\
+			varying vec4 v_color;\
+			uniform vec3 u_camera_position;\
+			uniform mat4 u_mvp;\
+			uniform mat4 u_model;\
+			uniform vec4 u_color;\
+			uniform float u_pointSize;\
+			uniform vec2 u_texture_info;\
+			void main() {\n\
+				v_color = u_color;\n\
+				v_color.a *= 1.0 - a_extra3.y;\n\
+				v_coord.x = (a_extra3.z * u_texture_info.y) * u_texture_info.x;\n\
+				v_coord.y = floor(v_coord.x) * u_texture_info.x;\n\
+				v_coord.x = fract(v_coord.x);\n\
+				gl_Position = u_mvp * vec4(a_vertex,1.0);\n\
+				vec3 pos = (u_model * vec4(a_vertex,1.0)).xyz;\n\
+				float dist = distance(u_camera_position,pos);\n\
+				gl_PointSize = 10.0 * u_pointSize / dist;\n\
+			}\
+			';
+ParticleEmissor._pixel_shader = '\
+			precision highp float;\
+			varying vec4 v_color;\
+			varying vec2 v_coord;\
+			uniform sampler2D u_texture;\
+			uniform vec2 u_texture_info;\
+			void main() {\
+			  vec4 color = texture2D( u_texture, v_coord + vec2(gl_PointCoord.x,1.0 - gl_PointCoord.y) * u_texture_info.x );\n\
+			  gl_FragColor = vec4( color.xyz * v_color.xyz, max(0.0, color.a - v_color.a) );\n\
+			}\
+		';
 
 
 
@@ -420,6 +591,7 @@ function Renderer(context) {
 	var gl = this.gl = this.context = context;
 	
 	this.point_size = 5;
+	this.sort_by_priority = true;
 	
 	this._view_matrix = mat4.create();
 	this._projection_matrix = mat4.create();
@@ -473,6 +645,10 @@ Renderer.prototype.render = function(scene, camera, nodes)
 	if(!nodes)
 		scene.root.getAllChildren( this._nodes );
 	nodes = nodes || this._nodes;
+	
+	//sort by priority
+	if(this.sort_by_priority)
+		nodes.sort(function(a,b) { return a._render_priority > b._render_priority; } );
 
 	//pre rendering
 	if(scene.root.preRender)
@@ -563,7 +739,11 @@ Renderer.prototype.renderNode = function(node, camera)
 	
 	shader.uniforms( this._uniforms );
 	shader.uniforms( node._uniforms );
-	shader.draw( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive);
+	
+	if(node.draw_range)
+		shader.drawRange( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.draw_range[0], node.draw_range[1] );
+	else
+		shader.draw( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive);
 
 	if( node.flags.flip_normals ) gl.frontFace( gl.CCW );
 	if( node.flags.depth_test === false ) gl.enable( gl.DEPTH_TEST );
