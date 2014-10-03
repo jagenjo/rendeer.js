@@ -230,8 +230,9 @@ SceneNode.prototype.getGlobalRotation = function(result)
 	result = result || vec3.create();
 	quat.identity(result);
 	var current = this;
+	var top = this._scene ? this._scene._root : null;
 	//while we havent reach the tree root
-	while(current != this._scene._root)
+	while(current != top)
 	{
 		quat.multiply( result, current._rotation, result );
 		current = current._parent;
@@ -386,7 +387,7 @@ SceneNode.prototype.propagate = function(method, params)
 }
 
 
-function ParticleEmissor()  
+function ParticlesEmissor()  
 {
 	this._ctor();
 	
@@ -405,9 +406,16 @@ function ParticleEmissor()
 	this.particles_per_second = 5;
 	this.particles_life = 5;
 	this.particles_damping = 0.5;
+	this.particles_acceleration = vec3.create(); //use it for gravity and stuff
+	this.particles_start_scale = 1;
+	this.particles_end_scale = 1;
 	this.emissor_direction = vec3.fromValues(0,1,0);
 	
-	this._uniforms = { u_pointSize: this.particle_size };
+	this._uniforms = {
+			u_pointSize: this.particle_size,
+			u_scaleStartEnd: vec2.fromValues(1,1),
+			u_texture_info: vec2.fromValues(1,1)
+		};
 	
 	this.primitive = gl.POINTS;
 	this._vertices = new Float32Array( this.max_particles * 3 );
@@ -421,13 +429,15 @@ function ParticleEmissor()
 	this._last_particle_id = 0;
 }
 
-extendClass(ParticleEmissor, SceneNode);
-global.ParticleEmissor = RD.ParticleEmissor = ParticleEmissor;
+extendClass(ParticlesEmissor, SceneNode);
+global.ParticlesEmissor = RD.ParticlesEmissor = ParticlesEmissor;
 
-ParticleEmissor.prototype.update = function(dt)
+ParticlesEmissor.prototype.update = function(dt)
 {
 	var l = this.particles.length;
 	var damping = this.particles_damping;
+	var acc = this.particles_acceleration;
+	var forces = vec3.length(acc);
 	if(l)
 	{
 		//update every particle alive (remove the dead ones)
@@ -436,6 +446,8 @@ ParticleEmissor.prototype.update = function(dt)
 		{
 			var p = this.particles[i];
 			vec3.scaleAndAdd( p.pos, p.pos, p.vel, dt );
+			if(forces)
+				vec3.scaleAndAdd( p.vel, p.vel, acc, dt );
 			if(damping)
 				vec3.scaleAndAdd( p.vel, p.vel, p.vel, -dt * damping );
 			p.ttl -= dt;
@@ -468,27 +480,34 @@ ParticleEmissor.prototype.update = function(dt)
 	}
 }
 
-ParticleEmissor.prototype.render = function(renderer, camera )
+ParticlesEmissor.prototype.render = function(renderer, camera )
 {
 	this.updateVertices();
 	this._vertices_buffer.uploadRange(0, this.particles.length * 3 * 4); //4 bytes per float
 	this._extra_buffer.uploadRange(0, this.particles.length * 3 * 4); //4 bytes per float
 	
-	var shader = gl.shaders["particles"];
+	var shader = gl.shaders[ this.shader ];
 	if(!shader)
-		gl.shaders["particles"] = new GL.Shader(ParticleEmissor._vertex_shader, ParticleEmissor._pixel_shader);
+	{
+		shader = gl.shaders["particles"];
+		if(!shader)
+			gl.shaders["particles"] = new GL.Shader(ParticlesEmissor._vertex_shader, ParticlesEmissor._pixel_shader);
+	}
 	
 	this.draw_range[1] = this.particles.length;
 	var viewport = gl.getViewport();
 	this._uniforms.u_pointSize = this.particles_size / (gl.canvas.width / viewport[2]);
 	this._uniforms.u_color = this.color;
-	this._uniforms.u_texture_info = [ 1 / this.num_textures, this.num_textures * this.num_textures ];
+	this._uniforms.u_texture_info[0] = 1 / this.num_textures;
+	this._uniforms.u_texture_info[1] = this.num_textures * this.num_textures;
+	this._uniforms.u_scaleStartEnd[0] = this.particles_start_scale;
+	this._uniforms.u_scaleStartEnd[1] = this.particles_end_scale;
 	mat4.identity( renderer._model_matrix );
 	renderer._mvp_matrix.set( renderer._viewprojection_matrix );
 	renderer.renderNode( this, renderer, camera );
 }
 
-ParticleEmissor.prototype.updateVertices = function(mesh)
+ParticlesEmissor.prototype.updateVertices = function(mesh)
 {
 	//update mesh
 	var l = this.particles.length;
@@ -511,39 +530,46 @@ ParticleEmissor.prototype.updateVertices = function(mesh)
 	}
 }
 
-ParticleEmissor._vertex_shader = '\
+ParticlesEmissor._vertex_shader = '\
 			precision highp float;\
 			attribute vec3 a_vertex;\
 			attribute vec3 a_extra3;\
 			varying vec2 v_coord;\
 			varying vec4 v_color;\
+			varying vec3 v_position;\
 			uniform vec3 u_camera_position;\
 			uniform mat4 u_mvp;\
 			uniform mat4 u_model;\
 			uniform vec4 u_color;\
 			uniform float u_pointSize;\
 			uniform vec2 u_texture_info;\
+			uniform vec2 u_scaleStartEnd;\
 			void main() {\n\
 				v_color = u_color;\n\
-				v_color.a *= 1.0 - a_extra3.y;\n\
+				v_color.a *= a_extra3.y;\n\
 				v_coord.x = (a_extra3.z * u_texture_info.y) * u_texture_info.x;\n\
 				v_coord.y = floor(v_coord.x) * u_texture_info.x;\n\
 				v_coord.x = fract(v_coord.x);\n\
 				gl_Position = u_mvp * vec4(a_vertex,1.0);\n\
-				vec3 pos = (u_model * vec4(a_vertex,1.0)).xyz;\n\
-				float dist = distance(u_camera_position,pos);\n\
-				gl_PointSize = 10.0 * u_pointSize / dist;\n\
+				v_position = (u_model * vec4(a_vertex,1.0)).xyz;\n\
+				float dist = distance( u_camera_position, v_position );\n\
+				gl_PointSize = mix(u_scaleStartEnd.y, u_scaleStartEnd.x, a_extra3.y) * 10.0 * u_pointSize / dist;\n\
 			}\
 			';
-ParticleEmissor._pixel_shader = '\
+ParticlesEmissor._pixel_shader = '\
 			precision highp float;\
 			varying vec4 v_color;\
 			varying vec2 v_coord;\
+			varying vec3 v_position;\
 			uniform sampler2D u_texture;\
 			uniform vec2 u_texture_info;\
 			void main() {\
 			  vec4 color = texture2D( u_texture, v_coord + vec2(gl_PointCoord.x,1.0 - gl_PointCoord.y) * u_texture_info.x );\n\
-			  gl_FragColor = vec4( color.xyz * v_color.xyz, max(0.0, color.a - v_color.a) );\n\
+			  color.xyz *= v_color.xyz;\n\
+			  #ifdef USE_PROCESS_COLOR\n\
+				USE_PROCESS_COLOR\n\
+			  #endif\n\
+			  gl_FragColor = vec4( color.xyz, color.a * v_color.a );\n\
 			}\
 		';
 
@@ -715,8 +741,11 @@ Renderer.prototype.renderNode = function(node, camera)
 		texture.bind(0);
 	
 	var shader = null;
+	var shader_name = node.shader;
 	if (node.shader)
-		shader = gl.shaders[ node.shader ];
+		shader = gl.shaders[ shader_name ];
+	if(this.shader_overwrite)
+		shader = gl.shaders[this.shader_overwrite];
 	if (!shader)
 		shader = texture ? this._texture_shader : this._flat_shader;
 		
@@ -840,10 +869,12 @@ Camera.prototype.perspective = function(fov, aspect, near, far)
 	this._must_update_matrix = true;
 }
 
-Camera.prototype.ortho = function(frustum_size)
+Camera.prototype.orthographic = function(frustum_size, near, far)
 {
 	this.type = Camera.ORTHOGRAPHIC;
 	this.frustum_size = frustum_size;
+	this.near = near;
+	this.far = far;
 }
 
 Camera.prototype.lookAt = function(position,target,up)
