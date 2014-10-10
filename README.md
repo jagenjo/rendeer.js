@@ -4,6 +4,15 @@ rendeer.js
 Rendeer.js is a lightweight scene graph library, meant to be used in web games. It is meant to be flexible and easy to tweak.
 It used the library [https://github.com/jagenjo/litegl.js](litegl.js) as a low level layer for WebGL.
 
+It comes with some common useful classes like:
+
+* Scene and SceneNode
+* Camera
+* Renderer
+* ParticleEmissor
+
+And because it uses litegl you have all the basic ones (Mesh, Shader and Texture).
+
 Usage
 -----
 

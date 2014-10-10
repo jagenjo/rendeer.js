@@ -6,6 +6,14 @@
 
 var RD = global.RD = {};
 
+RD.setup = function(o)
+{
+	o = o || {};
+	if(RD.configuration)
+		throw("already called setup");
+	RD.configuration = o;
+}
+
 var last_object_id = 0;
 
 
@@ -83,6 +91,12 @@ Object.defineProperty(SceneNode.prototype, 'color', {
 Object.defineProperty(SceneNode.prototype, 'opacity', {
 	get: function() { return this._color[3]; },
 	set: function(v) { this._color[3] = v; },
+	enumerable: true //avoid problems
+});
+
+Object.defineProperty(SceneNode.prototype, 'scene', {
+	get: function() { return this._scene; },
+	set: function(v) { throw("cannot set scene, add to root node"); },
 	enumerable: true //avoid problems
 });
 
@@ -190,6 +204,16 @@ SceneNode.prototype.configure = function(o)
 
 	//children
 	//...
+}
+
+SceneNode.prototype.setMesh = function(v)
+{
+	if(!v)
+		this.mesh = null;
+	else if( typeof(v) == "string" )
+		this.mesh = v;
+	else
+		this._mesh = v;
 }
 
 //transforming
@@ -583,6 +607,7 @@ function Scene()
 {
 	this._root = new SceneNode();
 	this._root._scene = this;
+	this.time = 0;
 }
 
 global.Scene = RD.Scene = Scene;
@@ -591,6 +616,7 @@ Scene.prototype.clear = function()
 {
 	this._root = new SceneNode();
 	this._root._scene = this;
+	this.time = 0;
 }
 
 Scene.prototype.getNodeById = function(id)
@@ -600,6 +626,7 @@ Scene.prototype.getNodeById = function(id)
 
 Scene.prototype.update = function(dt)
 {
+	this.time += dt;
 	this.root.propagate("update",[dt]);
 }
 
@@ -674,7 +701,7 @@ Renderer.prototype.render = function(scene, camera, nodes)
 	
 	//sort by priority
 	if(this.sort_by_priority)
-		nodes.sort(function(a,b) { return a._render_priority > b._render_priority; } );
+		nodes.sort(function(a,b) { return b._render_priority - a._render_priority; } );
 
 	//pre rendering
 	if(scene.root.preRender)
@@ -1284,6 +1311,60 @@ Renderer.prototype.createShaders = function()
 		');
 	gl.shaders["textured_phong"] = this._phong_shader;
 }
+
+/*
+RD.launchWorker = function(config)
+{
+	var worker = RD.worker = new Worker( config.workerPath || "rendeerWorker.js" );
+	worker.callback_ids = {};
+
+	RD.worker.addEventListener('message', function(e) {
+		if(!e.data)
+			return;
+
+		var data = e.data;
+
+		switch(data.action)
+		{
+			case "log": console.log.apply( console, data.params ); break;
+			case "error": console.error.apply( console, data.params ); break;
+			case "result": 
+				var callback = RD.callback_ids[ data.callback_id ];
+				if(callback)
+					callback( data.result );
+				break;
+			default:
+				console.warn("Unknown action:", data.action);
+				break;
+		}
+	});
+
+	this.callback_ids = {};
+	this.last_callback_id = 1;
+
+	RD.toWorker("init", [config] );
+}
+
+RD.toWorker = function( func_name, params, callback )
+{
+	if(!this.worker)
+		throw("Cannot call toWorker, you need to call RD.setup first");
+
+	var id = this.last_callback_id++;
+	this.callback_ids[ id ] = callback;
+	this.worker.postMessage({ func: func_name, params: params, callback_id: id });
+}
+
+RD.loadDAE = function(url, callback)
+{
+	RD.toWorker("loadDAE", [url], inner );
+
+	function inner(data)
+	{
+		console.log(inner);
+	}
+}
+*/
 
 
 //footer
