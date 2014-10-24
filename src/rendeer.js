@@ -47,8 +47,11 @@ SceneNode.prototype._ctor = function()
 
 	//could be used for many things
 	this._color = vec4.fromValues(1,1,1,1);
+	this._uniforms = { u_color: this._color, u_color_texture: 0 };
 	
 	this.flags = {};
+	this.mesh = null;
+	this.textures = {};
 	
 	//object inside this object
 	this.children = [];
@@ -214,6 +217,14 @@ SceneNode.prototype.setMesh = function(v)
 		this.mesh = v;
 	else
 		this._mesh = v;
+}
+
+SceneNode.prototype.setTexture = function(channel, texture)
+{
+	if(!texture)
+		this.textures[channel] = null;
+	else if( typeof(texture) == "string" )
+		this.textures[ channel ] = texture;
 }
 
 //transforming
@@ -411,19 +422,170 @@ SceneNode.prototype.propagate = function(method, params)
 }
 
 
+SceneNode.prototype.loadTextConfig = function(url, callback)
+{
+var that = this;
+    HttpRequest(url, null, function(data) {
+		var info = RD.parseTextConfig(data);
+		if(callback)
+			callback(info);
+        }, alert);
+}
+
+function PointCloud()  
+{
+	this._ctor();
+	
+	this.points = [];
+	this.max_points = 1000;
+	
+	this.draw_range = [0,this.max_points*3];
+	this.shader = "pointcloud";
+	this.textures = { color: "white" };
+	this.flags.blend = true;
+	this.flags.depth_write = false;
+	this._render_priority = 20;
+	
+	this.num_textures = 1; //atlas number of rows and columns
+
+	this.points_size = 100;
+	
+	this._uniforms = {
+			u_pointSize: this.points_size,
+			u_texture_info: vec2.fromValues(1,1)
+		};
+	
+	this.primitive = gl.POINTS;
+	this._vertices = new Float32Array( this.max_points * 3 );
+	this._extra = new Float32Array( this.max_points * 3 );
+	
+	this._mesh = new GL.Mesh();
+	this._vertices_buffer = this._mesh.createVertexBuffer("vertices", null, 3, this._vertices, gl.DYNAMIC_DRAW );
+	this._extra_buffer = this._mesh.createVertexBuffer("extra3", null, 3, this._extra, gl.DYNAMIC_DRAW );
+
+	this._accumulated_time = 0;
+	this._last_point_id = 0;
+}
+
+extendClass(PointCloud, SceneNode);
+global.PointCloud = RD.PointCloud = PointCloud;
+
+PointCloud.prototype.render = function(renderer, camera )
+{
+	if(this.points.length == 0)
+		return;
+	
+	this.updateVertices();
+	this._vertices_buffer.uploadRange(0, this.points.length * 3 * 4); //4 bytes per float
+	this._extra_buffer.uploadRange(0, this.points.length * 3 * 4); //4 bytes per float
+	
+	var shader = gl.shaders[ this.shader ];
+	if(!shader)
+	{
+		shader = gl.shaders["pointcloud"];
+		if(!shader)
+			gl.shaders["pointcloud"] = new GL.Shader( PointCloud._vertex_shader, PointCloud._pixel_shader );
+	}
+	
+	this.draw_range[1] = this.points.length;
+	var viewport = gl.getViewport();
+	this._uniforms.u_pointSize = this.points_size / (gl.canvas.width / viewport[2]);
+	this._uniforms.u_color = this.color;
+	this._uniforms.u_texture_info[0] = 1 / this.num_textures;
+	this._uniforms.u_texture_info[1] = this.num_textures * this.num_textures;
+	
+	if(this.ignore_transform)
+	{
+		mat4.identity( renderer._model_matrix );
+		renderer._mvp_matrix.set( renderer._viewprojection_matrix );
+	}
+	renderer.renderNode( this, renderer, camera );
+}
+
+PointCloud.prototype.updateVertices = function(mesh)
+{
+	//update mesh
+	var l = this.points.length;
+	if(!l)
+		return;
+	var vertices = this._vertices;
+	var extra = this._extra;
+	var pos = 0;
+	var num_textures2 = this.num_textures * this.num_textures;
+	for(var i = 0; i < l; i++)
+	{
+		var p = this.points[i];
+		vertices.set( p.pos, pos );
+		extra[pos] = 1;
+		extra[pos+1] = 1;
+		if(num_textures2 > 1)
+			extra[pos+2] = p.tex;
+		pos+=3;
+	}
+}
+
+PointCloud._vertex_shader = '\
+			precision highp float;\
+			attribute vec3 a_vertex;\
+			attribute vec3 a_extra3;\
+			varying vec2 v_coord;\
+			varying vec4 v_color;\
+			varying vec3 v_position;\
+			uniform vec3 u_camera_position;\
+			uniform mat4 u_mvp;\
+			uniform mat4 u_model;\
+			uniform vec4 u_color;\
+			uniform float u_pointSize;\
+			uniform vec2 u_texture_info;\
+			void main() {\n\
+				v_color = u_color;\n\
+				v_color.a *= a_extra3.y;\n\
+				v_coord.x = (a_extra3.z * u_texture_info.y) * u_texture_info.x;\n\
+				v_coord.y = abs(floor(v_coord.x) * u_texture_info.x);\n\
+				v_coord.x = fract(v_coord.x);\n\
+				gl_Position = u_mvp * vec4(a_vertex,1.0);\n\
+				v_position = (u_model * vec4(a_vertex,1.0)).xyz;\n\
+				float dist = distance( u_camera_position, v_position );\n\
+				gl_PointSize = 10.0 * u_pointSize / dist;\n\
+			}\
+			';
+PointCloud._pixel_shader = '\
+			precision highp float;\
+			varying vec4 v_color;\
+			varying vec2 v_coord;\
+			varying vec3 v_position;\
+			uniform sampler2D u_color_texture;\
+			uniform vec2 u_texture_info;\
+			void main() {\
+			  vec2 uv = vec2(v_coord.x + gl_PointCoord.x * u_texture_info.x, v_coord.y + (1.0 - gl_PointCoord.y) * u_texture_info.x );\n\
+			  vec4 color = texture2D( u_color_texture, uv );\n\
+			  color.xyz *= v_color.xyz;\n\
+			  #ifdef USE_PROCESS_COLOR\n\
+				USE_PROCESS_COLOR\n\
+			  #endif\n\
+			  gl_FragColor = vec4( color.xyz, color.a * v_color.a );\n\
+			}\
+		';
+
+
+
+
+//**********************
+
 function ParticlesEmissor()  
 {
 	this._ctor();
 	
 	this.particles = [];
+	this.max_particles = 1000;
+	
 	this.draw_range = [0,this.max_particles*3];
 	this.shader = "particles";
-	this.texture = "white";
+	this.textures = { color: "white" };
 	this.flags.blend = true;
 	this.flags.depth_write = false;
 	this._render_priority = 20;
 	
-	this.max_particles = 1000;
 	this.num_textures = 1; //atlas number of rows and columns
 
 	this.particles_size = 100;
@@ -506,6 +668,9 @@ ParticlesEmissor.prototype.update = function(dt)
 
 ParticlesEmissor.prototype.render = function(renderer, camera )
 {
+	if(this.particles.length == 0)
+		return;
+	
 	this.updateVertices();
 	this._vertices_buffer.uploadRange(0, this.particles.length * 3 * 4); //4 bytes per float
 	this._extra_buffer.uploadRange(0, this.particles.length * 3 * 4); //4 bytes per float
@@ -585,10 +750,10 @@ ParticlesEmissor._pixel_shader = '\
 			varying vec4 v_color;\
 			varying vec2 v_coord;\
 			varying vec3 v_position;\
-			uniform sampler2D u_texture;\
+			uniform sampler2D u_color_texture;\
 			uniform vec2 u_texture_info;\
 			void main() {\
-			  vec4 color = texture2D( u_texture, v_coord + vec2(gl_PointCoord.x,1.0 - gl_PointCoord.y) * u_texture_info.x );\n\
+			  vec4 color = texture2D( u_color_texture, v_coord + vec2(gl_PointCoord.x,1.0 - gl_PointCoord.y) * u_texture_info.x );\n\
 			  color.xyz *= v_color.xyz;\n\
 			  #ifdef USE_PROCESS_COLOR\n\
 				USE_PROCESS_COLOR\n\
@@ -756,17 +921,18 @@ Renderer.prototype.renderNode = function(node, camera)
 	if(!mesh)
 		return;
 	
-	if (!node._uniforms)
-		node._uniforms = { u_color: node._color, u_texture: 0 };
-		
-	var texture = null;
-	if(node._texture)
-		texture = node._texture;
-	else if(node.texture)
-		texture = gl.textures[ node.texture ];
-	if(texture)
-		texture.bind(0);
+	//get texture
+	var slot = 0;
+	for(var i in node.textures)
+	{
+		var texture_name = node.textures[i];
+		texture = gl.textures[ texture_name ];
+		if(!texture)
+			texture = gl.textures[ "white" ];
+		node._uniforms["u_" + i + "_texture"] = texture.bind( slot++ );
+	}
 	
+	//get shader
 	var shader = null;
 	var shader_name = node.shader;
 	if (node.shader)
@@ -774,7 +940,7 @@ Renderer.prototype.renderNode = function(node, camera)
 	if(this.shader_overwrite)
 		shader = gl.shaders[this.shader_overwrite];
 	if (!shader)
-		shader = texture ? this._texture_shader : this._flat_shader;
+		shader = slot > 0 ? this._texture_shader : this._flat_shader;
 		
 	//flags
 	gl.frontFace( node.flags.flip_normals ? gl.CW : gl.CCW );
@@ -1173,6 +1339,57 @@ function planeOverlap(plane, box)
 	else return CLIP_INSIDE;
 }
 
+
+RD.parseTextConfig = function(text)
+{
+	var lines = text.split("\n");
+	var root = { data: "", children: [] };
+	inner(root, 0);
+
+	function inner(parent, depth)
+	{
+	    var last_line = lines.shift();
+	    while (last_line)
+	    {
+		if(last_line.trim().length == 0)
+		{
+			last_line = lines.shift();
+			continue;
+		}
+		
+		var tabs = 0;
+		while( last_line[tabs] == '\t' && tabs < last_line.length )
+			tabs++;		
+		if (tabs < depth)
+		    break;
+		
+		var node = { children:[] };
+		try
+		{
+			var info = last_line.trim();
+			if(info.indexOf(":") != -1)
+				info = "{" + info + "}";
+			var func = new Function("return " + info);
+			node.data = func();
+		}
+		catch(err)
+		{
+			console.error(err);
+		}
+		
+		if (tabs >= depth)
+		{
+		    if (parent)
+			parent.children.push(node);
+		    last_line = inner(node, tabs+1);
+		}
+	    }
+	    return last_line;
+	}
+	return root;
+}
+
+
 Renderer.prototype.createShaders = function()
 {
 	this._flat_shader = new GL.Shader('\
@@ -1250,9 +1467,9 @@ Renderer.prototype.createShaders = function()
 		precision highp float;\
 		varying vec2 v_coord;\
 		uniform vec4 u_color;\
-		uniform sampler2D u_texture;\
+		uniform sampler2D u_color_texture;\
 		void main() {\
-			gl_FragColor = u_color * texture2D(u_texture, v_coord);\
+			gl_FragColor = u_color * texture2D(u_color_texture, v_coord);\
 		}\
 	');
 	gl.shaders["texture"] = this._flat_shader;	
@@ -1303,68 +1520,14 @@ Renderer.prototype.createShaders = function()
 			varying vec2 v_coord;\
 			uniform vec3 u_lightvector;\
 			uniform vec4 u_color;\
-			uniform sampler2D u_texture;\
+			uniform sampler2D u_color_texture;\
 			void main() {\
 			  vec3 N = normalize(v_normal);\
-			  gl_FragColor = u_color * texture2D(u_texture, v_coord) * max(0.0, dot(u_lightvector,N));\
+			  gl_FragColor = u_color * texture2D(u_color_texture, v_coord) * max(0.0, dot(u_lightvector,N));\
 			}\
 		');
 	gl.shaders["textured_phong"] = this._phong_shader;
 }
-
-/*
-RD.launchWorker = function(config)
-{
-	var worker = RD.worker = new Worker( config.workerPath || "rendeerWorker.js" );
-	worker.callback_ids = {};
-
-	RD.worker.addEventListener('message', function(e) {
-		if(!e.data)
-			return;
-
-		var data = e.data;
-
-		switch(data.action)
-		{
-			case "log": console.log.apply( console, data.params ); break;
-			case "error": console.error.apply( console, data.params ); break;
-			case "result": 
-				var callback = RD.callback_ids[ data.callback_id ];
-				if(callback)
-					callback( data.result );
-				break;
-			default:
-				console.warn("Unknown action:", data.action);
-				break;
-		}
-	});
-
-	this.callback_ids = {};
-	this.last_callback_id = 1;
-
-	RD.toWorker("init", [config] );
-}
-
-RD.toWorker = function( func_name, params, callback )
-{
-	if(!this.worker)
-		throw("Cannot call toWorker, you need to call RD.setup first");
-
-	var id = this.last_callback_id++;
-	this.callback_ids[ id ] = callback;
-	this.worker.postMessage({ func: func_name, params: params, callback_id: id });
-}
-
-RD.loadDAE = function(url, callback)
-{
-	RD.toWorker("loadDAE", [url], inner );
-
-	function inner(data)
-	{
-		console.log(inner);
-	}
-}
-*/
 
 
 //footer
