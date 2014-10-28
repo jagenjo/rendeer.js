@@ -2,7 +2,7 @@ rendeer.js
 =========
 
 Rendeer.js is a lightweight scene graph library, meant to be used in web games. It is meant to be flexible and easy to tweak.
-It used the library [https://github.com/jagenjo/litegl.js](litegl.js) as a low level layer for WebGL.
+It used the library [litegl.js](https://github.com/jagenjo/litegl.js) as a low level layer for WebGL.
 
 It comes with some common useful classes like:
 
@@ -12,6 +12,11 @@ It comes with some common useful classes like:
 * ParticleEmissor
 
 And because it uses litegl you have all the basic ones (Mesh, Shader and Texture).
+
+Demo
+-----
+
+Check the examples folder to see the examples, or visit [this website](https://tamats.com/projects/rendeer/examples).
 
 Usage
 -----
@@ -83,7 +88,7 @@ function animate() {
 
 Documentation
 -------------
-The doc folder contains the documentation. For info about [http://glmatrix.com](glMatrix) check the documentation in its website.
+The doc folder contains the documentation. For info about [glMatrix](http://glmatrix.com) check the documentation in its website.
 
 Utils
 -----
