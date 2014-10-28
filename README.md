@@ -16,7 +16,7 @@ And because it uses litegl you have all the basic ones (Mesh, Shader and Texture
 Demo
 -----
 
-Check the examples folder to see the examples, or visit [this website](https://tamats.com/projects/rendeer/examples).
+Check the examples folder to see the examples, or visit [this website](http://tamats.com/projects/rendeer/examples).
 
 Usage
 -----
