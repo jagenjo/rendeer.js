@@ -1,10 +1,26 @@
 //packer version
+//packer version
 //Rendeer.js lightweight scene container by Javi Agenjo (javi.agenjo@gmail.com) 2014
 
 //main namespace
 (function(global){
 
 var RD = global.RD = {};
+
+RD.ZERO = vec3.fromValues(0,0,0);
+RD.RIGHT = vec3.fromValues(1,0,0);
+RD.UP = vec3.fromValues(0,1,0);
+RD.FRONT = vec3.fromValues(0,0,1);
+RD.WHITE = vec3.fromValues(1,1,1);
+RD.BLACK = vec3.fromValues(0,0,0);
+
+RD.setup = function(o)
+{
+	o = o || {};
+	if(RD.configuration)
+		throw("already called setup");
+	RD.configuration = o;
+}
 
 var last_object_id = 0;
 
@@ -34,11 +50,16 @@ SceneNode.prototype._ctor = function()
 	this._local_matrix = mat4.create();
 	this._global_matrix = mat4.create(); //in global space
 	this._must_update_matrix = false;
+	
+	this._render_priority = 10;
 
 	//could be used for many things
 	this._color = vec4.fromValues(1,1,1,1);
+	this._uniforms = { u_color: this._color, u_color_texture: 0 };
 	
 	this.flags = {};
+	this.mesh = null;
+	this.textures = {};
 	
 	//object inside this object
 	this.children = [];
@@ -81,6 +102,12 @@ Object.defineProperty(SceneNode.prototype, 'color', {
 Object.defineProperty(SceneNode.prototype, 'opacity', {
 	get: function() { return this._color[3]; },
 	set: function(v) { this._color[3] = v; },
+	enumerable: true //avoid problems
+});
+
+Object.defineProperty(SceneNode.prototype, 'scene', {
+	get: function() { return this._scene; },
+	set: function(v) { throw("cannot set scene, add to root node"); },
 	enumerable: true //avoid problems
 });
 
@@ -190,6 +217,24 @@ SceneNode.prototype.configure = function(o)
 	//...
 }
 
+SceneNode.prototype.setMesh = function(v)
+{
+	if(!v)
+		this.mesh = null;
+	else if( typeof(v) == "string" )
+		this.mesh = v;
+	else
+		this._mesh = v;
+}
+
+SceneNode.prototype.setTexture = function(channel, texture)
+{
+	if(!texture)
+		this.textures[channel] = null;
+	else if( typeof(texture) == "string" )
+		this.textures[ channel ] = texture;
+}
+
 //transforming
 SceneNode.prototype.translate = function(v)
 {
@@ -228,8 +273,9 @@ SceneNode.prototype.getGlobalRotation = function(result)
 	result = result || vec3.create();
 	quat.identity(result);
 	var current = this;
+	var top = this._scene ? this._scene._root : null;
 	//while we havent reach the tree root
-	while(current != this._scene._root)
+	while(current != top)
 	{
 		quat.multiply( result, current._rotation, result );
 		current = current._parent;
@@ -384,114 +430,343 @@ SceneNode.prototype.propagate = function(method, params)
 }
 
 
-function ParticleEmissor() 
+SceneNode.prototype.loadTextConfig = function(url, callback)
+{
+var that = this;
+    HttpRequest(url, null, function(data) {
+		var info = RD.parseTextConfig(data);
+		if(callback)
+			callback(info);
+        }, alert);
+}
+
+function PointCloud()  
 {
 	this._ctor();
+	
+	this.points = [];
+	this.max_points = 1000;
+	
+	this.draw_range = [0,this.max_points*3];
+	this.shader = "pointcloud";
+	this.textures = { color: "white" };
+	this.flags.blend = true;
+	this.flags.depth_write = false;
+	this._render_priority = 20;
+	
+	this.num_textures = 1; //atlas number of rows and columns
+
+	this.points_size = 100;
+	
+	this._uniforms = {
+			u_pointSize: this.points_size,
+			u_texture_info: vec2.fromValues(1,1)
+		};
+	
+	this.primitive = gl.POINTS;
+	this._vertices = new Float32Array( this.max_points * 3 );
+	this._extra = new Float32Array( this.max_points * 3 );
+	
+	this._mesh = new GL.Mesh();
+	this._vertices_buffer = this._mesh.createVertexBuffer("vertices", null, 3, this._vertices, gl.DYNAMIC_DRAW );
+	this._extra_buffer = this._mesh.createVertexBuffer("extra3", null, 3, this._extra, gl.DYNAMIC_DRAW );
+
+	this._accumulated_time = 0;
+	this._last_point_id = 0;
+}
+
+extendClass(PointCloud, SceneNode);
+global.PointCloud = RD.PointCloud = PointCloud;
+
+PointCloud.prototype.render = function(renderer, camera )
+{
+	if(this.points.length == 0)
+		return;
+	
+	this.updateVertices();
+	this._vertices_buffer.uploadRange(0, this.points.length * 3 * 4); //4 bytes per float
+	this._extra_buffer.uploadRange(0, this.points.length * 3 * 4); //4 bytes per float
+	
+	var shader = gl.shaders[ this.shader ];
+	if(!shader)
+	{
+		shader = gl.shaders["pointcloud"];
+		if(!shader)
+			gl.shaders["pointcloud"] = new GL.Shader( PointCloud._vertex_shader, PointCloud._pixel_shader );
+	}
+	
+	this.draw_range[1] = this.points.length;
+	var viewport = gl.getViewport();
+	this._uniforms.u_pointSize = this.points_size / (gl.canvas.width / viewport[2]);
+	this._uniforms.u_color = this.color;
+	this._uniforms.u_texture_info[0] = 1 / this.num_textures;
+	this._uniforms.u_texture_info[1] = this.num_textures * this.num_textures;
+	
+	if(this.ignore_transform)
+	{
+		mat4.identity( renderer._model_matrix );
+		renderer._mvp_matrix.set( renderer._viewprojection_matrix );
+	}
+	renderer.renderNode( this, renderer, camera );
+}
+
+PointCloud.prototype.updateVertices = function(mesh)
+{
+	//update mesh
+	var l = this.points.length;
+	if(!l)
+		return;
+	var vertices = this._vertices;
+	var extra = this._extra;
+	var pos = 0;
+	var num_textures2 = this.num_textures * this.num_textures;
+	for(var i = 0; i < l; i++)
+	{
+		var p = this.points[i];
+		vertices.set( p.pos, pos );
+		extra[pos] = 1;
+		extra[pos+1] = 1;
+		if(num_textures2 > 1)
+			extra[pos+2] = p.tex;
+		pos+=3;
+	}
+}
+
+PointCloud._vertex_shader = '\
+			precision highp float;\
+			attribute vec3 a_vertex;\
+			attribute vec3 a_extra3;\
+			varying vec2 v_coord;\
+			varying vec4 v_color;\
+			varying vec3 v_position;\
+			uniform vec3 u_camera_position;\
+			uniform mat4 u_mvp;\
+			uniform mat4 u_model;\
+			uniform vec4 u_color;\
+			uniform float u_pointSize;\
+			uniform vec2 u_texture_info;\
+			void main() {\n\
+				v_color = u_color;\n\
+				v_color.a *= a_extra3.y;\n\
+				v_coord.x = (a_extra3.z * u_texture_info.y) * u_texture_info.x;\n\
+				v_coord.y = abs(floor(v_coord.x) * u_texture_info.x);\n\
+				v_coord.x = fract(v_coord.x);\n\
+				gl_Position = u_mvp * vec4(a_vertex,1.0);\n\
+				v_position = (u_model * vec4(a_vertex,1.0)).xyz;\n\
+				float dist = distance( u_camera_position, v_position );\n\
+				gl_PointSize = 10.0 * u_pointSize / dist;\n\
+			}\
+			';
+PointCloud._pixel_shader = '\
+			precision highp float;\
+			varying vec4 v_color;\
+			varying vec2 v_coord;\
+			varying vec3 v_position;\
+			uniform sampler2D u_color_texture;\
+			uniform vec2 u_texture_info;\
+			void main() {\
+			  vec2 uv = vec2(v_coord.x + gl_PointCoord.x * u_texture_info.x, v_coord.y + (1.0 - gl_PointCoord.y) * u_texture_info.x );\n\
+			  vec4 color = texture2D( u_color_texture, uv );\n\
+			  color.xyz *= v_color.xyz;\n\
+			  #ifdef USE_PROCESS_COLOR\n\
+				USE_PROCESS_COLOR\n\
+			  #endif\n\
+			  gl_FragColor = vec4( color.xyz, color.a * v_color.a );\n\
+			}\
+		';
+
+
+
+
+//**********************
+
+function ParticlesEmissor()  
+{
+	this._ctor();
+	
 	this.particles = [];
 	this.max_particles = 1000;
+	
 	this.draw_range = [0,this.max_particles*3];
 	this.shader = "particles";
-	this.texture = "white";
+	this.textures = { color: "white" };
+	this.flags.blend = true;
+	this.flags.depth_write = false;
+	this._render_priority = 20;
+	
+	this.num_textures = 1; //atlas number of rows and columns
+
+	this.particles_size = 100;
+	this.particles_per_second = 5;
+	this.particles_life = 5;
+	this.particles_damping = 0.5;
+	this.particles_acceleration = vec3.create(); //use it for gravity and stuff
+	this.particles_start_scale = 1;
+	this.particles_end_scale = 1;
+	this.emissor_direction = vec3.fromValues(0,1,0);
+	
+	this._uniforms = {
+			u_pointSize: this.particle_size,
+			u_scaleStartEnd: vec2.fromValues(1,1),
+			u_texture_info: vec2.fromValues(1,1)
+		};
 	
 	this.primitive = gl.POINTS;
 	this._vertices = new Float32Array( this.max_particles * 3 );
+	this._extra = new Float32Array( this.max_particles * 3 );
 	
-	this._mesh = GL.Mesh();
+	this._mesh = new GL.Mesh();
 	this._vertices_buffer = this._mesh.createVertexBuffer("vertices", null, 3, this._vertices, gl.DYNAMIC_DRAW );
-	
-	this.particles_per_second = 10;
-	this.particles_life = 5;
-	
+	this._extra_buffer = this._mesh.createVertexBuffer("extra3", null, 3, this._extra, gl.DYNAMIC_DRAW );
+
 	this._accumulated_time = 0;
+	this._last_particle_id = 0;
 }
 
-global.ParticleEmissor = RD.ParticleEmissor = ParticleEmissor;
+extendClass(ParticlesEmissor, SceneNode);
+global.ParticlesEmissor = RD.ParticlesEmissor = ParticlesEmissor;
 
-ParticleEmissor.prototype.update = function(dt)
+ParticlesEmissor.prototype.update = function(dt)
 {
 	var l = this.particles.length;
-	if(!l)
-		return;
-	
-	//update every particle alive (remove the dead ones)
-	var alive = [];
-	for(var i = 0; i < l; i++)
+	var damping = this.particles_damping;
+	var acc = this.particles_acceleration;
+	var forces = vec3.length(acc);
+	if(l)
 	{
-		var p = this.particles[i];
-		vec3.scaleAndAdd( p.pos, p.pos, p.vel, dt );
-		if(p.ttl > 0)
-			alive.push(p);
+		//update every particle alive (remove the dead ones)
+		var alive = [];
+		for(var i = 0; i < l; i++)
+		{
+			var p = this.particles[i];
+			vec3.scaleAndAdd( p.pos, p.pos, p.vel, dt );
+			if(forces)
+				vec3.scaleAndAdd( p.vel, p.vel, acc, dt );
+			if(damping)
+				vec3.scaleAndAdd( p.vel, p.vel, p.vel, -dt * damping );
+			p.ttl -= dt;
+			if(p.ttl > 0)
+				alive.push(p);
+		}
+		this.particles = alive;
 	}
-	this.particles = alive;
 
 	//Create new ones	
 	var pos = this.getGlobalPosition();
-	var vel = [0,1,0];
+	var vel = this.emissor_direction;
 	var life = this.particles_life;
+	var num_textures2 = this.num_textures * this.num_textures;
 	
 	if(this.particles_per_second > 0)
 	{
 		var particles_to_create = this.particles_per_second * (dt + this._accumulated_time);
 		this._accumulated_time = (particles_to_create - Math.floor( particles_to_create )) / this.particles_per_second;
+		particles_to_create = Math.floor( particles_to_create );
 		for(var i = 0; i < particles_to_create; i++)
-			this.particles.push({pos: vec3.clone(pos), vel: vec3.clone(vel), ttl: life});
+		{
+			if(this.particles.length >= this.max_particles)
+				break;
+			var vel = vec3.clone(vel);
+			vel[0] += Math.random() * 0.5;
+			vel[2] += Math.random() * 0.5;
+			this.particles.push({id: this._last_particle_id++, tex: Math.floor(Math.random() * num_textures2) / num_textures2, pos: vec3.clone(pos), vel: vel, ttl: life});
+		}
 	}
 }
 
-ParticleEmissor.prototype.render = function(renderer, camera )
+ParticlesEmissor.prototype.render = function(renderer, camera )
 {
+	if(this.particles.length == 0)
+		return;
+	
 	this.updateVertices();
 	this._vertices_buffer.uploadRange(0, this.particles.length * 3 * 4); //4 bytes per float
+	this._extra_buffer.uploadRange(0, this.particles.length * 3 * 4); //4 bytes per float
 	
-	var shader = gl.shaders["particles"];
+	var shader = gl.shaders[ this.shader ];
 	if(!shader)
-		gl.shaders["particles"] = new GL.Shader(ParticleEmissor._vertex_shader, ParticleEmissor._pixel_shader);
+	{
+		shader = gl.shaders["particles"];
+		if(!shader)
+			gl.shaders["particles"] = new GL.Shader(ParticlesEmissor._vertex_shader, ParticlesEmissor._pixel_shader);
+	}
 	
-	this.range[1] = this.particles.length;
-	Renderer.prototype.renderNode( this, renderer, camera );
+	this.draw_range[1] = this.particles.length;
+	var viewport = gl.getViewport();
+	this._uniforms.u_pointSize = this.particles_size / (gl.canvas.width / viewport[2]);
+	this._uniforms.u_color = this.color;
+	this._uniforms.u_texture_info[0] = 1 / this.num_textures;
+	this._uniforms.u_texture_info[1] = this.num_textures * this.num_textures;
+	this._uniforms.u_scaleStartEnd[0] = this.particles_start_scale;
+	this._uniforms.u_scaleStartEnd[1] = this.particles_end_scale;
+	mat4.identity( renderer._model_matrix );
+	renderer._mvp_matrix.set( renderer._viewprojection_matrix );
+	renderer.renderNode( this, renderer, camera );
 }
 
-ParticleEmissor.prototype.updateVertices = function(mesh)
+ParticlesEmissor.prototype.updateVertices = function(mesh)
 {
 	//update mesh
 	var l = this.particles.length;
 	if(!l)
 		return;
 	var vertices = this._vertices;
+	var extra = this._extra;
 	var pos = 0;
+	var life = this.particles_life;
+	var num_textures2 = this.num_textures * this.num_textures;
 	for(var i = 0; i < l; i++)
 	{
 		var p = this.particles[i];
 		vertices.set( p.pos, pos );
+		extra[pos] = 1;
+		extra[pos+1] = p.ttl / life;
+		if(num_textures2 > 1)
+			extra[pos+2] = p.tex;
 		pos+=3;
 	}
 }
 
-ParticleEmissor._vertex_shader = '\
+ParticlesEmissor._vertex_shader = '\
 			precision highp float;\
 			attribute vec3 a_vertex;\
-			attribute vec3 a_normal;\
-			attribute vec2 a_coord;\
+			attribute vec3 a_extra3;\
 			varying vec2 v_coord;\
-			varying vec3 v_normal;\
+			varying vec4 v_color;\
+			varying vec3 v_position;\
+			uniform vec3 u_camera_position;\
 			uniform mat4 u_mvp;\
 			uniform mat4 u_model;\
+			uniform vec4 u_color;\
+			uniform float u_pointSize;\
+			uniform vec2 u_texture_info;\
+			uniform vec2 u_scaleStartEnd;\
 			void main() {\n\
-				v_coord = a_coord;\n\
-				v_normal = (u_model * vec4(a_normal,0.0)).xyz;\n\
+				v_color = u_color;\n\
+				v_color.a *= a_extra3.y;\n\
+				v_coord.x = (a_extra3.z * u_texture_info.y) * u_texture_info.x;\n\
+				v_coord.y = floor(v_coord.x) * u_texture_info.x;\n\
+				v_coord.x = fract(v_coord.x);\n\
 				gl_Position = u_mvp * vec4(a_vertex,1.0);\n\
-				gl_PointSize = 50.0;\n\
+				v_position = (u_model * vec4(a_vertex,1.0)).xyz;\n\
+				float dist = distance( u_camera_position, v_position );\n\
+				gl_PointSize = mix(u_scaleStartEnd.y, u_scaleStartEnd.x, a_extra3.y) * 10.0 * u_pointSize / dist;\n\
 			}\
 			';
-ParticleEmissor._pixel_shader = '\
+ParticlesEmissor._pixel_shader = '\
 			precision highp float;\
-			varying vec3 v_normal;\
+			varying vec4 v_color;\
 			varying vec2 v_coord;\
-			uniform vec4 u_color;\
-			uniform sampler2D u_texture;\
+			varying vec3 v_position;\
+			uniform sampler2D u_color_texture;\
+			uniform vec2 u_texture_info;\
 			void main() {\
-			  vec3 N = normalize(v_normal);\
-			  gl_FragColor = u_color * texture2D( u_texture, gl_PointCoord );\
+			  vec4 color = texture2D( u_color_texture, v_coord + vec2(gl_PointCoord.x,1.0 - gl_PointCoord.y) * u_texture_info.x );\n\
+			  color.xyz *= v_color.xyz;\n\
+			  #ifdef USE_PROCESS_COLOR\n\
+				USE_PROCESS_COLOR\n\
+			  #endif\n\
+			  gl_FragColor = vec4( color.xyz, color.a * v_color.a );\n\
 			}\
 		';
 
@@ -505,6 +780,7 @@ function Scene()
 {
 	this._root = new SceneNode();
 	this._root._scene = this;
+	this.time = 0;
 }
 
 global.Scene = RD.Scene = Scene;
@@ -513,6 +789,7 @@ Scene.prototype.clear = function()
 {
 	this._root = new SceneNode();
 	this._root._scene = this;
+	this.time = 0;
 }
 
 Scene.prototype.getNodeById = function(id)
@@ -522,6 +799,7 @@ Scene.prototype.getNodeById = function(id)
 
 Scene.prototype.update = function(dt)
 {
+	this.time += dt;
 	this.root.propagate("update",[dt]);
 }
 
@@ -537,8 +815,14 @@ Object.defineProperty(Scene.prototype, 'root', {
 function Renderer(context) {
 	
 	var gl = this.gl = this.context = context;
+	if(!gl || !gl.enable)
+		throw("litegl GL context not found.");
+	
+	if(context != global.gl)
+		gl.makeCurrent();
 	
 	this.point_size = 5;
+	this.sort_by_priority = true;
 	
 	this._view_matrix = mat4.create();
 	this._projection_matrix = mat4.create();
@@ -556,6 +840,7 @@ function Renderer(context) {
 	
 	//set some default stuff
 	global.gl = this.gl;
+	this.canvas = gl.canvas;
 	
 	//global containers and basic data
 	gl.meshes = {};
@@ -574,10 +859,21 @@ function Renderer(context) {
 
 global.Renderer = RD.Renderer = Renderer;
 
+Renderer.prototype.clear = function( color )
+{
+	if(color)	
+		this.gl.clearColor( color[0],color[1],color[2],color[3] );
+	else
+		this.gl.clearColor( 0,0,0,0 );
+	this.gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
+}
+
 Renderer.prototype.render = function(scene, camera, nodes)
 {
 	if (!scene || !camera)
 		throw("Renderer.render: not enough parameters");
+	
+	global.gl = this.gl;
 
 	this._camera = camera;	
 	camera.updateMatrices(); //multiply
@@ -592,6 +888,10 @@ Renderer.prototype.render = function(scene, camera, nodes)
 	if(!nodes)
 		scene.root.getAllChildren( this._nodes );
 	nodes = nodes || this._nodes;
+	
+	//sort by priority
+	if(this.sort_by_priority)
+		nodes.sort(function(a,b) { return b._render_priority - a._render_priority; } );
 
 	//pre rendering
 	if(scene.root.preRender)
@@ -646,22 +946,26 @@ Renderer.prototype.renderNode = function(node, camera)
 	if(!mesh)
 		return;
 	
-	if (!node._uniforms)
-		node._uniforms = { u_color: node._color, u_texture: 0 };
-		
-	var texture = null;
-	if(node._texture)
-		texture = node._texture;
-	else if(node.texture)
-		texture = gl.textures[ node.texture ];
-	if(texture)
-		texture.bind(0);
+	//get texture
+	var slot = 0;
+	for(var i in node.textures)
+	{
+		var texture_name = node.textures[i];
+		texture = gl.textures[ texture_name ];
+		if(!texture)
+			texture = gl.textures[ "white" ];
+		node._uniforms["u_" + i + "_texture"] = texture.bind( slot++ );
+	}
 	
+	//get shader
 	var shader = null;
+	var shader_name = node.shader;
 	if (node.shader)
-		shader = gl.shaders[ node.shader ];
+		shader = gl.shaders[ shader_name ];
+	if(this.shader_overwrite)
+		shader = gl.shaders[this.shader_overwrite];
 	if (!shader)
-		shader = texture ? this._texture_shader : this._flat_shader;
+		shader = slot > 0 ? this._texture_shader : this._flat_shader;
 		
 	//flags
 	gl.frontFace( node.flags.flip_normals ? gl.CW : gl.CCW );
@@ -683,8 +987,8 @@ Renderer.prototype.renderNode = function(node, camera)
 	shader.uniforms( this._uniforms );
 	shader.uniforms( node._uniforms );
 	
-	if(this.draw_range)
-		shader.drawRange( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, this.draw_range[0], this.draw_range[1] );
+	if(node.draw_range)
+		shader.drawRange( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.draw_range[0], node.draw_range[1] );
 	else
 		shader.draw( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive);
 
@@ -700,6 +1004,37 @@ Renderer.prototype.setPointSize = function(v)
 {
 	this.point_size = v;
 	gl.shaders["point"].uniforms({u_pointSize: this.point_size});
+}
+
+/*
+Renderer.prototype.loadMesh = function(url, name)
+{
+	var old_gl = global.gl;
+	global.gl = this.gl;
+	//load
+	
+	
+	global.gl = old_gl;
+}
+*/
+
+Object.defineProperty(Renderer.prototype, 'meshes', {
+	get: function() { return this.gl.meshes; },
+	set: function(v) {},
+	enumerable: true
+});
+
+Object.defineProperty(Renderer.prototype, 'textures', {
+	get: function() { return this.gl.textures; },
+	set: function(v) {},
+	enumerable: true
+});
+
+Renderer.prototype.addMesh = function(name, mesh)
+{
+	if(mesh.gl != this.gl)
+		mesh = mesh.cloneShared( this.gl );
+	this.gl.meshes[name] = mesh;
 }
 
 
@@ -783,10 +1118,12 @@ Camera.prototype.perspective = function(fov, aspect, near, far)
 	this._must_update_matrix = true;
 }
 
-Camera.prototype.ortho = function(frustum_size)
+Camera.prototype.orthographic = function(frustum_size, near, far)
 {
 	this.type = Camera.ORTHOGRAPHIC;
 	this.frustum_size = frustum_size;
+	this.near = near;
+	this.far = far;
 }
 
 Camera.prototype.lookAt = function(position,target,up)
@@ -867,7 +1204,7 @@ Camera.prototype.move = function(v)
 
 Camera.prototype.moveLocal = function(v)
 {
-	var delta = mat4.rotateVec3(temp_vec3, this.model_matrix, v);
+	var delta = mat4.rotateVec3(temp_vec3, this._model_matrix, v);
 	vec3.add(this._target, this._target, delta);
 	vec3.add(this._position, this._position, delta);
 	this._must_update_matrix = true;
@@ -1058,6 +1395,57 @@ function planeOverlap(plane, box)
 	else return CLIP_INSIDE;
 }
 
+
+RD.parseTextConfig = function(text)
+{
+	var lines = text.split("\n");
+	var root = { data: "", children: [] };
+	inner(root, 0);
+
+	function inner(parent, depth)
+	{
+	    var last_line = lines.shift();
+	    while (last_line)
+	    {
+		if(last_line.trim().length == 0)
+		{
+			last_line = lines.shift();
+			continue;
+		}
+		
+		var tabs = 0;
+		while( last_line[tabs] == '\t' && tabs < last_line.length )
+			tabs++;		
+		if (tabs < depth)
+		    break;
+		
+		var node = { children:[] };
+		try
+		{
+			var info = last_line.trim();
+			if(info.indexOf(":") != -1)
+				info = "{" + info + "}";
+			var func = new Function("return " + info);
+			node.data = func();
+		}
+		catch(err)
+		{
+			console.error(err);
+		}
+		
+		if (tabs >= depth)
+		{
+		    if (parent)
+			parent.children.push(node);
+		    last_line = inner(node, tabs+1);
+		}
+	    }
+	    return last_line;
+	}
+	return root;
+}
+
+
 Renderer.prototype.createShaders = function()
 {
 	this._flat_shader = new GL.Shader('\
@@ -1135,15 +1523,17 @@ Renderer.prototype.createShaders = function()
 		precision highp float;\
 		varying vec2 v_coord;\
 		uniform vec4 u_color;\
-		uniform sampler2D u_texture;\
+		uniform sampler2D u_color_texture;\
 		void main() {\
-			gl_FragColor = u_color * texture2D(u_texture, v_coord);\
+			gl_FragColor = u_color * texture2D(u_color_texture, v_coord);\
 		}\
 	');
 	gl.shaders["texture"] = this._flat_shader;	
 	
 	
 	//basic phong shader
+	var phong_uniforms = { u_lightvector: vec3.fromValues(0.577, 0.577, 0.577), u_lightcolor: RD.WHITE };
+	
 	this._phong_shader = new GL.Shader('\
 			precision highp float;\
 			attribute vec3 a_vertex;\
@@ -1158,17 +1548,19 @@ Renderer.prototype.createShaders = function()
 			', '\
 			precision highp float;\
 			varying vec3 v_normal;\
+			uniform vec3 u_lightcolor;\
 			uniform vec3 u_lightvector;\
 			uniform vec4 u_color;\
 			void main() {\
 			  vec3 N = normalize(v_normal);\
-			  gl_FragColor = u_color * max(0.0, dot(u_lightvector,N));\
+			  gl_FragColor = u_color * max(0.0, dot(u_lightvector,N)) * vec4(u_lightcolor,1.0);\
 			}\
 		');
 	gl.shaders["phong"] = this._phong_shader;
+	gl.shaders["phong"].uniforms( phong_uniforms );
 
 	//basic phong shader
-	this._phong_shader = new GL.Shader('\
+	this._textured_phong_shader = new GL.Shader('\
 			precision highp float;\
 			attribute vec3 a_vertex;\
 			attribute vec3 a_normal;\
@@ -1186,18 +1578,21 @@ Renderer.prototype.createShaders = function()
 			precision highp float;\
 			varying vec3 v_normal;\
 			varying vec2 v_coord;\
+			uniform vec3 u_lightcolor;\
 			uniform vec3 u_lightvector;\
 			uniform vec4 u_color;\
-			uniform sampler2D u_texture;\
+			uniform sampler2D u_color_texture;\
 			void main() {\
 			  vec3 N = normalize(v_normal);\
-			  gl_FragColor = u_color * texture2D(u_texture, v_coord) * max(0.0, dot(u_lightvector,N));\
+			  gl_FragColor = u_color * texture2D(u_color_texture, v_coord) * max(0.0, dot(u_lightvector,N)) * vec4(u_lightcolor,1.0);\
 			}\
 		');
-	gl.shaders["textured_phong"] = this._phong_shader;
+	gl.shaders["textured_phong"] = this._textured_phong_shader;
+	gl.shaders["textured_phong"].uniforms( phong_uniforms );
 }
 
 
 //footer
 
 })(window);
+

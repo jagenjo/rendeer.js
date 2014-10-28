@@ -33,11 +33,13 @@
 			<p>Include the script</p>
 			<pre>&lt;script src="js/rendeer.js"&gt;&lt;/script&gt;</pre>
 
-			<p>Create the scene</p>
-			<pre>var scene = new RD.Stage();</pre>
+			<p>Create the stage</p>
+			<pre>var stage = new RD.Stage();</pre>
 
 			<p>Create the renderer</p>
-			<pre>var renderer = new RD.Renderer(window.innerWidth, window.innerHeight);</pre>
+			<pre>		var context = GL.create({width: window.innerWidth, height:window.innerHeight});
+		var renderer = new RD.Renderer(context);
+</pre>
 
 			<p>Attach to DOM</p>
 			<pre>document.body.appendChild(renderer.canvas);</pre>

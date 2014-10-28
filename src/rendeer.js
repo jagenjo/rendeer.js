@@ -6,6 +6,13 @@
 
 var RD = global.RD = {};
 
+RD.ZERO = vec3.fromValues(0,0,0);
+RD.RIGHT = vec3.fromValues(1,0,0);
+RD.UP = vec3.fromValues(0,1,0);
+RD.FRONT = vec3.fromValues(0,0,1);
+RD.WHITE = vec3.fromValues(1,1,1);
+RD.BLACK = vec3.fromValues(0,0,0);
+
 RD.setup = function(o)
 {
 	o = o || {};
@@ -807,6 +814,11 @@ Object.defineProperty(Scene.prototype, 'root', {
 function Renderer(context) {
 	
 	var gl = this.gl = this.context = context;
+	if(!gl || !gl.enable)
+		throw("litegl GL context not found.");
+	
+	if(context != global.gl)
+		gl.makeCurrent();
 	
 	this.point_size = 5;
 	this.sort_by_priority = true;
@@ -827,6 +839,7 @@ function Renderer(context) {
 	
 	//set some default stuff
 	global.gl = this.gl;
+	this.canvas = gl.canvas;
 	
 	//global containers and basic data
 	gl.meshes = {};
@@ -845,10 +858,21 @@ function Renderer(context) {
 
 global.Renderer = RD.Renderer = Renderer;
 
+Renderer.prototype.clear = function( color )
+{
+	if(color)	
+		this.gl.clearColor( color[0],color[1],color[2],color[3] );
+	else
+		this.gl.clearColor( 0,0,0,0 );
+	this.gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
+}
+
 Renderer.prototype.render = function(scene, camera, nodes)
 {
 	if (!scene || !camera)
 		throw("Renderer.render: not enough parameters");
+	
+	global.gl = this.gl;
 
 	this._camera = camera;	
 	camera.updateMatrices(); //multiply
@@ -979,6 +1003,37 @@ Renderer.prototype.setPointSize = function(v)
 {
 	this.point_size = v;
 	gl.shaders["point"].uniforms({u_pointSize: this.point_size});
+}
+
+/*
+Renderer.prototype.loadMesh = function(url, name)
+{
+	var old_gl = global.gl;
+	global.gl = this.gl;
+	//load
+	
+	
+	global.gl = old_gl;
+}
+*/
+
+Object.defineProperty(Renderer.prototype, 'meshes', {
+	get: function() { return this.gl.meshes; },
+	set: function(v) {},
+	enumerable: true
+});
+
+Object.defineProperty(Renderer.prototype, 'textures', {
+	get: function() { return this.gl.textures; },
+	set: function(v) {},
+	enumerable: true
+});
+
+Renderer.prototype.addMesh = function(name, mesh)
+{
+	if(mesh.gl != this.gl)
+		mesh = mesh.cloneShared( this.gl );
+	this.gl.meshes[name] = mesh;
 }
 
 
@@ -1148,7 +1203,7 @@ Camera.prototype.move = function(v)
 
 Camera.prototype.moveLocal = function(v)
 {
-	var delta = mat4.rotateVec3(temp_vec3, this.model_matrix, v);
+	var delta = mat4.rotateVec3(temp_vec3, this._model_matrix, v);
 	vec3.add(this._target, this._target, delta);
 	vec3.add(this._position, this._position, delta);
 	this._must_update_matrix = true;
@@ -1476,6 +1531,8 @@ Renderer.prototype.createShaders = function()
 	
 	
 	//basic phong shader
+	var phong_uniforms = { u_lightvector: vec3.fromValues(0.577, 0.577, 0.577), u_lightcolor: RD.WHITE };
+	
 	this._phong_shader = new GL.Shader('\
 			precision highp float;\
 			attribute vec3 a_vertex;\
@@ -1490,17 +1547,19 @@ Renderer.prototype.createShaders = function()
 			', '\
 			precision highp float;\
 			varying vec3 v_normal;\
+			uniform vec3 u_lightcolor;\
 			uniform vec3 u_lightvector;\
 			uniform vec4 u_color;\
 			void main() {\
 			  vec3 N = normalize(v_normal);\
-			  gl_FragColor = u_color * max(0.0, dot(u_lightvector,N));\
+			  gl_FragColor = u_color * max(0.0, dot(u_lightvector,N)) * vec4(u_lightcolor,1.0);\
 			}\
 		');
 	gl.shaders["phong"] = this._phong_shader;
+	gl.shaders["phong"].uniforms( phong_uniforms );
 
 	//basic phong shader
-	this._phong_shader = new GL.Shader('\
+	this._textured_phong_shader = new GL.Shader('\
 			precision highp float;\
 			attribute vec3 a_vertex;\
 			attribute vec3 a_normal;\
@@ -1518,15 +1577,17 @@ Renderer.prototype.createShaders = function()
 			precision highp float;\
 			varying vec3 v_normal;\
 			varying vec2 v_coord;\
+			uniform vec3 u_lightcolor;\
 			uniform vec3 u_lightvector;\
 			uniform vec4 u_color;\
 			uniform sampler2D u_color_texture;\
 			void main() {\
 			  vec3 N = normalize(v_normal);\
-			  gl_FragColor = u_color * texture2D(u_color_texture, v_coord) * max(0.0, dot(u_lightvector,N));\
+			  gl_FragColor = u_color * texture2D(u_color_texture, v_coord) * max(0.0, dot(u_lightvector,N)) * vec4(u_lightcolor,1.0);\
 			}\
 		');
-	gl.shaders["textured_phong"] = this._phong_shader;
+	gl.shaders["textured_phong"] = this._textured_phong_shader;
+	gl.shaders["textured_phong"].uniforms( phong_uniforms );
 }
 
 

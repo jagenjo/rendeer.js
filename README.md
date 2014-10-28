@@ -23,15 +23,16 @@ Include the library and dependencies
 <script src="js/rendeer.js"></script>
 ```
 
-Create the Scene
+Create the stage
 ```js
-var scene = new RD.Stage();
+var stage = new RD.Stage();
 ```
 
 
 Create the renderer
 ```js
-var renderer = new RD.Renderer(window.innerWidth, window.innerHeight);
+var context = GL.create({width: window.innerWidth, height:window.innerHeight});
+var renderer = new RD.Renderer(context);
 ```
 
 Attach to DOM
