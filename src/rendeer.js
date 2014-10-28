@@ -466,9 +466,7 @@ function PointCloud()
 	this._vertices = new Float32Array( this.max_points * 3 );
 	this._extra = new Float32Array( this.max_points * 3 );
 	
-	this._mesh = new GL.Mesh();
-	this._vertices_buffer = this._mesh.createVertexBuffer("vertices", null, 3, this._vertices, gl.DYNAMIC_DRAW );
-	this._extra_buffer = this._mesh.createVertexBuffer("extra3", null, 3, this._extra, gl.DYNAMIC_DRAW );
+	this._meshes = {}; 
 
 	this._accumulated_time = 0;
 	this._last_point_id = 0;
@@ -483,6 +481,19 @@ PointCloud.prototype.render = function(renderer, camera )
 		return;
 	
 	this.updateVertices();
+	
+	//we can have several meshes if we have more than one context
+	var mesh = this._meshes[ renderer.gl.context_id ];
+	
+	if(!mesh)
+	{
+		mesh = new GL.Mesh( undefined,undefined, renderer.gl );
+		this._vertices_buffer = mesh.createVertexBuffer("vertices", null, 3, this._vertices, gl.DYNAMIC_DRAW );
+		this._extra_buffer = mesh.createVertexBuffer("extra3", null, 3, this._extra, gl.DYNAMIC_DRAW );
+	}
+	this._mesh = mesh;
+	
+	
 	this._vertices_buffer.uploadRange(0, this.points.length * 3 * 4); //4 bytes per float
 	this._extra_buffer.uploadRange(0, this.points.length * 3 * 4); //4 bytes per float
 	
@@ -602,6 +613,7 @@ function ParticlesEmissor()
 	this.particles_acceleration = vec3.create(); //use it for gravity and stuff
 	this.particles_start_scale = 1;
 	this.particles_end_scale = 1;
+	this.velocity_variation = 1;
 	this.emissor_direction = vec3.fromValues(0,1,0);
 	
 	this._uniforms = {
@@ -614,10 +626,8 @@ function ParticlesEmissor()
 	this._vertices = new Float32Array( this.max_particles * 3 );
 	this._extra = new Float32Array( this.max_particles * 3 );
 	
-	this._mesh = new GL.Mesh();
-	this._vertices_buffer = this._mesh.createVertexBuffer("vertices", null, 3, this._vertices, gl.DYNAMIC_DRAW );
-	this._extra_buffer = this._mesh.createVertexBuffer("extra3", null, 3, this._extra, gl.DYNAMIC_DRAW );
-
+	this._meshes = {};
+	
 	this._accumulated_time = 0;
 	this._last_particle_id = 0;
 }
@@ -655,6 +665,7 @@ ParticlesEmissor.prototype.update = function(dt)
 	var vel = this.emissor_direction;
 	var life = this.particles_life;
 	var num_textures2 = this.num_textures * this.num_textures;
+	var velocity_variation = this.velocity_variation;
 	
 	if(this.particles_per_second > 0)
 	{
@@ -666,8 +677,8 @@ ParticlesEmissor.prototype.update = function(dt)
 			if(this.particles.length >= this.max_particles)
 				break;
 			var vel = vec3.clone(vel);
-			vel[0] += Math.random() * 0.5;
-			vel[2] += Math.random() * 0.5;
+			vel[0] += Math.random() * 0.5 * velocity_variation;
+			vel[2] += Math.random() * 0.5 * velocity_variation;
 			this.particles.push({id: this._last_particle_id++, tex: Math.floor(Math.random() * num_textures2) / num_textures2, pos: vec3.clone(pos), vel: vel, ttl: life});
 		}
 	}
@@ -679,6 +690,18 @@ ParticlesEmissor.prototype.render = function(renderer, camera )
 		return;
 	
 	this.updateVertices();
+	
+	//we can have several meshes if we have more than one context
+	var mesh = this._meshes[ renderer.gl.context_id ];
+	
+	if(!mesh)
+	{
+		mesh = new GL.Mesh( undefined,undefined, renderer.gl );
+		this._vertices_buffer = mesh.createVertexBuffer("vertices", null, 3, this._vertices, gl.DYNAMIC_DRAW );
+		this._extra_buffer = mesh.createVertexBuffer("extra3", null, 3, this._extra, gl.DYNAMIC_DRAW );
+	}
+	this._mesh = mesh;	
+	
 	this._vertices_buffer.uploadRange(0, this.particles.length * 3 * 4); //4 bytes per float
 	this._extra_buffer.uploadRange(0, this.particles.length * 3 * 4); //4 bytes per float
 	
