@@ -33,8 +33,8 @@
 			<p>Include the script</p>
 			<pre>&lt;script src="js/rendeer.js"&gt;&lt;/script&gt;</pre>
 
-			<p>Create the stage</p>
-			<pre>var stage = new RD.Stage();</pre>
+			<p>Create the scene container</p>
+			<pre>var scene = new RD.Scene();</pre>
 
 			<p>Create the renderer</p>
 			<pre>		var context = GL.create({width: window.innerWidth, height:window.innerHeight});
@@ -76,8 +76,8 @@ function animate() {
 	last = now;
 	now = getTime();
 	var dt = (now - last) * 0.001;
-	renderer.render(stage, camera);
-	stage.update(dt);
+	renderer.render(scene, camera);
+	scene.update(dt);
 }
 </pre>
 

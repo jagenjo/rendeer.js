@@ -28,9 +28,9 @@ Include the library and dependencies
 <script src="js/rendeer.js"></script>
 ```
 
-Create the stage
+Create the scene
 ```js
-var stage = new RD.Stage();
+var scene = new RD.Scene();
 ```
 
 
@@ -69,7 +69,7 @@ box.color = [1,0,0,1];
 box.mesh = "cube";
 box.position = [0,0,0];
 box.scale([10,10,10]);
-stage.addChild(box);
+scene.addChild(box);
 ```
 
 Create main loop
@@ -81,8 +81,8 @@ function animate() {
 	last = now;
 	now = getTime();
 	var dt = (now - last) * 0.001;
-	renderer.render(stage, camera);
-	stage.update(dt);
+	renderer.render(scene, camera);
+	scene.update(dt);
 }
 ```
 
