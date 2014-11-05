@@ -143,7 +143,7 @@ SceneNode.prototype.addChild = function(node)
 	function change_scene(node, scene)
 	{
 		node._scene = scene;
-		for(var i in node.children)
+		for(var i = 0, l = node.children.length; i < l; i++)
 			change_scene( node.children[i], scene );
 	}
 }
@@ -166,7 +166,7 @@ SceneNode.prototype.removeChild = function(node)
 	function change_scene(node)
 	{
 		node._scene = null;
-		for(var i in node.children)
+		for(var i = 0, l = node.children.length; i < l; i++)
 			change_scene( node.children[i] );
 	}
 }
@@ -176,7 +176,7 @@ SceneNode.prototype.getAllChildren = function(r)
 {
 	r = r || [];
 
-	for(var i in this.children)
+	for(var i = 0, l = this.children.length; i < l; i++)
 	{
 		var node = this.children[i];
 		r.push(node);
@@ -196,7 +196,7 @@ SceneNode.prototype.serialize = function()
 		children: []
 	};
 
-	for(var i in this.children)
+	for(var i = 0, l = this.children.length; i < l; i++)
 	{
 		var node = this.children[i];
 		r.children.push( node.serialize() );
@@ -403,10 +403,17 @@ SceneNode.prototype.getGlobalVector = function(v, result)
 	return vec3.transformQuat( result, v, quat );
 }
 
+SceneNode.prototype.getDistanceTo = function(position)
+{
+	var m = this.getGlobalMatrix();
+	return vec3.distance(position, m.subarray(12,15));
+}
+
+
 //recursive search
 SceneNode.prototype.findNode = function(id)
 {
-	for(var i in this.children)
+	for(var i = 0, l = this.children.length; i < l; i++)
 	{
 		var node = this.children[i];
 		if( node.id == id )
@@ -420,9 +427,11 @@ SceneNode.prototype.findNode = function(id)
 //call methods inside
 SceneNode.prototype.propagate = function(method, params)
 {
-	for(var i in this.children)
+	for(var i = 0, l = this.children.length; i < l; i++)
 	{
 		var node = this.children[i];
+		if(!node)
+			continue;
 		if(node[method])
 			node[method].apply(node, params);
 		node.propagate(method, params);
@@ -432,13 +441,56 @@ SceneNode.prototype.propagate = function(method, params)
 
 SceneNode.prototype.loadTextConfig = function(url, callback)
 {
-var that = this;
-    HttpRequest(url, null, function(data) {
+	var that = this;
+	HttpRequest(url, null, function(data) {
 		var info = RD.parseTextConfig(data);
 		if(callback)
 			callback(info);
         }, alert);
 }
+
+//used for camera aligned objects
+function Billboard()  
+{
+	this.parallel = false;
+	this.auto_orient = true;
+	this._ctor();
+}
+
+Billboard.prototype.render = function(renderer, camera )
+{
+	if(this.auto_orient)
+	{
+		if(this.parallel)
+		{
+			this._global_matrix.set( camera._model_matrix );
+			mat4.setTranslation( this._global_matrix, this._position );
+			mat4.scale( this._global_matrix, this._global_matrix, this._scale );
+		}
+		else
+		{
+			mat4.lookAt( this._global_matrix, this._position, camera.position, RD.UP );
+			mat4.invert( this._global_matrix, this._global_matrix );
+			mat4.scale( this._global_matrix, this._global_matrix, this._scale );
+		}
+		
+		renderer.setModelMatrix( this._global_matrix );
+	}
+	
+	renderer.renderNode( this, renderer, camera );
+}
+
+/*
+Billboard.prototype.faceTo = function( position )
+{
+	
+}
+*/
+
+extendClass(Billboard, SceneNode);
+global.Billboard = RD.Billboard = Billboard;
+
+
 
 function PointCloud()  
 {
@@ -846,6 +898,7 @@ function Renderer(context) {
 	
 	this.point_size = 5;
 	this.sort_by_priority = true;
+	this.sort_by_distance = false;
 	
 	this._view_matrix = mat4.create();
 	this._projection_matrix = mat4.create();
@@ -912,6 +965,10 @@ Renderer.prototype.render = function(scene, camera, nodes)
 		scene.root.getAllChildren( this._nodes );
 	nodes = nodes || this._nodes;
 	
+	//sort by distance
+	if(this.sort_by_distance)
+		RD.sortByDistance(nodes, camera.position);
+	
 	//sort by priority
 	if(this.sort_by_priority)
 		nodes.sort(function(a,b) { return b._render_priority - a._render_priority; } );
@@ -937,8 +994,7 @@ Renderer.prototype.render = function(scene, camera, nodes)
 		if(node.flags.visible === false)
 			continue;
 		
-		this._model_matrix.set( node._global_matrix );
-		mat4.multiply(this._mvp_matrix, this._viewprojection_matrix, this._model_matrix );
+		this.setModelMatrix( node._global_matrix );
 		
 		if(node.render)
 			node.render(this, camera);
@@ -957,6 +1013,12 @@ Renderer.prototype.render = function(scene, camera, nodes)
 	}
 }
 
+Renderer.prototype.setModelMatrix = function(matrix)
+{
+	this._model_matrix.set( matrix );
+	mat4.multiply(this._mvp_matrix, this._viewprojection_matrix, matrix );
+}
+
 Renderer.prototype.renderNode = function(node, camera)
 {
 	//get mesh
@@ -971,6 +1033,7 @@ Renderer.prototype.renderNode = function(node, camera)
 	
 	//get texture
 	var slot = 0;
+	var texture = null;
 	for(var i in node.textures)
 	{
 		var texture_name = node.textures[i];
@@ -1027,6 +1090,12 @@ Renderer.prototype.setPointSize = function(v)
 {
 	this.point_size = v;
 	gl.shaders["point"].uniforms({u_pointSize: this.point_size});
+}
+
+RD.sortByDistance = function(nodes, position)
+{
+	nodes.forEach( function(a) { a._distance = a.getDistanceTo(position); } );
+	nodes.sort(function(a,b) { return b._distance - a._distance; } );
 }
 
 /*
