@@ -14,6 +14,11 @@ RD.FRONT = vec3.fromValues(0,0,1);
 RD.WHITE = vec3.fromValues(1,1,1);
 RD.BLACK = vec3.fromValues(0,0,0);
 
+RD.PRIORITY_BACKGROUND = 30;
+RD.PRIORITY_OPAQUE = 20;
+RD.PRIORITY_ALPHA = 10;
+RD.PRIORITY_HUD = 0;
+
 RD.setup = function(o)
 {
 	o = o || {};
@@ -51,7 +56,7 @@ SceneNode.prototype._ctor = function()
 	this._global_matrix = mat4.create(); //in global space
 	this._must_update_matrix = false;
 	
-	this._render_priority = 10;
+	this._render_priority = RD.PRIORITY_OPAQUE;
 
 	//could be used for many things
 	this._color = vec4.fromValues(1,1,1,1);
@@ -234,6 +239,12 @@ SceneNode.prototype.setTexture = function(channel, texture)
 	else if( typeof(texture) == "string" )
 		this.textures[ channel ] = texture;
 }
+
+Object.defineProperty(SceneNode.prototype, 'texture', {
+	get: function() { return this.textures["color"]; },
+	set: function(v) { this.textures["color"] = v; },
+	enumerable: false
+});
 
 //transforming
 SceneNode.prototype.translate = function(v)
@@ -946,20 +957,22 @@ Renderer.prototype.clear = function( color )
 
 Renderer.prototype.render = function(scene, camera, nodes)
 {
-	if (!scene || !camera)
-		throw("Renderer.render: not enough parameters");
+	if (!scene)
+		throw("Renderer.render: scene not provided");
+	
+	camera = camera || scene.camera;
+	if (!camera)
+		throw("Renderer.render: camera not provided");
 	
 	global.gl = this.gl;
-
-	this._camera = camera;	
-	camera.updateMatrices(); //multiply
-	camera.extractPlanes(); //for frustrum culling
 	
-	this._view_matrix.set(camera._view_matrix);
-	this._projection_matrix.set(camera._projection_matrix);
-	this._viewprojection_matrix.set(camera._viewprojection_matrix);
-	this._uniforms.u_camera_position = camera.position;
+	//stack to state
+	this._state = [];
 
+	//get matrices in the camera
+	this.enableCamera( camera );
+
+	//find which nodes should we render
 	this._nodes.length = 0;
 	if(!nodes)
 		scene.root.getAllChildren( this._nodes );
@@ -1012,6 +1025,41 @@ Renderer.prototype.render = function(scene, camera, nodes)
 			node.postRender(this,camera);
 	}
 }
+
+Renderer.prototype.enableCamera = function(camera)
+{
+	this._camera = camera;	
+	camera.updateMatrices(); //multiply
+	camera.extractPlanes(); //for frustrum culling
+	
+	this._view_matrix.set(camera._view_matrix);
+	this._projection_matrix.set(camera._projection_matrix);
+	this._viewprojection_matrix.set(camera._viewprojection_matrix);
+	this._uniforms.u_camera_position = camera.position;
+}
+
+//this functions allow to interrupt the render of one scene to render another one
+Renderer.prototype.saveState = function()
+{
+	var state = {
+		camera: this._camera,
+		nodes: this._nodes
+	};
+	
+	this.state.push(state);
+}
+
+Renderer.prototype.restoreState = function()
+{
+	var state = this.state.pop();
+	var camera = this.camera = state.camera;
+	this._view_matrix.set(camera._view_matrix);
+	this._projection_matrix.set(camera._projection_matrix);
+	this._viewprojection_matrix.set(camera._viewprojection_matrix);
+	this._uniforms.u_camera_position = camera.position;
+	this._nodes = state.nodes;
+}
+
 
 Renderer.prototype.setModelMatrix = function(matrix)
 {
