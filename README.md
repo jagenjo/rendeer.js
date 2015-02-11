@@ -18,6 +18,8 @@ Demo
 
 Check the examples folder to see the examples, or visit [this website](http://tamats.com/projects/rendeer/examples).
 
+There is a boilerplate to create an application in the folder boilerlate/
+
 Usage
 -----
 
@@ -62,14 +64,34 @@ camera.perspective( 45, gl.canvas.width / gl.canvas.height, 1, 1000 );
 camera.lookAt( [100,100,100],[0,0,0],[0,1,0] );
 ```
 
-Add mesh
+Create and register mesh
 ```js
-var box = new RD.SceneNode();
-box.color = [1,0,0,1];
-box.mesh = "cube";
-box.position = [0,0,0];
-box.scale([10,10,10]);
-scene.addChild(box);
+var cube = GL.Mesh.cube({size:5});
+renderer.meshes["cube"] = cube;
+```
+
+load and register texture
+```js
+var texture = GL.Texture.fromURL("mytexture.png", { minFilter: gl.LINEAR_MIPMAP_LINEAR, magFilter: gl.LINEAR });
+renderer.textures["mytexture.png"] = texture;
+```
+
+Compile and register shader
+```js
+var shader = new GL.Shader(vs_code, fs_code);
+renderer.shaders["phong"] = shader;
+```
+
+Add a node to the scene
+```js
+var node = new RD.SceneNode();
+node.color = [1,0,0,1];
+node.mesh = "cube";
+node.texture = "mytexture.jpg";
+node.shader = "phong";
+node.position = [0,0,0];
+node.scale([10,10,10]);
+scene.addChild(node);
 ```
 
 Create main loop

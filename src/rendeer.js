@@ -88,6 +88,26 @@ SceneNode.prototype.super = function(class_name)
 	
 }
 
+SceneNode.prototype.clone = function()
+{
+	var o = new this.constructor();
+	for(var i in this)
+	{
+		if(i[0] == "_") //private
+			continue;
+		var v = this[i];
+		if(v === undefined)
+			continue;
+		else if(v === null)
+			o[i] = null;
+		else if(v.constructor === Object)
+			o[i] = GL.cloneObject(v);
+		else if(o[i] !== v)
+			o[i] = v;
+	}
+	return o;
+}
+
 
 /**
 * A unique identifier, useful to retrieve nodes by name
@@ -119,23 +139,26 @@ Object.defineProperty(SceneNode.prototype, 'position', {
 Object.defineProperty(SceneNode.prototype, 'positionX', {
 	get: function() { return this._position[0]; },
 	set: function(v) { this._position[0] = v; this._must_update_matrix = true; },
-	enumerable: true 
+	enumerable: false 
 });
 Object.defineProperty(SceneNode.prototype, 'positionY', {
 	get: function() { return this._position[1]; },
 	set: function(v) { this._position[1] = v; this._must_update_matrix = true; },
-	enumerable: true
+	enumerable: false
 });
 Object.defineProperty(SceneNode.prototype, 'positionZ', {
 	get: function() { return this._position[2]; },
 	set: function(v) { this._position[2] = v; this._must_update_matrix = true; },
-	enumerable: true 
+	enumerable: false 
 });
 
 //legacy
 Object.defineProperty(SceneNode.prototype, 'uniforms', {
 	get: function() { return this._uniforms; },
-	set: function(v) { this._uniforms = v; },
+	set: function(v) { 
+		GL.cloneObject(v, this._uniforms);
+		this._uniforms["u_color"] = this._color;
+	},
 	enumerable: true 
 });
 
@@ -150,6 +173,13 @@ Object.defineProperty(SceneNode.prototype, 'rotation', {
 	set: function(v) { this._rotation.set(v); this._must_update_matrix = true; },
 	enumerable: true //avoid problems
 });
+
+Object.defineProperty(SceneNode.prototype, 'scaling', {
+	get: function() { return this._scale; },
+	set: function(v) { this._scale.set(v); this._must_update_matrix = true; },
+	enumerable: true
+});
+
 
 /**
 * The color in RGBA format
@@ -179,7 +209,7 @@ Object.defineProperty(SceneNode.prototype, 'opacity', {
 Object.defineProperty(SceneNode.prototype, 'scene', {
 	get: function() { return this._scene; },
 	set: function(v) { throw("cannot set scene, add to root node"); },
-	enumerable: true //avoid problems
+	enumerable: false //avoid problems
 });
 
 
@@ -1401,8 +1431,8 @@ function Renderer(context) {
 	this.meshes = gl.meshes;
 	this.meshes["plane"] = GL.Mesh.plane({size:1});
 	this.meshes["planeXZ"] = GL.Mesh.plane({size:1,xz:true});
-	this.meshes["cube"] = GL.Mesh.cube({size:1});
-	this.meshes["sphere"] = GL.Mesh.sphere({size:1, subdivisions: 32});
+	this.meshes["cube"] = GL.Mesh.cube({size:1,wireframe:true});
+	this.meshes["sphere"] = GL.Mesh.sphere({size:1, subdivisions: 32, wireframe:true});
 	
 	this.textures = gl.textures;
 	this.textures["notfound"] = this.default_texture = new GL.Texture(1,1,{ filter: gl.NEAREST, pixel_data: new Uint8Array([0,0,0,255]) });
@@ -1445,7 +1475,14 @@ Renderer.prototype.render = function(scene, camera, nodes)
 {
 	if (!scene)
 		throw("Renderer.render: scene not provided");
-	
+
+	if(	this._current_scene )
+	{
+		this._current_scene = null;
+		throw("Cannot render an scene while rendering an scene");
+	}
+	this._current_scene = scene;
+
 	camera = camera || scene.camera;
 	if (!camera)
 		throw("Renderer.render: camera not provided");
@@ -1526,6 +1563,7 @@ Renderer.prototype.render = function(scene, camera, nodes)
 	}
 	
 	scene.frame++;
+	this._current_scene = null;
 }
 
 Renderer.prototype.enableCamera = function(camera)
@@ -1591,6 +1629,8 @@ Renderer.prototype.renderNode = function(node, camera)
 	for(var i in node.textures)
 	{
 		var texture_name = node.textures[i];
+		if(!texture_name)
+			continue;
 		texture = gl.textures[ texture_name ];
 		if(!texture)
 			texture = gl.textures[ "white" ];
@@ -1631,9 +1671,9 @@ Renderer.prototype.renderNode = function(node, camera)
 		node.onShaderUniforms(this, shader);
 	
 	if(node.draw_range)
-		shader.drawRange( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.draw_range[0], node.draw_range[1] );
+		shader.drawRange( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.draw_range[0], node.draw_range[1] , node.indices );
 	else
-		shader.draw( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive);
+		shader.draw( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.indices );
 
 	if( node.flags.flip_normals ) gl.frontFace( gl.CCW );
 	if( node.flags.depth_test === false ) gl.enable( gl.DEPTH_TEST );
@@ -2409,7 +2449,7 @@ Renderer.prototype.createShaders = function()
 				uniform mat4 u_mvp;\
 				void main() {\
 					gl_Position = u_mvp * vec4(a_vertex,1.0);\
-					gl_PointSize = 5.0;\
+					gl_PointSize = 2.0;\
 				}\
 				', '\
 				precision highp float;\
