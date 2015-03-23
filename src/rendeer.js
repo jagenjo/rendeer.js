@@ -61,12 +61,22 @@ SceneNode.prototype._ctor = function()
 	this._uid = last_object_id++;
 	this._id = null;
 
+	//transform info
 	this._position = vec3.create();
 	this._rotation = quat.create();
 	this._scale = vec3.fromValues(1,1,1);
 	this._local_matrix = mat4.create();
 	this._global_matrix = mat4.create(); //in global space
 	this._must_update_matrix = false;
+
+	//observer to catch changes made directly to the values
+	if(Object.observe)
+	{
+		var inner_transform_change = (function(c) { this._must_update_matrix = true; }).bind(this);
+		Object.observe( this._position, inner_transform_change );
+		Object.observe( this._rotation, inner_transform_change );
+		Object.observe( this._scale, inner_transform_change );
+	}
 	
 	this._render_priority = RD.PRIORITY_OPAQUE;
 
@@ -95,6 +105,10 @@ SceneNode.prototype.clone = function()
 	{
 		if(i[0] == "_") //private
 			continue;
+		if(this.__lookupGetter__(i)) //its a getter
+			continue;
+		if(i == "children") //never copy this
+			continue;
 		var v = this[i];
 		if(v === undefined)
 			continue;
@@ -102,6 +116,8 @@ SceneNode.prototype.clone = function()
 			o[i] = null;
 		else if(v.constructor === Object)
 			o[i] = GL.cloneObject(v);
+		else if(v.constructor === Array)
+			o[i] = v.concat();
 		else if(o[i] !== v)
 			o[i] = v;
 	}
@@ -130,28 +146,6 @@ Object.defineProperty(SceneNode.prototype, 'id', {
 * @property position {vec3}
 */
 
-Object.defineProperty(SceneNode.prototype, 'position', {
-	get: function() { return this._position; },
-	set: function(v) { this._position.set(v); this._must_update_matrix = true; },
-	enumerable: true
-});
-
-Object.defineProperty(SceneNode.prototype, 'positionX', {
-	get: function() { return this._position[0]; },
-	set: function(v) { this._position[0] = v; this._must_update_matrix = true; },
-	enumerable: false 
-});
-Object.defineProperty(SceneNode.prototype, 'positionY', {
-	get: function() { return this._position[1]; },
-	set: function(v) { this._position[1] = v; this._must_update_matrix = true; },
-	enumerable: false
-});
-Object.defineProperty(SceneNode.prototype, 'positionZ', {
-	get: function() { return this._position[2]; },
-	set: function(v) { this._position[2] = v; this._must_update_matrix = true; },
-	enumerable: false 
-});
-
 //legacy
 Object.defineProperty(SceneNode.prototype, 'uniforms', {
 	get: function() { return this._uniforms; },
@@ -164,8 +158,18 @@ Object.defineProperty(SceneNode.prototype, 'uniforms', {
 
 
 /**
+* The position relative to its parent in vec3 format
+* @property position {vec3}
+*/
+Object.defineProperty(SceneNode.prototype, 'position', {
+	get: function() { return this._position; },
+	set: function(v) { this._position.set(v); this._must_update_matrix = true; },
+	enumerable: true
+});
+
+/**
 * The orientation relative to its parent in quaternion format
-* @property position {quat}
+* @property rotation {quat}
 */
 
 Object.defineProperty(SceneNode.prototype, 'rotation', {
@@ -174,9 +178,19 @@ Object.defineProperty(SceneNode.prototype, 'rotation', {
 	enumerable: true //avoid problems
 });
 
+/**
+* The scaling relative to its parent in vec3 format (default is [1,1,1])
+* @property scaling {vec3}
+*/
+
 Object.defineProperty(SceneNode.prototype, 'scaling', {
 	get: function() { return this._scale; },
-	set: function(v) { this._scale.set(v); this._must_update_matrix = true; },
+	set: function(v) { 
+		if(v.constructor === Number)
+			this._scale[0] = this._scale[1] = this._scale[2] = v;
+		else
+			this._scale.set(v);
+		this._must_update_matrix = true; },
 	enumerable: true
 });
 
@@ -208,21 +222,10 @@ Object.defineProperty(SceneNode.prototype, 'opacity', {
 */
 Object.defineProperty(SceneNode.prototype, 'scene', {
 	get: function() { return this._scene; },
-	set: function(v) { throw("cannot set scene, add to root node"); },
-	enumerable: false //avoid problems
+	set: function(v) { throw("cannot set scene, you must use addChild in its parent node"); },
+	enumerable: true //avoid problems
 });
 
-
-/* disabled because the property and the action sound the same
-Object.defineProperty(SceneNode.prototype, 'scale', {
-	get: function() { return this._scale; },
-	set: function(v) { 
-		this._scale.set(v); 
-		this._must_update_matrix = true; 
-	},
-	enumerable: false //avoid problems
-});
-*/
 
 /**
 * The parent node where this node is attached
@@ -254,7 +257,7 @@ SceneNode.prototype.addChild = function(node)
 	function change_scene(node, scene)
 	{
 		node._scene = scene;
-		if(node.id)
+		if(node.id && scene)
 			scene._nodes_by_id[node.id] = node;
 		for(var i = 0, l = node.children.length; i < l; i++)
 			change_scene( node.children[i], scene );
@@ -384,7 +387,7 @@ SceneNode.prototype.configure = function(o)
 	//transform
 	if(o.position) vec3.copy( this._position, o.position );
 	if(o.rotation && o.rotation.length == 4) quat.copy( this._rotation, o.rotation );
-	if(o.scale) vec3.copy( this._scale, o.scale );
+	if(o.scaling) vec3.copy( this._scale, o.scaling );
 	this.updateGlobalMatrix();
 
 	//children
@@ -829,14 +832,16 @@ Sprite.prototype.setSize = function(w,h)
 	this.size[1] = h;
 }
 
-Sprite.prototype.createFrames = function(num_rows, names)
+//static version
+Sprite.createFrames = function(num_rows, names, frames)
 {
+	frames = frames || {};
 	var x = 0;
 	var y = 0;
 	var offset = 1/num_rows;
 	for(var i in names)
 	{
-		this.frames[ names[i] ] = { pos:[x,y], size:[offset,offset], normalized: true };
+		frames[ names[i] ] = { pos:[x,y], size:[offset,offset], normalized: true };
 		x += offset;
 		if(x >= 1)
 		{
@@ -844,8 +849,14 @@ Sprite.prototype.createFrames = function(num_rows, names)
 			y += offset;
 		}
 		if(y >= 1)
-			return;
+			return frames;
 	}
+	return frames;
+}
+
+Sprite.prototype.createFrames = function(num_rows, names)
+{
+	Sprite.createFrames(num_rows, names, this.frames );
 }
 
 Sprite.prototype.updateTextureMatrix = function( renderer )
@@ -1440,6 +1451,7 @@ function Renderer(context) {
 	
 	this.num_items_loading = 0;
 	this.items_loading = {};
+	this.frame = 0;
 
 	this.shaders = gl.shaders = {};
 	this.createShaders();
@@ -1501,68 +1513,70 @@ Renderer.prototype.render = function(scene, camera, nodes)
 		scene.root.getVisibleChildren( this._nodes );
 	nodes = nodes || this._nodes;
 
-	if(!nodes.length)
-		return;
-
-	//set globals
-	this._uniforms.u_time = scene.time;
-
-	//precompute distances
-	if(this.sort_by_distance)
-		nodes.forEach( function(a) { a._distance = a.getDistanceTo( camera._position ); } );
-	
-	//filter by mustRender
-	var that = this;
-	nodes = nodes.filter( function(n) { return !n.mustRender || n.mustRender(that,camera) != false; }); //GC
-	
-	//sort by distance
-	if(this.sort_by_distance)
-		nodes.sort(function(a,b) { return b._distance - a._distance; } );
-
-	//sort by priority
-	if(this.sort_by_priority)
-		nodes.sort(function(a,b) { return b._render_priority - a._render_priority; } );
-		
-	//pre rendering
-	if(scene.root.preRender)
-		scene.root.preRender(this,camera);
-	for (var i = 0; i < nodes.length; ++i)
+	if(nodes.length)
 	{
-		var node = nodes[i];
+		//set globals
+		this._uniforms.u_time = scene.time;
+
+		//precompute distances
+		if(this.sort_by_distance)
+			nodes.forEach( function(a) { a._distance = a.getDistanceTo( camera._position ); } );
 		
-		//recompute matrices
-		node.updateGlobalMatrix(true);
+		//filter by mustRender
+		var that = this;
+		nodes = nodes.filter( function(n) { return !n.mustRender || n.mustRender(that,camera) != false; }); //GC
 		
-		if(node.preRender)
-			node.preRender(this,camera);
-	}
-	
-	//rendering	
-	for (var i = 0; i < nodes.length; ++i)
-	{
-		var node = nodes[i];
-		if(node.flags.visible === false)
-			continue;
+		//sort by distance
+		if(this.sort_by_distance)
+			nodes.sort(function(a,b) { return b._distance - a._distance; } );
+
+		//sort by priority
+		if(this.sort_by_priority)
+			nodes.sort(function(a,b) { return b._render_priority - a._render_priority; } );
+			
+		//pre rendering
+		if(scene.root.preRender)
+			scene.root.preRender(this,camera);
+		for (var i = 0; i < nodes.length; ++i)
+		{
+			var node = nodes[i];
+			
+			//recompute matrices
+			node.updateGlobalMatrix(true);
+			
+			if(node.preRender)
+				node.preRender(this,camera);
+		}
 		
-		this.setModelMatrix( node._global_matrix );
+		//rendering	
+		for (var i = 0; i < nodes.length; ++i)
+		{
+			var node = nodes[i];
+			if(node.flags.visible === false)
+				continue;
+			
+			this.setModelMatrix( node._global_matrix );
+			
+			if(node.render)
+				node.render(this, camera);
+			else
+				this.renderNode(node, camera);
+		}
 		
-		if(node.render)
-			node.render(this, camera);
-		else
-			this.renderNode(node, camera);
-	}
-	
-	//post rendering
-	if(scene.root.postRender)
-		scene.root.postRender(this,camera);
-	for (var i = 0; i < nodes.length; ++i)
-	{
-		var node = nodes[i];
-		if(node.postRender)
-			node.postRender(this,camera);
-	}
+		//post rendering
+		if(scene.root.postRender)
+			scene.root.postRender(this,camera);
+		for (var i = 0; i < nodes.length; ++i)
+		{
+			var node = nodes[i];
+			if(node.postRender)
+				node.postRender(this,camera);
+		}
+
+	}//nodes.length
 	
 	scene.frame++;
+	this.frame++;
 	this._current_scene = null;
 }
 
@@ -1648,18 +1662,23 @@ Renderer.prototype.renderNode = function(node, camera)
 		shader = slot > 0 ? this._texture_shader : this._flat_shader;
 		
 	//flags
-	gl.frontFace( node.flags.flip_normals ? gl.CW : gl.CCW );
-	gl[ node.flags.depth_test === false ? "disable" : "enable"]( gl.DEPTH_TEST );
-	if( node.flags.depth_write === false )
-		gl.depthMask( false );
-	gl[ node.flags.two_sided === true ? "disable" : "enable"]( gl.CULL_FACE );
-	
-	//blend
-	if(node.flags.blend)
+	if(!this.ignore_flags)
 	{
-		gl.enable( gl.BLEND );
-		gl.blendFunc( gl.SRC_ALPHA, node.blendMode == "additive" ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA );
+		gl.frontFace( node.flags.flip_normals ? gl.CW : gl.CCW );
+		gl[ node.flags.depth_test === false ? "disable" : "enable"]( gl.DEPTH_TEST );
+		if( node.flags.depth_write === false )
+			gl.depthMask( false );
+		gl[ node.flags.two_sided === true ? "disable" : "enable"]( gl.CULL_FACE );
+		
+		//blend
+		if(node.flags.blend)
+		{
+			gl.enable( gl.BLEND );
+			gl.blendFunc( gl.SRC_ALPHA, node.blendMode == "additive" ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA );
+		}
 	}
+	else
+		gl.blendFunc( gl.SRC_ALPHA, node.blendMode == "additive" ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA );
 	
 	if(node.onRender)
 		node.onRender(this, camera, shader);
@@ -1675,12 +1694,15 @@ Renderer.prototype.renderNode = function(node, camera)
 	else
 		shader.draw( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.indices );
 
-	if( node.flags.flip_normals ) gl.frontFace( gl.CCW );
-	if( node.flags.depth_test === false ) gl.enable( gl.DEPTH_TEST );
-	if( node.flags.blend ) gl.disable( gl.BLEND );
-	if( node.flags.two_sided ) gl.disable( gl.CULL_FACE );
-	if( node.flags.depth_write === false )
-		gl.depthMask( true );
+	if(!this.ignore_flags)
+	{
+		if( node.flags.flip_normals ) gl.frontFace( gl.CCW );
+		if( node.flags.depth_test === false ) gl.enable( gl.DEPTH_TEST );
+		if( node.flags.blend ) gl.disable( gl.BLEND );
+		if( node.flags.two_sided ) gl.disable( gl.CULL_FACE );
+		if( node.flags.depth_write === false )
+			gl.depthMask( true );
+	}
 }
 
 Renderer.prototype.setPointSize = function(v)
@@ -2206,12 +2228,16 @@ Camera.prototype.orbitDistanceFactor = function(f, center)
 Camera.prototype.project = function( vec, viewport, result )
 {
 	result = result || vec3.create();
-	viewport = viewport || [0,0,gl.canvas.width, gl.canvas.height];
+	viewport = viewport || gl.viewport_data;
 
-	//*
-	//from https://github.com/hughsk/from-3d-to-2d/blob/master/index.js
+	mat4.projectVec3(result, this._viewprojection_matrix, vec );
+
+	//adjust to viewport
+	result[0] = result[0] * viewport[2] + viewport[0];
+	result[1] = result[1] * viewport[3] + viewport[1];
+
+	/*
 	var m = this._viewprojection_matrix;
-
 	var ix = vec[0];
 	var iy = vec[1];
 	var iz = vec[2];
@@ -2228,19 +2254,9 @@ Camera.prototype.project = function( vec, viewport, result )
 	result[0] = projx * viewport[2] + viewport[0];
 	result[1] = projy * viewport[3] + viewport[1];
 	result[2] = projz;
+*/
+
 	return result;
-
-	/*
-	var proj = mat4.multiplyVec3( temp_vec3, this._viewprojection_matrix, vec );
-	proj[0] /= proj[2];
-	proj[1] /= proj[2];
-
-	result[0] = (proj[0]+1) * (viewport[2]*0.5) + viewport[0];
-	result[1] = (proj[1]+1) * (viewport[3]*0.5) + viewport[1];
-	result[2] = proj[2];
-	return result;
-	*/
-
 }
 
 //from 2D to 3D
