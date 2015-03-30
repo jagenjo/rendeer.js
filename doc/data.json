@@ -1,0 +1,1315 @@
+{
+    "project": {},
+    "files": {
+        "../src/rendeer.js": {
+            "name": "../src/rendeer.js",
+            "modules": {},
+            "classes": {
+                "RD": 1,
+                "SceneNode": 1,
+                "Sprite": 1,
+                "Billboard": 1,
+                "PointCloud": 1,
+                "ParticlesEmissor": 1,
+                "Scene": 1,
+                "Renderer": 1,
+                "Camera": 1
+            },
+            "fors": {},
+            "namespaces": {}
+        }
+    },
+    "modules": {},
+    "classes": {
+        "RD": {
+            "name": "RD",
+            "shortname": "RD",
+            "classitems": [],
+            "plugins": [],
+            "extensions": [],
+            "plugin_for": [],
+            "extension_for": [],
+            "file": "../src/rendeer.js",
+            "line": 8,
+            "description": "RD namespace",
+            "is_constructor": 1
+        },
+        "SceneNode": {
+            "name": "SceneNode",
+            "shortname": "SceneNode",
+            "classitems": [],
+            "plugins": [],
+            "extensions": [],
+            "plugin_for": [],
+            "extension_for": [],
+            "file": "../src/rendeer.js",
+            "line": 52,
+            "description": "SceneNode class to hold an scene item",
+            "is_constructor": 1
+        },
+        "Sprite": {
+            "name": "Sprite",
+            "shortname": "Sprite",
+            "classitems": [],
+            "plugins": [],
+            "extensions": [],
+            "plugin_for": [],
+            "extension_for": [],
+            "file": "../src/rendeer.js",
+            "line": 833,
+            "description": "Sprite class , inherits from SceneNode but helps to render 2D planes (in 3D Space)",
+            "is_constructor": 1
+        },
+        "Billboard": {
+            "name": "Billboard",
+            "shortname": "Billboard",
+            "classitems": [],
+            "plugins": [],
+            "extensions": [],
+            "plugin_for": [],
+            "extension_for": [],
+            "file": "../src/rendeer.js",
+            "line": 970,
+            "description": "Billboard class to hold an scene item, used for camera aligned objects",
+            "is_constructor": 1
+        },
+        "PointCloud": {
+            "name": "PointCloud",
+            "shortname": "PointCloud",
+            "classitems": [],
+            "plugins": [],
+            "extensions": [],
+            "plugin_for": [],
+            "extension_for": [],
+            "file": "../src/rendeer.js",
+            "line": 1045,
+            "description": "PointCloud renders an array of points",
+            "is_constructor": 1
+        },
+        "ParticlesEmissor": {
+            "name": "ParticlesEmissor",
+            "shortname": "ParticlesEmissor",
+            "classitems": [],
+            "plugins": [],
+            "extensions": [],
+            "plugin_for": [],
+            "extension_for": [],
+            "file": "../src/rendeer.js",
+            "line": 1199,
+            "description": "ParticlesEmissor renders points and animate them as particles",
+            "is_constructor": 1
+        },
+        "Scene": {
+            "name": "Scene",
+            "shortname": "Scene",
+            "classitems": [],
+            "plugins": [],
+            "extensions": [],
+            "plugin_for": [],
+            "extension_for": [],
+            "file": "../src/rendeer.js",
+            "line": 1410,
+            "description": "Scene holds the full scene graph, use root to access the root child",
+            "is_constructor": 1
+        },
+        "Renderer": {
+            "name": "Renderer",
+            "shortname": "Renderer",
+            "classitems": [],
+            "plugins": [],
+            "extensions": [],
+            "plugin_for": [],
+            "extension_for": [],
+            "file": "../src/rendeer.js",
+            "line": 1470,
+            "description": "Renderer in charge of rendering a Scene",
+            "is_constructor": 1
+        },
+        "Camera": {
+            "name": "Camera",
+            "shortname": "Camera",
+            "classitems": [],
+            "plugins": [],
+            "extensions": [],
+            "plugin_for": [],
+            "extension_for": [],
+            "file": "../src/rendeer.js",
+            "line": 2142,
+            "description": "Camera holds of the info about the camera",
+            "is_constructor": 1
+        }
+    },
+    "classitems": [
+        {
+            "file": "../src/rendeer.js",
+            "line": 135,
+            "description": "A unique identifier, useful to retrieve nodes by name",
+            "itemtype": "property",
+            "name": "id",
+            "type": "String",
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 150,
+            "description": "the name of the shader in the shaders manager",
+            "itemtype": "property",
+            "name": "shader",
+            "type": "String",
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 156,
+            "description": "The position relative to its parent",
+            "itemtype": "property",
+            "name": "uniforms",
+            "type": "Vec3",
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 170,
+            "description": "The position relative to its parent in vec3 format",
+            "itemtype": "property",
+            "name": "position",
+            "type": "Vec3",
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 180,
+            "description": "The orientation relative to its parent in quaternion format",
+            "itemtype": "property",
+            "name": "rotation",
+            "type": "Quat",
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 191,
+            "description": "The scaling relative to its parent in vec3 format (default is [1,1,1])",
+            "itemtype": "property",
+            "name": "scaling",
+            "type": "Vec3",
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 207,
+            "description": "The color in RGBA format",
+            "itemtype": "property",
+            "name": "color",
+            "type": "Vec4",
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 217,
+            "description": "This number is the 4� component of color but can be accessed directly",
+            "itemtype": "property",
+            "name": "opacity",
+            "type": "Number",
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 227,
+            "description": "The scene where this node is attached",
+            "itemtype": "property",
+            "name": "scene",
+            "type": "Scene",
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 238,
+            "description": "The parent node where this node is attached",
+            "itemtype": "property",
+            "name": "parentNode",
+            "type": "SceneNode",
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 249,
+            "description": "Attach node to its children list",
+            "itemtype": "method",
+            "name": "addChild",
+            "params": [
+                {
+                    "name": "node",
+                    "description": "",
+                    "type": "RD.SceneNode"
+                }
+            ],
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 275,
+            "description": "Remove a node from its children list",
+            "itemtype": "method",
+            "name": "removeChild",
+            "params": [
+                {
+                    "name": "node",
+                    "description": "",
+                    "type": "SceneNode"
+                }
+            ],
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 306,
+            "description": "Change the order inside the children, useful when rendering without Depth Test",
+            "itemtype": "method",
+            "name": "setChildIndex",
+            "params": [
+                {
+                    "name": "child",
+                    "description": "",
+                    "type": "RD.SceneNode"
+                },
+                {
+                    "name": "index",
+                    "description": "",
+                    "type": "Number"
+                }
+            ],
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 321,
+            "description": "Recursively retrieves all children nodes (this doesnt include itself)",
+            "itemtype": "method",
+            "name": "getAllChildren",
+            "params": [
+                {
+                    "name": "result",
+                    "description": "[Optional] you can specify an array where all the children will be pushed",
+                    "type": "Array"
+                }
+            ],
+            "return": {
+                "description": "all the children nodes",
+                "type": "Array"
+            },
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 341,
+            "description": "Recursively retrieves all children nodes taking into account visibility (flags.visible)",
+            "itemtype": "method",
+            "name": "getVisibleChildren",
+            "params": [
+                {
+                    "name": "result",
+                    "description": "[Optional] you can specify an array where all the children will be pushed",
+                    "type": "Array"
+                }
+            ],
+            "return": {
+                "description": "all the children nodes",
+                "type": "Array"
+            },
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 364,
+            "description": "Returns an object that represents the current state of this object an its children",
+            "itemtype": "method",
+            "name": "serialize",
+            "return": {
+                "description": "object",
+                "type": "Object"
+            },
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 387,
+            "description": "Configure this SceneNode to a state from an object (used with serialize)",
+            "itemtype": "method",
+            "name": "configure",
+            "params": [
+                {
+                    "name": "o",
+                    "description": "object with the state of a SceneNode",
+                    "type": "Object"
+                }
+            ],
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 405,
+            "description": "sets the name of the mesh to be used to render the object",
+            "itemtype": "method",
+            "name": "setMesh",
+            "params": [
+                {
+                    "name": "mesh_name",
+                    "description": "also it accepts a mesh itself",
+                    "type": "String|Mesh"
+                }
+            ],
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 420,
+            "description": "Sets the name of the mesh to be used to render the object",
+            "itemtype": "method",
+            "name": "setTexture",
+            "params": [
+                {
+                    "name": "channel",
+                    "description": "which channel to use (the texture will be uploaded to the shader with the name \"u_\" + channel + \"_texture\"",
+                    "type": "String"
+                },
+                {
+                    "name": "texture",
+                    "description": "texture name (textures are retrieved from the renderer.textures",
+                    "type": "String"
+                }
+            ],
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 434,
+            "description": "name of texture to use in the color channel (the same as SetTexture(\"color\", name ))",
+            "itemtype": "property",
+            "name": "texture",
+            "type": "String",
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 444,
+            "description": "clears position, rotation and scale",
+            "itemtype": "method",
+            "name": "resetTransform",
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 456,
+            "description": "Translate object in local space",
+            "itemtype": "method",
+            "name": "translate",
+            "params": [
+                {
+                    "name": "delta",
+                    "description": "",
+                    "type": "Vec3"
+                }
+            ],
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 467,
+            "description": "Rotate object (supports local or global but doesnt takes into account parent)",
+            "itemtype": "method",
+            "name": "rotate",
+            "params": [
+                {
+                    "name": "angle_in_rad",
+                    "description": "",
+                    "type": "Number"
+                },
+                {
+                    "name": "axis",
+                    "description": "",
+                    "type": "Vec3"
+                },
+                {
+                    "name": "in_local",
+                    "description": "specify if the axis is in local space or global space",
+                    "type": "Boolean"
+                }
+            ],
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 485,
+            "description": "Scale object",
+            "itemtype": "method",
+            "name": "scale",
+            "params": [
+                {
+                    "name": "v",
+                    "description": "",
+                    "type": "Vec3"
+                }
+            ],
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 502,
+            "description": "Set the pivot point, 0,0,0 by default (WARNING: use flags.pivot = true  to enable the use of the pivot)",
+            "itemtype": "method",
+            "name": "setPivot",
+            "params": [
+                {
+                    "name": "pivot",
+                    "description": "local coordinate of the pivot point",
+                    "type": "Vec3"
+                }
+            ],
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 522,
+            "description": "Get transform local matrix",
+            "itemtype": "method",
+            "name": "getLocalMatrix",
+            "return": {
+                "description": "matrix44",
+                "type": "Mat4"
+            },
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 534,
+            "description": "Get transform global matrix (concatenating parents) (its a reference)",
+            "itemtype": "method",
+            "name": "getGlobalMatrix",
+            "return": {
+                "description": "matrix44",
+                "type": "Mat4"
+            },
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 545,
+            "description": "Get global rotation (concatenating parent rotations)",
+            "itemtype": "method",
+            "name": "getGlobalRotation",
+            "params": [
+                {
+                    "name": "result",
+                    "description": "[Optional] quaternion to store the result",
+                    "type": "Quat"
+                }
+            ],
+            "return": {
+                "description": "resulting rotation in quaternion format",
+                "type": "Quat"
+            },
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 567,
+            "description": "recomputes _local_matrix according to position, rotation and scaling",
+            "itemtype": "method",
+            "name": "updateLocalMatrix",
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 608,
+            "description": "recomputes _global_matrix according to position, rotation and scaling",
+            "itemtype": "method",
+            "name": "updateGlobalMatrix",
+            "params": [
+                {
+                    "name": "fast",
+                    "description": "skips recomputation of parent, use it only if you are sure its already updated",
+                    "type": "Boolean"
+                },
+                {
+                    "name": "update_childs",
+                    "description": "update global matrix in childs too",
+                    "type": "Boolean"
+                }
+            ],
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 641,
+            "description": "recompute local and global matrix",
+            "itemtype": "method",
+            "name": "updateMatrices",
+            "params": [
+                {
+                    "name": "fast",
+                    "description": "uses the global matrix as it is in the parent node instead of crawling all the ierarchy",
+                    "type": "Bool"
+                }
+            ],
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 652,
+            "description": "updates position, rotation and scale from the matrix",
+            "itemtype": "method",
+            "name": "fromMatrix",
+            "params": [
+                {
+                    "name": "m",
+                    "description": "the matrix",
+                    "type": "Mat4"
+                },
+                {
+                    "name": "is_global",
+                    "description": "optional, if the matrix is in global or local space",
+                    "type": "Bool"
+                }
+            ],
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 698,
+            "description": "Returns a point multiplied by the local matrix",
+            "itemtype": "method",
+            "name": "getLocalPoint",
+            "params": [
+                {
+                    "name": "v",
+                    "description": "the point",
+                    "type": "Vec3"
+                },
+                {
+                    "name": "result",
+                    "description": "optional, where to store the output",
+                    "type": "Vec3"
+                }
+            ],
+            "return": {
+                "description": "result",
+                "type": "Vec3"
+            },
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 713,
+            "description": "Returns a point rotated by the local rotation",
+            "itemtype": "method",
+            "name": "getLocalVector",
+            "params": [
+                {
+                    "name": "v",
+                    "description": "the point",
+                    "type": "Vec3"
+                },
+                {
+                    "name": "result",
+                    "description": "optional, where to store the output",
+                    "type": "Vec3"
+                }
+            ],
+            "return": {
+                "description": "result",
+                "type": "Vec3"
+            },
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 726,
+            "description": "Returns the node position in global coordinates",
+            "itemtype": "method",
+            "name": "getGlobalPosition",
+            "params": [
+                {
+                    "name": "result",
+                    "description": "optional, where to store the output",
+                    "type": "Vec3"
+                }
+            ],
+            "return": {
+                "description": "result",
+                "type": "Vec3"
+            },
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 739,
+            "description": "Returns a point multiplied by the global matrix",
+            "itemtype": "method",
+            "name": "getGlobalPoint",
+            "params": [
+                {
+                    "name": "v",
+                    "description": "the point",
+                    "type": "Vec3"
+                },
+                {
+                    "name": "result",
+                    "description": "optional, where to store the output",
+                    "type": "Vec3"
+                }
+            ],
+            "return": {
+                "description": "result",
+                "type": "Vec3"
+            },
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 753,
+            "description": "Returns a point rotated by the global matrix",
+            "itemtype": "method",
+            "name": "getGlobalVector",
+            "params": [
+                {
+                    "name": "v",
+                    "description": "the point",
+                    "type": "Vec3"
+                },
+                {
+                    "name": "result",
+                    "description": "optional, where to store the output",
+                    "type": "Vec3"
+                }
+            ],
+            "return": {
+                "description": "result",
+                "type": "Vec3"
+            },
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 767,
+            "description": "Returns the distance between the center of the node and the position in global coordinates",
+            "itemtype": "method",
+            "name": "getDistanceTo",
+            "params": [
+                {
+                    "name": "position",
+                    "description": "the point",
+                    "type": "Vec3"
+                }
+            ],
+            "return": {
+                "description": "result",
+                "type": "Number"
+            },
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 780,
+            "description": "Searchs the node and returns the first child node with the matching id, it is a recursive search so it is slow",
+            "itemtype": "method",
+            "name": "findNode",
+            "params": [
+                {
+                    "name": "id",
+                    "description": "the id of the node",
+                    "type": "String"
+                }
+            ],
+            "return": {
+                "description": "result node otherwise null",
+                "type": "SceneNode"
+            },
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 800,
+            "description": "calls a function in child nodes",
+            "itemtype": "method",
+            "name": "propagate",
+            "params": [
+                {
+                    "name": "method",
+                    "description": "name",
+                    "type": "String"
+                },
+                {
+                    "name": "params",
+                    "description": "array containing the params",
+                    "type": "Array"
+                }
+            ],
+            "class": "SceneNode"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 1427,
+            "description": "clears all nodes inside",
+            "itemtype": "method",
+            "name": "clear",
+            "class": "Scene"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 1438,
+            "description": "returns gets node by id",
+            "itemtype": "method",
+            "name": "getNodeById",
+            "class": "Scene"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 1448,
+            "description": "propagate update method",
+            "itemtype": "method",
+            "name": "update",
+            "params": [
+                {
+                    "name": "dt",
+                    "description": "",
+                    "type": "Number"
+                }
+            ],
+            "class": "Scene"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 1459,
+            "description": "The root node",
+            "itemtype": "property",
+            "name": "root",
+            "type": "RD.SceneNode",
+            "class": "Scene"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 1527,
+            "description": "whats the data folder where all data should be fetch",
+            "itemtype": "method",
+            "name": "setDataFolder",
+            "params": [
+                {
+                    "name": "path",
+                    "description": "",
+                    "type": "String"
+                }
+            ],
+            "class": "Renderer"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 1546,
+            "description": "clear color and depth buffer",
+            "itemtype": "method",
+            "name": "clear",
+            "params": [
+                {
+                    "name": "color",
+                    "description": "clear color",
+                    "type": "Vec4"
+                }
+            ],
+            "class": "Renderer"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 1560,
+            "description": "renders once scene from one camera",
+            "itemtype": "method",
+            "name": "render",
+            "params": [
+                {
+                    "name": "scene",
+                    "description": "",
+                    "type": "RD.Scene"
+                },
+                {
+                    "name": "camera",
+                    "description": "",
+                    "type": "RD.Camera"
+                },
+                {
+                    "name": "nodes",
+                    "description": "[Optional] array with nodes to render, otherwise all nodes will be rendered",
+                    "type": "Array"
+                }
+            ],
+            "class": "Renderer"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 1795,
+            "description": "Loads one mesh and stores inside the meshes object to be reused in the future, if it is already loaded it skips the loading",
+            "itemtype": "method",
+            "name": "loadMesh",
+            "params": [
+                {
+                    "name": "name",
+                    "description": "name (and url) of the mesh",
+                    "type": "String"
+                },
+                {
+                    "name": "on_complete",
+                    "description": "callback",
+                    "type": "Function"
+                }
+            ],
+            "class": "Renderer"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 1838,
+            "description": "Loads one texture and stores inside the textures object to be reused in the future, if it is already loaded it skips the loading",
+            "itemtype": "method",
+            "name": "loadTexture",
+            "params": [
+                {
+                    "name": "name",
+                    "description": "name (and url) of the texture",
+                    "type": "String"
+                },
+                {
+                    "name": "options",
+                    "description": "texture options as in litegl (option.name is used to store it with a different name)",
+                    "type": "Object"
+                },
+                {
+                    "name": "on_complete",
+                    "description": "callback",
+                    "type": "Function"
+                }
+            ],
+            "class": "Renderer"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 1927,
+            "description": "Loads a shaders file in the Atlas file format (check GL.loadFileAtlas in litegl)",
+            "itemtype": "method",
+            "name": "loadShaders",
+            "params": [
+                {
+                    "name": "url",
+                    "description": "url to text file containing all the shader files",
+                    "type": "String"
+                },
+                {
+                    "name": "on_complete",
+                    "description": "callback",
+                    "type": "Function"
+                }
+            ],
+            "class": "Renderer"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2100,
+            "description": "container with all the registered meshes (same as gl.meshes)",
+            "itemtype": "property",
+            "name": "meshes",
+            "type": "Object",
+            "class": "Renderer"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2110,
+            "description": "container with all the registered textures (same as gl.textures)",
+            "itemtype": "property",
+            "name": "textures",
+            "type": "Object",
+            "class": "Renderer"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2120,
+            "description": "container with all the registered shaders (same as gl.shaders)",
+            "itemtype": "property",
+            "name": "shaders",
+            "type": "Object",
+            "class": "Renderer"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2149,
+            "description": "the camera type, RD.Camera.PERSPECTIVE || RD.Camera.ORTHOGRAPHIC",
+            "itemtype": "property",
+            "name": "type",
+            "type": "Number",
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2159,
+            "description": "near distance default is 0.1",
+            "itemtype": "property",
+            "name": "near",
+            "type": "Number",
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2164,
+            "description": "far distance default is 10000",
+            "itemtype": "property",
+            "name": "far",
+            "type": "Number",
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2169,
+            "description": "aspect (width / height)",
+            "itemtype": "property",
+            "name": "aspect",
+            "type": "Number",
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2174,
+            "description": "fov angle in degrees, default is 45",
+            "itemtype": "property",
+            "name": "fov",
+            "type": "Number",
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2179,
+            "description": "size of frustrum when working in orthographic, default is 50",
+            "itemtype": "property",
+            "name": "frustum_size",
+            "type": "Number",
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2217,
+            "description": "Position where the camera eye is located",
+            "itemtype": "property",
+            "name": "position",
+            "type": "Vec3",
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2227,
+            "description": "Where the camera is looking at, the center of where is looking",
+            "itemtype": "property",
+            "name": "target",
+            "type": "Vec3",
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2237,
+            "description": "Up vector",
+            "itemtype": "property",
+            "name": "up",
+            "type": "Vec3",
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2247,
+            "description": "changes the camera to perspective mode",
+            "itemtype": "method",
+            "name": "perspective",
+            "params": [
+                {
+                    "name": "fov",
+                    "description": "",
+                    "type": "Number"
+                },
+                {
+                    "name": "aspect",
+                    "description": "",
+                    "type": "Number"
+                },
+                {
+                    "name": "near",
+                    "description": "",
+                    "type": "Number"
+                },
+                {
+                    "name": "far",
+                    "description": "",
+                    "type": "Number"
+                }
+            ],
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2266,
+            "description": "changes the camera to orthographic mode (frustumsize is top-down)",
+            "itemtype": "method",
+            "name": "orthographic",
+            "params": [
+                {
+                    "name": "frustum_size",
+                    "description": "",
+                    "type": "Number"
+                },
+                {
+                    "name": "near",
+                    "description": "",
+                    "type": "Number"
+                },
+                {
+                    "name": "far",
+                    "description": "",
+                    "type": "Number"
+                },
+                {
+                    "name": "aspect",
+                    "description": "",
+                    "type": "Number"
+                }
+            ],
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2283,
+            "description": "configure view of the camera",
+            "itemtype": "method",
+            "name": "lookAt",
+            "params": [
+                {
+                    "name": "position",
+                    "description": "",
+                    "type": "Vec3"
+                },
+                {
+                    "name": "target",
+                    "description": "",
+                    "type": "Vec3"
+                },
+                {
+                    "name": "up",
+                    "description": "",
+                    "type": "Vec3"
+                }
+            ],
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2299,
+            "description": "update view projection matrices",
+            "itemtype": "method",
+            "name": "updateMatrices",
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2334,
+            "description": "update camera using a model as reference",
+            "itemtype": "method",
+            "name": "updateMatrices",
+            "params": [
+                {
+                    "name": "model",
+                    "description": "",
+                    "type": "Mat4"
+                }
+            ],
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2348,
+            "description": "transform vector (only rotates) from local to global",
+            "itemtype": "method",
+            "name": "getLocalVector",
+            "params": [
+                {
+                    "name": "v",
+                    "description": "",
+                    "type": "Vec3"
+                },
+                {
+                    "name": "result",
+                    "description": "[Optional]",
+                    "type": "Vec3"
+                }
+            ],
+            "return": {
+                "description": "local point transformed",
+                "type": "Vec3"
+            },
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2363,
+            "description": "transform point from local to global",
+            "itemtype": "method",
+            "name": "getLocalVector",
+            "params": [
+                {
+                    "name": "v",
+                    "description": "",
+                    "type": "Vec3"
+                },
+                {
+                    "name": "result",
+                    "description": "[Optional]",
+                    "type": "Vec3"
+                }
+            ],
+            "return": {
+                "description": "local point transformed",
+                "type": "Vec3"
+            },
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2378,
+            "description": "gets the front vector normalized",
+            "itemtype": "method",
+            "name": "getFront",
+            "params": [
+                {
+                    "name": "dest",
+                    "description": "[Optional]",
+                    "type": "Vec3"
+                }
+            ],
+            "return": {
+                "description": "front vector",
+                "type": "Vec3"
+            },
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2435,
+            "description": "projects a point from 3D to 2D",
+            "itemtype": "method",
+            "name": "project",
+            "params": [
+                {
+                    "name": "vec",
+                    "description": "",
+                    "type": "Vec3"
+                },
+                {
+                    "name": "viewport",
+                    "description": "[optional, otherwise current viewport is used]",
+                    "type": "Array"
+                },
+                {
+                    "name": "result",
+                    "description": "[Optional]",
+                    "type": "Vec3"
+                }
+            ],
+            "return": {
+                "description": "the projected point",
+                "type": "Vec3"
+            },
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2457,
+            "description": "projects a point from 2D to 3D",
+            "itemtype": "method",
+            "name": "unproject",
+            "params": [
+                {
+                    "name": "vec",
+                    "description": "",
+                    "type": "Vec3"
+                },
+                {
+                    "name": "viewport",
+                    "description": "[optional, otherwise current viewport is used]",
+                    "type": "Array"
+                },
+                {
+                    "name": "result",
+                    "description": "[Optional]",
+                    "type": "Vec3"
+                }
+            ],
+            "return": {
+                "description": "the projected point",
+                "type": "Vec3"
+            },
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2471,
+            "description": "given a screen coordinate it cast a ray and returns the collision point with a given plane",
+            "itemtype": "method",
+            "name": "getRayPlaneCollision",
+            "params": [
+                {
+                    "name": "x",
+                    "description": "",
+                    "type": "Number"
+                },
+                {
+                    "name": "y",
+                    "description": "",
+                    "type": "Number"
+                },
+                {
+                    "name": "position",
+                    "description": "Plane point",
+                    "type": "Vec3"
+                },
+                {
+                    "name": "normal",
+                    "description": "Plane normal",
+                    "type": "Vec3"
+                },
+                {
+                    "name": "result",
+                    "description": "[Optional]",
+                    "type": "Vec3"
+                }
+            ],
+            "return": {
+                "description": "the collision point, or null",
+                "type": "Vec3"
+            },
+            "class": "Camera"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 2565,
+            "description": "test if sphere is inside frustrum (you must call camera.extractPlanes() previously to update frustrum planes)",
+            "itemtype": "method",
+            "name": "testSphere",
+            "params": [
+                {
+                    "name": "center",
+                    "description": "",
+                    "type": "Vec3"
+                },
+                {
+                    "name": "radius",
+                    "description": "",
+                    "type": "Number"
+                }
+            ],
+            "return": {
+                "description": "CLIP_OUTSIDE or CLIP_INSIDE or CLIP_OVERLAP",
+                "type": "Number"
+            },
+            "class": "Camera"
+        }
+    ],
+    "warnings": []
+}
