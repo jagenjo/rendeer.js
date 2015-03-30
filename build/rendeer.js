@@ -5,6 +5,12 @@
 //main namespace
 (function(global){
 
+
+/**
+* RD namespace
+* @class RD
+* @constructor
+*/
 var RD = global.RD = {};
 
 RD.ZERO = vec3.fromValues(0,0,0);
@@ -49,13 +55,12 @@ var temp_quat = quat.create();
 * @class SceneNode
 * @constructor
 */
-
 function SceneNode()
 {
 	this._ctor();
 }
 
-global.SceneNode = RD.SceneNode = SceneNode;
+RD.SceneNode = SceneNode;
 
 SceneNode.prototype._ctor = function()
 {
@@ -94,10 +99,12 @@ SceneNode.prototype._ctor = function()
 	this.children = [];
 }
 
+/*
 SceneNode.prototype.super = function(class_name)
 {
 	
 }
+*/
 
 SceneNode.prototype.clone = function()
 {
@@ -130,7 +137,6 @@ SceneNode.prototype.clone = function()
 * A unique identifier, useful to retrieve nodes by name
 * @property id {string}
 */
-
 Object.defineProperty(SceneNode.prototype, 'id', {
 	get: function() { return this._id; },
 	set: function(v) {
@@ -143,11 +149,15 @@ Object.defineProperty(SceneNode.prototype, 'id', {
 });
 
 /**
-* The position relative to its parent
-* @property position {vec3}
+* the name of the shader in the shaders manager
+* @property shader {string}
 */
 
-//legacy
+
+/**
+* The position relative to its parent
+* @property uniforms {vec3}
+*/
 Object.defineProperty(SceneNode.prototype, 'uniforms', {
 	get: function() { return this._uniforms; },
 	set: function(v) { 
@@ -183,7 +193,6 @@ Object.defineProperty(SceneNode.prototype, 'rotation', {
 * The scaling relative to its parent in vec3 format (default is [1,1,1])
 * @property scaling {vec3}
 */
-
 Object.defineProperty(SceneNode.prototype, 'scaling', {
 	get: function() { return this._scale; },
 	set: function(v) { 
@@ -198,9 +207,8 @@ Object.defineProperty(SceneNode.prototype, 'scaling', {
 
 /**
 * The color in RGBA format
-* @property color {vec3}
+* @property color {vec4}
 */
-
 Object.defineProperty(SceneNode.prototype, 'color', {
 	get: function() { return this._color; },
 	set: function(v) { this._color.set(v); },
@@ -242,7 +250,7 @@ Object.defineProperty(SceneNode.prototype, 'parentNode', {
 /**
 * Attach node to its children list
 * @method addChild
-* @param {SceneNode} node
+* @param {RD.SceneNode} node
 */
 SceneNode.prototype.addChild = function(node)
 {
@@ -299,7 +307,7 @@ SceneNode.prototype.removeChild = function(node)
 /**
 * Change the order inside the children, useful when rendering without Depth Test
 * @method setChildIndex
-* @param {SceneNode} node
+* @param {RD.SceneNode} child
 * @param {Number} index
 */
 SceneNode.prototype.setChildIndex = function(child, index)
@@ -337,21 +345,21 @@ SceneNode.prototype.getAllChildren = function(r)
 * @param {Array} result [Optional] you can specify an array where all the children will be pushed
 * @return {Array} all the children nodes
 */
-SceneNode.prototype.getVisibleChildren = function(r)
+SceneNode.prototype.getVisibleChildren = function(result)
 {
-	r = r || [];
+	result = result || [];
 
 	if(this.flags.visible === false)
-		return r;
+		return result;
 
 	for(var i = 0, l = this.children.length; i < l; i++)
 	{
 		var node = this.children[i];
-		r.push(node);
-		node.getVisibleChildren(r);
+		result.push(node);
+		node.getVisibleChildren(result);
 	}
 
-	return r;
+	return result;
 }
 
 /**
@@ -382,7 +390,6 @@ SceneNode.prototype.serialize = function()
 * @method configure
 * @param {Object} o object with the state of a SceneNode
 */
-
 SceneNode.prototype.configure = function(o)
 {
 	//transform
@@ -401,7 +408,7 @@ SceneNode.prototype.configure = function(o)
 * @method setMesh
 * @param {String|Mesh} mesh_name also it accepts a mesh itself
 */
-SceneNode.prototype.setMesh = function(v)
+SceneNode.prototype.setMesh = function(mesh_name)
 {
 	if(!v)
 		this.mesh = null;
@@ -414,8 +421,8 @@ SceneNode.prototype.setMesh = function(v)
 /**
 * Sets the name of the mesh to be used to render the object
 * @method setTexture
-* @param {String} which channel to use (the texture will be uploaded to the shader with the name "u_" + channel + "_texture"
-* @param {String} texture name (textures are retrieved from the renderer.textures
+* @param {String} channel which channel to use (the texture will be uploaded to the shader with the name "u_" + channel + "_texture"
+* @param {String} texture texture name (textures are retrieved from the renderer.textures
 */
 SceneNode.prototype.setTexture = function(channel, texture)
 {
@@ -425,6 +432,10 @@ SceneNode.prototype.setTexture = function(channel, texture)
 		this.textures[ channel ] = texture;
 }
 
+/**
+* name of texture to use in the color channel (the same as SetTexture("color", name ))
+* @property texture {string}
+*/
 Object.defineProperty(SceneNode.prototype, 'texture', {
 	get: function() { return this.textures["color"]; },
 	set: function(v) { this.textures["color"] = v; },
@@ -448,16 +459,16 @@ SceneNode.prototype.resetTransform = function()
 * @method translate
 * @param {vec3} delta
 */
-SceneNode.prototype.translate = function(v)
+SceneNode.prototype.translate = function(delta)
 {
-	vec3.add( this._position, this._position, v );
+	vec3.add( this._position, this._position, delta );
 	this._must_update_matrix = true;
 }
 
 /**
 * Rotate object (supports local or global but doesnt takes into account parent)
 * @method rotate
-* @param {number} angle
+* @param {number} angle_in_rad
 * @param {vec3} axis
 * @param {boolean} in_local specify if the axis is in local space or global space
 */
@@ -475,7 +486,7 @@ SceneNode.prototype.rotate = function(angle_in_rad, axis, in_local)
 /**
 * Scale object 
 * @method scale
-* @param {vec3} scaling
+* @param {vec3} v
 */
 SceneNode.prototype.scale = function(v)
 {
@@ -494,11 +505,11 @@ SceneNode.prototype.scale = function(v)
 * @method setPivot
 * @param {vec3} pivot local coordinate of the pivot point
 */
-SceneNode.prototype.setPivot = function(v)
+SceneNode.prototype.setPivot = function(pivot)
 {
 	if(!this._pivot)
 		this._pivot = vec3.create();
-	this._pivot.set(v);
+	this._pivot.set(pivot);
 }
 
 SceneNode.prototype.orbit = function(angle, axis, pivot)
@@ -554,6 +565,10 @@ SceneNode.prototype.getGlobalRotation = function(result)
 	return result;
 }
 
+/**
+* recomputes _local_matrix according to position, rotation and scaling
+* @method updateLocalMatrix
+*/
 SceneNode.prototype.updateLocalMatrix = function()
 {
 	var m = this._local_matrix;
@@ -590,7 +605,13 @@ SceneNode.prototype.updateLocalMatrix = function()
 	}
 }
 
-//fast skips recomputation of parent, use it only if you are sure its already updated
+//
+/**
+* recomputes _global_matrix according to position, rotation and scaling
+* @method updateGlobalMatrix
+* @param {boolean} fast skips recomputation of parent, use it only if you are sure its already updated
+* @param {boolean} update_childs update global matrix in childs too
+*/
 SceneNode.prototype.updateGlobalMatrix = function(fast, update_childs)
 {
 	var global = null;
@@ -777,17 +798,25 @@ SceneNode.prototype.findNode = function(id)
 	return null;
 }
 
-//call methods inside
+/**
+* calls a function in child nodes
+* @method propagate
+* @param {String} method name
+* @param {Array} params array containing the params
+*/
 SceneNode.prototype.propagate = function(method, params)
 {
 	for(var i = 0, l = this.children.length; i < l; i++)
 	{
 		var node = this.children[i];
-		if(!node)
+		if(!node) //¿?
 			continue;
+		//has method
 		if(node[method])
 			node[method].apply(node, params);
-		node.propagate(method, params);
+		//recursive
+		if(node.children && node.children.length)
+			node.propagate(method, params);
 	}
 }
 
@@ -802,7 +831,11 @@ SceneNode.prototype.loadTextConfig = function(url, callback)
         }, alert);
 }
 
-// Sprite is a SceneNode but with some parameters already configured to work in 2D
+/**
+* Sprite class , inherits from SceneNode but helps to render 2D planes (in 3D Space)
+* @class Sprite
+* @constructor
+*/
 function Sprite()
 {
 	this._ctor();
@@ -935,12 +968,18 @@ extendClass( Sprite, SceneNode );
 global.Sprite = RD.Sprite = Sprite;
 
 
-//BILLBOARD *********
-//used for camera aligned objects
+/**
+* Billboard class to hold an scene item, used for camera aligned objects
+* @class Billboard
+* @constructor
+*/
 function Billboard()  
 {
 	this._ctor();
 }
+
+extendClass(Billboard, SceneNode);
+RD.Billboard = Billboard;
 
 Billboard.prototype._ctor = function()
 {
@@ -1002,11 +1041,13 @@ Billboard.prototype.faceTo = function( position )
 }
 */
 
-extendClass(Billboard, SceneNode);
-global.Billboard = RD.Billboard = Billboard;
 
 
-
+/**
+* PointCloud renders an array of points
+* @class PointCloud
+* @constructor
+*/
 function PointCloud()  
 {
 	this._ctor();
@@ -1041,7 +1082,7 @@ function PointCloud()
 }
 
 extendClass(PointCloud, SceneNode);
-global.PointCloud = RD.PointCloud = PointCloud;
+RD.PointCloud = PointCloud;
 
 PointCloud.prototype.render = function(renderer, camera )
 {
@@ -1156,8 +1197,11 @@ PointCloud._pixel_shader = '\
 
 
 
-//**********************
-
+/**
+* ParticlesEmissor renders points and animate them as particles
+* @class ParticlesEmissor
+* @constructor
+*/
 function ParticlesEmissor()  
 {
 	this._ctor();
@@ -1201,7 +1245,7 @@ function ParticlesEmissor()
 }
 
 extendClass(ParticlesEmissor, SceneNode);
-global.ParticlesEmissor = RD.ParticlesEmissor = ParticlesEmissor;
+RD.ParticlesEmissor = ParticlesEmissor;
 
 ParticlesEmissor.prototype.update = function(dt)
 {
@@ -1364,11 +1408,14 @@ ParticlesEmissor._pixel_shader = '\
 
 
 
-//* Scene container 
-
+/**
+* Scene holds the full scene graph, use root to access the root child
+* @class Scene
+* @constructor
+*/
 function Scene()
 {
-	this._root = new SceneNode();
+	this._root = new RD.SceneNode();
 	this._root.flags.no_transform = true; //avoid extra matrix multiplication
 	this._root._scene = this;
 	this._nodes_by_id = {};
@@ -1376,36 +1423,56 @@ function Scene()
 	this.frame = 0;
 }
 
-global.Scene = RD.Scene = Scene;
+RD.Scene = Scene;
 
+/**
+* clears all nodes inside
+* @method clear
+*/
 Scene.prototype.clear = function()
 {
-	this._root = new SceneNode();
+	this._root = new RD.SceneNode();
 	this._root._scene = this;
 	this.time = 0;
 }
 
+/**
+* returns gets node by id
+* @method getNodeById
+*/
 Scene.prototype.getNodeById = function(id)
 {
 	return this._nodes_by_id[id];
 	//return this._root.findNode(id);
 }
 
+/**
+* propagate update method
+* @method update
+* @param {number} dt
+*/
 Scene.prototype.update = function(dt)
 {
 	this.time += dt;
 	this.root.propagate("update",[dt]);
 }
 
-
+/**
+* The root node
+* @property root {RD.SceneNode}
+*/
 Object.defineProperty(Scene.prototype, 'root', {
 	get: function() { return this._root; },
 	set: function(v) { throw("Cannot set root of scene"); },
 	enumerable: false //avoid problems
 });
 
-/* Basic Scene Renderer *************/
 
+/**
+* Renderer in charge of rendering a Scene
+* @class Renderer
+* @constructor
+*/
 function Renderer(context) {
 	
 	var gl = this.gl = this.context = context;
@@ -1440,13 +1507,11 @@ function Renderer(context) {
 	this.canvas = gl.canvas;
 	
 	//global containers and basic data
-	this.meshes = gl.meshes;
 	this.meshes["plane"] = GL.Mesh.plane({size:1});
 	this.meshes["planeXZ"] = GL.Mesh.plane({size:1,xz:true});
 	this.meshes["cube"] = GL.Mesh.cube({size:1,wireframe:true});
 	this.meshes["sphere"] = GL.Mesh.sphere({size:1, subdivisions: 32, wireframe:true});
 	
-	this.textures = gl.textures;
 	this.textures["notfound"] = this.default_texture = new GL.Texture(1,1,{ filter: gl.NEAREST, pixel_data: new Uint8Array([0,0,0,255]) });
 	this.textures["white"] = this.default_texture = new GL.Texture(1,1,{ filter: gl.NEAREST, pixel_data: new Uint8Array([255,255,255,255]) });
 	
@@ -1454,13 +1519,17 @@ function Renderer(context) {
 	this.items_loading = {};
 	this.frame = 0;
 
-	this.shaders = gl.shaders = {};
 	this.createShaders();
 	
 }
 
-global.Renderer = RD.Renderer = Renderer;
+RD.Renderer = Renderer;
 
+/**
+* whats the data folder where all data should be fetch
+* @method setDataFolder
+* @param {string} path
+*/
 Renderer.prototype.setDataFolder = function(path)
 {
 	if(!path)
@@ -1475,6 +1544,11 @@ Renderer.prototype.setDataFolder = function(path)
 		this.assets_folder += '/';
 }
 
+/**
+* clear color and depth buffer
+* @method clear
+* @param {vec4} color clear color
+*/
 Renderer.prototype.clear = function( color )
 {
 	if(color)	
@@ -1484,6 +1558,13 @@ Renderer.prototype.clear = function( color )
 	this.gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
 }
 
+/**
+* renders once scene from one camera
+* @method render
+* @param {RD.Scene} scene
+* @param {RD.Camera} camera
+* @param {Array} nodes [Optional] array with nodes to render, otherwise all nodes will be rendered
+*/
 Renderer.prototype.render = function(scene, camera, nodes)
 {
 	if (!scene)
@@ -1712,6 +1793,12 @@ Renderer.prototype.setPointSize = function(v)
 	gl.shaders["point"].uniforms({u_pointSize: this.point_size});
 }
 
+/**
+* Loads one mesh and stores inside the meshes object to be reused in the future, if it is already loaded it skips the loading
+* @method loadMesh
+* @param {String} name name (and url) of the mesh
+* @param {Function} on_complete callback
+*/
 Renderer.prototype.loadMesh = function(name, on_complete )
 {
 	if(!name)
@@ -1749,6 +1836,13 @@ Renderer.prototype.loadMesh = function(name, on_complete )
 	return new_mesh;
 }
 
+/**
+* Loads one texture and stores inside the textures object to be reused in the future, if it is already loaded it skips the loading
+* @method loadTexture
+* @param {String} name name (and url) of the texture
+* @param {Object} options texture options as in litegl (option.name is used to store it with a different name)
+* @param {Function} on_complete callback
+*/
 Renderer.prototype.loadTexture = function(url, options, on_complete )
 {
 	if(!url)
@@ -1831,7 +1925,12 @@ Renderer.prototype.loadTextureAtlas = function(data, url, on_complete)
 	});
 }
 
-
+/**
+* Loads a shaders file in the Atlas file format (check GL.loadFileAtlas in litegl)
+* @method loadShaders
+* @param {String} url url to text file containing all the shader files
+* @param {Function} on_complete callback
+*/
 Renderer.prototype.loadShaders = function(url, on_complete)
 {
 	var that = this;
@@ -1900,6 +1999,7 @@ RD.noBlending = function(n)
 {
 	return n.flags.blend != true;
 }
+
 
 RD.generateTextureAtlas = function(textures, width, height, item_size, avoid_repetitions)
 {
@@ -1998,17 +2098,36 @@ Renderer.prototype.loadMesh = function(url, name)
 }
 */
 
+/**
+* container with all the registered meshes (same as gl.meshes)
+* @property meshes {Object}
+*/
 Object.defineProperty(Renderer.prototype, 'meshes', {
 	get: function() { return this.gl.meshes; },
 	set: function(v) {},
 	enumerable: true
 });
 
+/**
+* container with all the registered textures (same as gl.textures)
+* @property textures {Object}
+*/
 Object.defineProperty(Renderer.prototype, 'textures', {
 	get: function() { return this.gl.textures; },
 	set: function(v) {},
 	enumerable: true
 });
+
+/**
+* container with all the registered shaders (same as gl.shaders)
+* @property shaders {Object}
+*/
+Object.defineProperty(Renderer.prototype, 'shaders', {
+	get: function() { return this.gl.shaders; },
+	set: function(v) {},
+	enumerable: true
+});
+
 
 Renderer.prototype.addMesh = function(name, mesh)
 {
@@ -2018,22 +2137,50 @@ Renderer.prototype.addMesh = function(name, mesh)
 }
 
 
-global.Renderer = Renderer;
+RD.Renderer = Renderer;
 
 
-//Camera ************************************
+/**
+* Camera holds of the info about the camera
+* @class Camera
+* @constructor
+*/
 function Camera( options )
 {
-	this.type = Camera.PERSPECTIVE;
+	/**
+	* the camera type, RD.Camera.PERSPECTIVE || RD.Camera.ORTHOGRAPHIC
+	* @property type {number} 
+	*/
+	this.type = RD.Camera.PERSPECTIVE;
 
 	this._position = vec3.fromValues(0,100, 100);
 	this._target = vec3.fromValues(0,0,0);
 	this._up = vec3.fromValues(0,1,0);
 	
+	/**
+	* near distance default is 0.1
+	* @property near {number} 
+	*/
 	this.near = 0.1;
+	/**
+	* far distance default is 10000
+	* @property far {number} 
+	*/
 	this.far = 10000;
+	/**
+	* aspect (width / height)
+	* @property aspect {number} 
+	*/
 	this.aspect = 1.0;
+	/**
+	* fov angle in degrees, default is 45
+	* @property fov {number}
+	*/
 	this.fov = 45; //persp
+	/**
+	* size of frustrum when working in orthographic, default is 50
+	* @property frustum_size {number} 
+	*/
 	this.frustum_size = 50; //ortho
 	this.flip_y = false;
 
@@ -2063,31 +2210,49 @@ function Camera( options )
 	this.updateMatrices();
 }
 
-global.Camera = RD.Camera = Camera;
+RD.Camera = Camera;
 
 Camera.PERSPECTIVE = 1;
 Camera.ORTHOGRAPHIC = 2;
 
-
+/**
+* Position where the camera eye is located
+* @property position {vec3}
+*/
 Object.defineProperty(Camera.prototype, 'position', {
 	get: function() { return this._position; },
 	set: function(v) { this._position.set(v); this._must_update_matrix = true; },
 	enumerable: false //avoid problems
 });
 
+/**
+* Where the camera is looking at, the center of where is looking
+* @property target {vec3}
+*/
 Object.defineProperty(Camera.prototype, 'target', {
 	get: function() { return this._target; },
 	set: function(v) { this._target.set(v); this._must_update_matrix = true; },
 	enumerable: false //avoid problems
 });
 
-
+/**
+* Up vector
+* @property up {vec3}
+*/
 Object.defineProperty(Camera.prototype, 'up', {
 	get: function() { return this._up; },
 	set: function(v) { this._up.set(v); this._must_update_matrix = true; },
 	enumerable: false //avoid problems
 });
 
+/**
+* changes the camera to perspective mode
+* @method perspective
+* @param {number} fov
+* @param {number} aspect
+* @param {number} near
+* @param {number} far
+*/
 Camera.prototype.perspective = function(fov, aspect, near, far)
 {
 	this.type = Camera.PERSPECTIVE;
@@ -2099,7 +2264,14 @@ Camera.prototype.perspective = function(fov, aspect, near, far)
 	this._must_update_matrix = true;
 }
 
-//frustumsize is top-down
+/**
+* changes the camera to orthographic mode (frustumsize is top-down)
+* @method orthographic
+* @param {number} frustum_size
+* @param {number} near
+* @param {number} far
+* @param {number} aspect
+*/
 Camera.prototype.orthographic = function(frustum_size, near, far, aspect)
 {
 	this.aspect = aspect || 1;
@@ -2109,6 +2281,13 @@ Camera.prototype.orthographic = function(frustum_size, near, far, aspect)
 	this.far = far;
 }
 
+/**
+* configure view of the camera
+* @method lookAt
+* @param {vec3} position
+* @param {vec3} target
+* @param {vec3} up
+*/
 Camera.prototype.lookAt = function(position,target,up)
 {
 	vec3.copy(this._position, position);
@@ -2118,6 +2297,10 @@ Camera.prototype.lookAt = function(position,target,up)
 	this._must_update_matrix = true;
 }
 
+/**
+* update view projection matrices
+* @method updateMatrices
+*/
 Camera.prototype.updateMatrices = function()
 {
 	if(this.type == Camera.ORTHOGRAPHIC)
@@ -2149,6 +2332,11 @@ Camera.prototype.getModel = function(m)
 	return m;
 }
 
+/**
+* update camera using a model as reference
+* @method updateMatrices
+* @param {mat4} model
+*/
 Camera.prototype.updateVectors = function(model)
 {
 	var front = vec3.subtract( temp_vec3, this._target, this._position);
@@ -2158,6 +2346,13 @@ Camera.prototype.updateVectors = function(model)
 	mat4.rotateVec3(this._up, model, [0,1,0]);
 }
 
+/**
+* transform vector (only rotates) from local to global
+* @method getLocalVector
+* @param {vec3} v
+* @param {vec3} result [Optional]
+* @return {vec3} local point transformed
+*/
 Camera.prototype.getLocalVector = function(v, result)
 {
 	if(this._must_update_matrix)
@@ -2166,6 +2361,13 @@ Camera.prototype.getLocalVector = function(v, result)
 	return mat4.rotateVec3( result || vec3.create(), this._model_matrix, v );
 }
 
+/**
+* transform point from local to global
+* @method getLocalVector
+* @param {vec3} v
+* @param {vec3} result [Optional]
+* @return {vec3} local point transformed
+*/
 Camera.prototype.getLocalPoint = function(v, result)
 {
 	if(this._must_update_matrix)
@@ -2174,6 +2376,12 @@ Camera.prototype.getLocalPoint = function(v, result)
 	return vec3.transformMat4( result || vec3.create(), v, this._model_matrix );
 }
 
+/**
+* gets the front vector normalized 
+* @method getFront
+* @param {vec3} dest [Optional]
+* @return {vec3} front vector
+*/
 Camera.prototype.getFront = function(dest)
 {
 	dest = dest || vec3.create();
@@ -2225,7 +2433,14 @@ Camera.prototype.orbitDistanceFactor = function(f, center)
 	this._must_update_matrix = true;
 }
 
-//from 3D to 2D
+/**
+* projects a point from 3D to 2D
+* @method project
+* @param {vec3} vec
+* @param {Array} viewport [optional, otherwise current viewport is used]
+* @param {vec3} result [Optional]
+* @return {vec3} the projected point
+*/
 Camera.prototype.project = function( vec, viewport, result )
 {
 	result = result || vec3.create();
@@ -2237,36 +2452,33 @@ Camera.prototype.project = function( vec, viewport, result )
 	result[0] = result[0] * viewport[2] + viewport[0];
 	result[1] = result[1] * viewport[3] + viewport[1];
 
-	/*
-	var m = this._viewprojection_matrix;
-	var ix = vec[0];
-	var iy = vec[1];
-	var iz = vec[2];
-
-	var ox = m[0] * ix + m[4] * iy + m[8] * iz + m[12]
-	var oy = m[1] * ix + m[5] * iy + m[9] * iz + m[13]
-	var oz = m[2] * ix + m[6] * iy + m[10] * iz + m[14]
-	var ow = m[3] * ix + m[7] * iy + m[11] * iz + m[15]
-
-	var projx = (ox / ow + 1) / 2;
-	var projy = (oy / ow + 1) / 2;
-	var projz = (oz / ow + 1) / 2;
-
-	result[0] = projx * viewport[2] + viewport[0];
-	result[1] = projy * viewport[3] + viewport[1];
-	result[2] = projz;
-*/
-
 	return result;
 }
 
-//from 2D to 3D
-Camera.prototype.unproject = function( vec, viewport )
+/**
+* projects a point from 2D to 3D
+* @method unproject
+* @param {vec3} vec
+* @param {Array} viewport [optional, otherwise current viewport is used]
+* @param {vec3} result [Optional]
+* @return {vec3} the projected point
+*/
+Camera.prototype.unproject = function( vec, viewport, result )
 {
-	viewport = viewport || [0,0,gl.canvas.width, gl.canvas.height];
-	return vec3.unproject(vec3.create(), vec, this._view_matrix, this._projection_matrix, viewport );
+	viewport = viewport || gl.viewport_data;
+	return vec3.unproject( result || vec3.create(), vec, this._viewprojection_matrix, viewport );
 }
 
+/**
+* given a screen coordinate it cast a ray and returns the collision point with a given plane
+* @method getRayPlaneCollision
+* @param {number} x
+* @param {number} y
+* @param {vec3} position Plane point
+* @param {vec3} normal Plane normal
+* @param {vec3} result [Optional]
+* @return {vec3} the collision point, or null
+*/
 Camera.prototype.getRayPlaneCollision = function(x,y, position, normal, result)
 {
 	var RT = new GL.Raytracer(this._view_matrix, this._projection_matrix);
@@ -2351,9 +2563,17 @@ Camera.prototype.testBox = function(box)
 	else return CLIP_OVERLAP;
 }
 
+/**
+* test if sphere is inside frustrum (you must call camera.extractPlanes() previously to update frustrum planes)
+* @method testSphere
+* @param {vec3} center 
+* @param {number} radius
+* @return {number} CLIP_OUTSIDE or CLIP_INSIDE or CLIP_OVERLAP
+*/
 Camera.prototype.testSphere = function(center, radius)
 {
-	if(!this._planes) this.extractPlanes();
+	if(!this._planes)
+		this.extractPlanes();
 	var planes = this._planes;
 
 	var dist;
