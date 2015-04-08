@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Camera</title>
+    <title>RD.Camera</title>
     <link rel="stylesheet" href="http://yui.yahooapis.com/3.9.1/build/cssgrids/cssgrids-min.css">
     <link rel="stylesheet" href="../assets/vendor/prettify/prettify-min.css">
     <link rel="stylesheet" href="../assets/css/main.css" id="site_styles">
@@ -41,23 +41,23 @@
         <div id="api-tabview-panel">
             <ul id="api-classes" class="apis classes">
             
-                <li><a href="../classes/Billboard.html">Billboard</a></li>
+                <li><a href="../classes/RD...html">RD..</a></li>
             
-                <li><a href="../classes/Camera.html">Camera</a></li>
+                <li><a href="../classes/RD.Billboard.html">RD.Billboard</a></li>
             
-                <li><a href="../classes/ParticlesEmissor.html">ParticlesEmissor</a></li>
+                <li><a href="../classes/RD.Camera.html">RD.Camera</a></li>
             
-                <li><a href="../classes/PointCloud.html">PointCloud</a></li>
+                <li><a href="../classes/RD.ParticlesEmissor.html">RD.ParticlesEmissor</a></li>
             
-                <li><a href="../classes/RD.html">RD</a></li>
+                <li><a href="../classes/RD.PointCloud.html">RD.PointCloud</a></li>
             
-                <li><a href="../classes/Renderer.html">Renderer</a></li>
+                <li><a href="../classes/RD.Renderer.html">RD.Renderer</a></li>
             
-                <li><a href="../classes/Scene.html">Scene</a></li>
+                <li><a href="../classes/RD.Scene.html">RD.Scene</a></li>
             
-                <li><a href="../classes/SceneNode.html">SceneNode</a></li>
+                <li><a href="../classes/RD.SceneNode.html">RD.SceneNode</a></li>
             
-                <li><a href="../classes/Sprite.html">Sprite</a></li>
+                <li><a href="../classes/RD.Sprite.html">RD.Sprite</a></li>
             
             </ul>
 
@@ -98,7 +98,7 @@
             <div class="apidocs">
                 <div id="docs-main">
                     <div class="content">
-                        <h1>Camera Class</h1>
+                        <h1>RD.Camera Class</h1>
 <div class="box meta">
     
 
@@ -106,7 +106,7 @@
 
     
         <div class="foundat">
-            Defined in: <a href="../files/.._src_rendeer.js.html#l2142"><code>..&#x2F;src&#x2F;rendeer.js:2142</code></a>
+            Defined in: <a href="../files/.._src_rendeer.js.html#l2167"><code>..&#x2F;src&#x2F;rendeer.js:2167</code></a>
         </div>
     
 
@@ -118,15 +118,15 @@
 
 
 <div class="box intro">
-    <p>Camera holds of the info about the camera</p>
+    <p>Camera wraps all the info about the camera (properties and view and projection matrices)</p>
 
 </div>
 
 
     <div class="constructor">
         <h2>Constructor</h2>
-        <div id="method_Camera" class="method item">
-    <h3 class="name"><code>Camera</code></h3>
+        <div id="method_RD.Camera" class="method item">
+    <h3 class="name"><code>RD.Camera</code></h3>
 
     
         <span class="paren">()</span>
@@ -157,7 +157,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2142"><code>..&#x2F;src&#x2F;rendeer.js:2142</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2167"><code>..&#x2F;src&#x2F;rendeer.js:2167</code></a>
         
         </p>
 
@@ -256,6 +256,13 @@
                         
                             <li class="index-item method">
                                 <a href="#method_project">project</a>
+
+                                
+                                
+                            </li>
+                        
+                            <li class="index-item method">
+                                <a href="#method_testBox">testBox</a>
 
                                 
                                 
@@ -422,7 +429,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2378"><code>..&#x2F;src&#x2F;rendeer.js:2378</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2410"><code>..&#x2F;src&#x2F;rendeer.js:2410</code></a>
         
         </p>
 
@@ -535,7 +542,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2363"><code>..&#x2F;src&#x2F;rendeer.js:2363</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2395"><code>..&#x2F;src&#x2F;rendeer.js:2395</code></a>
         
         </p>
 
@@ -663,7 +670,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2348"><code>..&#x2F;src&#x2F;rendeer.js:2348</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2380"><code>..&#x2F;src&#x2F;rendeer.js:2380</code></a>
         
         </p>
 
@@ -772,7 +779,7 @@
             
                 <li class="arg">
                     
-                        <code>result</code>
+                        <code class="optional">[result=vec3]</code>
                     
                 </li>
             
@@ -809,7 +816,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2471"><code>..&#x2F;src&#x2F;rendeer.js:2471</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2503"><code>..&#x2F;src&#x2F;rendeer.js:2503</code></a>
         
         </p>
 
@@ -894,15 +901,15 @@
             
                 <li class="param">
                     
-                        <code class="param-name">result</code>
+                        <code class="param-name optional">[result=vec3]</code>
                         <span class="type">Vec3</span>
+                        <span class="flag optional" title="This parameter is optional.">optional</span>
                     
 
                     
 
                     <div class="param-description">
-                        <p>[Optional]</p>
-
+                         
                     </div>
 
                     
@@ -986,7 +993,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2283"><code>..&#x2F;src&#x2F;rendeer.js:2283</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2315"><code>..&#x2F;src&#x2F;rendeer.js:2315</code></a>
         
         </p>
 
@@ -1122,7 +1129,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2266"><code>..&#x2F;src&#x2F;rendeer.js:2266</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2298"><code>..&#x2F;src&#x2F;rendeer.js:2298</code></a>
         
         </p>
 
@@ -1273,7 +1280,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2247"><code>..&#x2F;src&#x2F;rendeer.js:2247</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2279"><code>..&#x2F;src&#x2F;rendeer.js:2279</code></a>
         
         </p>
 
@@ -1379,13 +1386,13 @@
             
                 <li class="arg">
                     
-                        <code>viewport</code>
+                        <code class="optional">[viewport=gl.viewport]</code>
                     
                 </li>
             
                 <li class="arg">
                     
-                        <code>result</code>
+                        <code class="optional">[result=vec3]</code>
                     
                 </li>
             
@@ -1422,7 +1429,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2435"><code>..&#x2F;src&#x2F;rendeer.js:2435</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2467"><code>..&#x2F;src&#x2F;rendeer.js:2467</code></a>
         
         </p>
 
@@ -1460,15 +1467,15 @@
             
                 <li class="param">
                     
-                        <code class="param-name">viewport</code>
+                        <code class="param-name optional">[viewport=gl.viewport]</code>
                         <span class="type">Array</span>
+                        <span class="flag optional" title="This parameter is optional.">optional</span>
                     
 
                     
 
                     <div class="param-description">
-                        <p>[optional, otherwise current viewport is used]</p>
-
+                         
                     </div>
 
                     
@@ -1476,15 +1483,15 @@
             
                 <li class="param">
                     
-                        <code class="param-name">result</code>
+                        <code class="param-name optional">[result=vec3]</code>
                         <span class="type">Vec3</span>
+                        <span class="flag optional" title="This parameter is optional.">optional</span>
                     
 
                     
 
                     <div class="param-description">
-                        <p>[Optional]</p>
-
+                         
                     </div>
 
                     
@@ -1504,6 +1511,113 @@
                         <span class="type">Vec3</span>:
                     
                     <p>the projected point</p>
+
+                
+            </div>
+        </div>
+    
+
+    
+</div>
+
+                
+                    <div id="method_testBox" class="method item">
+    <h3 class="name"><code>testBox</code></h3>
+
+    
+        <div class="args">
+            <span class="paren">(</span><ul class="args-list inline commas">
+            
+                <li class="arg">
+                    
+                        <code>box</code>
+                    
+                </li>
+            
+            </ul><span class="paren">)</span>
+        </div>
+    
+
+    
+        <span class="returns-inline">
+            <span class="type">Number</span>
+        </span>
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    <div class="meta">
+        
+            
+                
+                <p>
+                
+                Defined in
+                
+            
+        
+        
+        <a href="../files/.._src_rendeer.js.html#l2572"><code>..&#x2F;src&#x2F;rendeer.js:2572</code></a>
+        
+        </p>
+
+
+        
+
+        
+    </div>
+
+    <div class="description">
+        <p>test if box is inside frustrum (you must call camera.extractPlanes() previously to update frustrum planes)</p>
+
+    </div>
+
+    
+        <div class="params">
+            <h4>Parameters:</h4>
+
+            <ul class="params-list">
+            
+                <li class="param">
+                    
+                        <code class="param-name">box</code>
+                        <span class="type">Object</span>
+                    
+
+                    
+
+                    <div class="param-description">
+                        <p>in {center:vec3,halfsize:vec3}</p>
+
+                    </div>
+
+                    
+                </li>
+            
+            </ul>
+        </div>
+    
+
+    
+        <div class="returns">
+            <h4>Returns:</h4>
+
+            <div class="returns-description">
+                
+                    
+                        <span class="type">Number</span>:
+                    
+                    <p>CLIP_OUTSIDE or CLIP_INSIDE or CLIP_OVERLAP</p>
 
                 
             </div>
@@ -1566,7 +1680,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2565"><code>..&#x2F;src&#x2F;rendeer.js:2565</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2602"><code>..&#x2F;src&#x2F;rendeer.js:2602</code></a>
         
         </p>
 
@@ -1656,13 +1770,13 @@
             
                 <li class="arg">
                     
-                        <code>viewport</code>
+                        <code class="optional">[viewport=gl.viewport]</code>
                     
                 </li>
             
                 <li class="arg">
                     
-                        <code>result</code>
+                        <code class="optional">[result=vec3]</code>
                     
                 </li>
             
@@ -1699,7 +1813,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2457"><code>..&#x2F;src&#x2F;rendeer.js:2457</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2489"><code>..&#x2F;src&#x2F;rendeer.js:2489</code></a>
         
         </p>
 
@@ -1737,15 +1851,15 @@
             
                 <li class="param">
                     
-                        <code class="param-name">viewport</code>
+                        <code class="param-name optional">[viewport=gl.viewport]</code>
                         <span class="type">Array</span>
+                        <span class="flag optional" title="This parameter is optional.">optional</span>
                     
 
                     
 
                     <div class="param-description">
-                        <p>[optional, otherwise current viewport is used]</p>
-
+                         
                     </div>
 
                     
@@ -1753,15 +1867,15 @@
             
                 <li class="param">
                     
-                        <code class="param-name">result</code>
+                        <code class="param-name optional">[result=vec3]</code>
                         <span class="type">Vec3</span>
+                        <span class="flag optional" title="This parameter is optional.">optional</span>
                     
 
                     
 
                     <div class="param-description">
-                        <p>[Optional]</p>
-
+                         
                     </div>
 
                     
@@ -1833,7 +1947,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2334"><code>..&#x2F;src&#x2F;rendeer.js:2334</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2366"><code>..&#x2F;src&#x2F;rendeer.js:2366</code></a>
         
         </p>
 
@@ -1911,7 +2025,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2299"><code>..&#x2F;src&#x2F;rendeer.js:2299</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2331"><code>..&#x2F;src&#x2F;rendeer.js:2331</code></a>
         
         </p>
 
@@ -1965,7 +2079,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2169"><code>..&#x2F;src&#x2F;rendeer.js:2169</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2197"><code>..&#x2F;src&#x2F;rendeer.js:2197</code></a>
         
         </p>
 
@@ -1979,6 +2093,8 @@
 
     </div>
 
+    
+        <p><strong>Default:</strong> 1</p>
     
 
     
@@ -2010,7 +2126,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2164"><code>..&#x2F;src&#x2F;rendeer.js:2164</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2191"><code>..&#x2F;src&#x2F;rendeer.js:2191</code></a>
         
         </p>
 
@@ -2020,10 +2136,12 @@
     </div>
 
     <div class="description">
-        <p>far distance default is 10000</p>
+        <p>far distance</p>
 
     </div>
 
+    
+        <p><strong>Default:</strong> 10000</p>
     
 
     
@@ -2055,7 +2173,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2174"><code>..&#x2F;src&#x2F;rendeer.js:2174</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2203"><code>..&#x2F;src&#x2F;rendeer.js:2203</code></a>
         
         </p>
 
@@ -2065,10 +2183,12 @@
     </div>
 
     <div class="description">
-        <p>fov angle in degrees, default is 45</p>
+        <p>fov angle in degrees</p>
 
     </div>
 
+    
+        <p><strong>Default:</strong> 45</p>
     
 
     
@@ -2100,7 +2220,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2179"><code>..&#x2F;src&#x2F;rendeer.js:2179</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2209"><code>..&#x2F;src&#x2F;rendeer.js:2209</code></a>
         
         </p>
 
@@ -2110,10 +2230,12 @@
     </div>
 
     <div class="description">
-        <p>size of frustrum when working in orthographic, default is 50</p>
+        <p>size of frustrum when working in orthographic</p>
 
     </div>
 
+    
+        <p><strong>Default:</strong> 50</p>
     
 
     
@@ -2145,7 +2267,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2159"><code>..&#x2F;src&#x2F;rendeer.js:2159</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2185"><code>..&#x2F;src&#x2F;rendeer.js:2185</code></a>
         
         </p>
 
@@ -2155,10 +2277,12 @@
     </div>
 
     <div class="description">
-        <p>near distance default is 0.1</p>
+        <p>near distance</p>
 
     </div>
 
+    
+        <p><strong>Default:</strong> 0.1</p>
     
 
     
@@ -2190,7 +2314,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2217"><code>..&#x2F;src&#x2F;rendeer.js:2217</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2248"><code>..&#x2F;src&#x2F;rendeer.js:2248</code></a>
         
         </p>
 
@@ -2235,7 +2359,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2227"><code>..&#x2F;src&#x2F;rendeer.js:2227</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2258"><code>..&#x2F;src&#x2F;rendeer.js:2258</code></a>
         
         </p>
 
@@ -2280,7 +2404,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2149"><code>..&#x2F;src&#x2F;rendeer.js:2149</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2174"><code>..&#x2F;src&#x2F;rendeer.js:2174</code></a>
         
         </p>
 
@@ -2294,6 +2418,8 @@
 
     </div>
 
+    
+        <p><strong>Default:</strong> RD.Camera.PERSPECTIVE</p>
     
 
     
@@ -2325,7 +2451,7 @@
             
         
         
-        <a href="../files/.._src_rendeer.js.html#l2237"><code>..&#x2F;src&#x2F;rendeer.js:2237</code></a>
+        <a href="../files/.._src_rendeer.js.html#l2268"><code>..&#x2F;src&#x2F;rendeer.js:2268</code></a>
         
         </p>
 
@@ -2339,6 +2465,8 @@
 
     </div>
 
+    
+        <p><strong>Default:</strong> [0,1,0]</p>
     
 
     

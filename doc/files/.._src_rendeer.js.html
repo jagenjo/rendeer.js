@@ -41,23 +41,23 @@
         <div id="api-tabview-panel">
             <ul id="api-classes" class="apis classes">
             
-                <li><a href="../classes/Billboard.html">Billboard</a></li>
+                <li><a href="../classes/RD...html">RD..</a></li>
             
-                <li><a href="../classes/Camera.html">Camera</a></li>
+                <li><a href="../classes/RD.Billboard.html">RD.Billboard</a></li>
             
-                <li><a href="../classes/ParticlesEmissor.html">ParticlesEmissor</a></li>
+                <li><a href="../classes/RD.Camera.html">RD.Camera</a></li>
             
-                <li><a href="../classes/PointCloud.html">PointCloud</a></li>
+                <li><a href="../classes/RD.ParticlesEmissor.html">RD.ParticlesEmissor</a></li>
             
-                <li><a href="../classes/RD.html">RD</a></li>
+                <li><a href="../classes/RD.PointCloud.html">RD.PointCloud</a></li>
             
-                <li><a href="../classes/Renderer.html">Renderer</a></li>
+                <li><a href="../classes/RD.Renderer.html">RD.Renderer</a></li>
             
-                <li><a href="../classes/Scene.html">Scene</a></li>
+                <li><a href="../classes/RD.Scene.html">RD.Scene</a></li>
             
-                <li><a href="../classes/SceneNode.html">SceneNode</a></li>
+                <li><a href="../classes/RD.SceneNode.html">RD.SceneNode</a></li>
             
-                <li><a href="../classes/Sprite.html">Sprite</a></li>
+                <li><a href="../classes/RD.Sprite.html">RD.Sprite</a></li>
             
             </ul>
 
@@ -108,12 +108,36 @@
 //main namespace
 (function(global){
 
+/**
+ * Main namespace
+ * @namespace RD
+ */
 
 /**
-* RD namespace
-* @class RD
-* @constructor
+ * the global namespace, access it using RD.
+ * @class .
+ */
+
+/**
+* @property ZERO {vec3}
+* @default[0,0,0]
 */
+
+/**
+* @property ONE {vec3}
+* @default[1,1,1]
+*/
+
+/**
+* @property BLACK {vec3}
+* @default[0,0,0]
+*/
+
+/**
+* @property WHITE {vec3}
+* @default[1,1,1]
+*/
+
 var RD = global.RD = {};
 
 RD.ZERO = vec3.fromValues(0,0,0);
@@ -311,6 +335,7 @@ Object.defineProperty(SceneNode.prototype, &#x27;scaling&#x27;, {
 /**
 * The color in RGBA format
 * @property color {vec4}
+* @default [1,1,1,1]
 */
 Object.defineProperty(SceneNode.prototype, &#x27;color&#x27;, {
 	get: function() { return this._color; },
@@ -2244,7 +2269,7 @@ RD.Renderer = Renderer;
 
 
 /**
-* Camera holds of the info about the camera
+* Camera wraps all the info about the camera (properties and view and projection matrices)
 * @class Camera
 * @constructor
 */
@@ -2253,6 +2278,7 @@ function Camera( options )
 	/**
 	* the camera type, RD.Camera.PERSPECTIVE || RD.Camera.ORTHOGRAPHIC
 	* @property type {number} 
+	* @default RD.Camera.PERSPECTIVE
 	*/
 	this.type = RD.Camera.PERSPECTIVE;
 
@@ -2261,28 +2287,33 @@ function Camera( options )
 	this._up = vec3.fromValues(0,1,0);
 	
 	/**
-	* near distance default is 0.1
+	* near distance 
 	* @property near {number} 
+	* @default 0.1
 	*/
 	this.near = 0.1;
 	/**
-	* far distance default is 10000
+	* far distance 
 	* @property far {number} 
+	* @default 10000
 	*/
 	this.far = 10000;
 	/**
 	* aspect (width / height)
 	* @property aspect {number} 
+	* @default 1
 	*/
 	this.aspect = 1.0;
 	/**
-	* fov angle in degrees, default is 45
+	* fov angle in degrees
 	* @property fov {number}
+	* @default 45
 	*/
 	this.fov = 45; //persp
 	/**
-	* size of frustrum when working in orthographic, default is 50
+	* size of frustrum when working in orthographic
 	* @property frustum_size {number} 
+	* @default 50
 	*/
 	this.frustum_size = 50; //ortho
 	this.flip_y = false;
@@ -2341,6 +2372,7 @@ Object.defineProperty(Camera.prototype, &#x27;target&#x27;, {
 /**
 * Up vector
 * @property up {vec3}
+* @default [0,1,0]
 */
 Object.defineProperty(Camera.prototype, &#x27;up&#x27;, {
 	get: function() { return this._up; },
@@ -2540,8 +2572,8 @@ Camera.prototype.orbitDistanceFactor = function(f, center)
 * projects a point from 3D to 2D
 * @method project
 * @param {vec3} vec
-* @param {Array} viewport [optional, otherwise current viewport is used]
-* @param {vec3} result [Optional]
+* @param {Array} [viewport=gl.viewport]
+* @param {vec3} [result=vec3]
 * @return {vec3} the projected point
 */
 Camera.prototype.project = function( vec, viewport, result )
@@ -2562,8 +2594,8 @@ Camera.prototype.project = function( vec, viewport, result )
 * projects a point from 2D to 3D
 * @method unproject
 * @param {vec3} vec
-* @param {Array} viewport [optional, otherwise current viewport is used]
-* @param {vec3} result [Optional]
+* @param {Array} [viewport=gl.viewport]
+* @param {vec3} [result=vec3]
 * @return {vec3} the projected point
 */
 Camera.prototype.unproject = function( vec, viewport, result )
@@ -2579,7 +2611,7 @@ Camera.prototype.unproject = function( vec, viewport, result )
 * @param {number} y
 * @param {vec3} position Plane point
 * @param {vec3} normal Plane normal
-* @param {vec3} result [Optional]
+* @param {vec3} [result=vec3]
 * @return {vec3} the collision point, or null
 */
 Camera.prototype.getRayPlaneCollision = function(x,y, position, normal, result)
@@ -2641,7 +2673,12 @@ var CLIP_INSIDE = 0;
 var CLIP_OUTSIDE = 1;
 var CLIP_OVERLAP = 2;
 
-//box in {center:vec3,halfsize:vec3} format
+/**
+* test if box is inside frustrum (you must call camera.extractPlanes() previously to update frustrum planes)
+* @method testBox
+* @param {Object} box in {center:vec3,halfsize:vec3}
+* @return {number} CLIP_OUTSIDE or CLIP_INSIDE or CLIP_OVERLAP
+*/
 Camera.prototype.testBox = function(box)
 {
 	if(!this._planes) this.extractPlanes();

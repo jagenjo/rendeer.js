@@ -1,15 +1,15 @@
 YUI.add("yuidoc-meta", function(Y) {
    Y.YUIDoc = { meta: {
     "classes": [
-        "Billboard",
-        "Camera",
-        "ParticlesEmissor",
-        "PointCloud",
-        "RD",
-        "Renderer",
-        "Scene",
-        "SceneNode",
-        "Sprite"
+        "RD..",
+        "RD.Billboard",
+        "RD.Camera",
+        "RD.ParticlesEmissor",
+        "RD.PointCloud",
+        "RD.Renderer",
+        "RD.Scene",
+        "RD.SceneNode",
+        "RD.Sprite"
     ],
     "modules": [],
     "allModules": []
