@@ -5,22 +5,50 @@
 //main namespace
 (function(global){
 
+/**
+ * Main namespace
+ * @namespace RD
+ */
 
 /**
-* RD namespace
-* @class RD
-* @constructor
+ * the global namespace, access it using RD.
+ * @class .
+ */
+
+/**
+* @property ZERO {vec3}
+* @default[0,0,0]
 */
+
+/**
+* @property ONE {vec3}
+* @default[1,1,1]
+*/
+
+/**
+* @property BLACK {vec3}
+* @default[0,0,0]
+*/
+
+/**
+* @property WHITE {vec3}
+* @default[1,1,1]
+*/
+
 var RD = global.RD = {};
 
 RD.ZERO = vec3.fromValues(0,0,0);
 RD.ONE = vec3.fromValues(1,1,1);
 RD.RIGHT = vec3.fromValues(1,0,0);
+RD.LEFT = vec3.fromValues(-1,0,0);
 RD.UP = vec3.fromValues(0,1,0);
-RD.FRONT = vec3.fromValues(0,0,1);
+RD.DOWN = vec3.fromValues(0,-1,0);
+RD.FRONT = vec3.fromValues(0,0,-1);
+RD.BACK = vec3.fromValues(0,0,1);
 RD.FRONT2D = vec2.fromValues(0,1);
 RD.WHITE = vec3.fromValues(1,1,1);
 RD.BLACK = vec3.fromValues(0,0,0);
+RD.IDENTITY = mat4.create();
 
 //higher means render before
 RD.PRIORITY_BACKGROUND = 30;
@@ -208,6 +236,7 @@ Object.defineProperty(SceneNode.prototype, 'scaling', {
 /**
 * The color in RGBA format
 * @property color {vec4}
+* @default [1,1,1,1]
 */
 Object.defineProperty(SceneNode.prototype, 'color', {
 	get: function() { return this._color; },
@@ -342,7 +371,7 @@ SceneNode.prototype.getAllChildren = function(r)
 /**
 * Recursively retrieves all children nodes taking into account visibility (flags.visible)
 * @method getVisibleChildren
-* @param {Array} result [Optional] you can specify an array where all the children will be pushed
+* @param {Array} [result=Array] you can specify an array where all the children will be pushed
 * @return {Array} all the children nodes
 */
 SceneNode.prototype.getVisibleChildren = function(result)
@@ -410,12 +439,12 @@ SceneNode.prototype.configure = function(o)
 */
 SceneNode.prototype.setMesh = function(mesh_name)
 {
-	if(!v)
+	if(!mesh_name)
 		this.mesh = null;
-	else if( typeof(v) == "string" )
-		this.mesh = v;
+	else if( typeof(mesh_name) == "string" )
+		this.mesh = mesh_name;
 	else
-		this._mesh = v;
+		this._mesh = mesh_name;
 }
 
 /**
@@ -546,7 +575,7 @@ SceneNode.prototype.getGlobalMatrix = function()
 /**
 * Get global rotation (concatenating parent rotations)
 * @method getGlobalRotation
-* @param {quat} result [Optional] quaternion to store the result
+* @param {quat} [result=quat] quaternion to store the result
 * @return {quat} resulting rotation in quaternion format 
 */
 SceneNode.prototype.getGlobalRotation = function(result)
@@ -609,8 +638,8 @@ SceneNode.prototype.updateLocalMatrix = function()
 /**
 * recomputes _global_matrix according to position, rotation and scaling
 * @method updateGlobalMatrix
-* @param {boolean} fast skips recomputation of parent, use it only if you are sure its already updated
-* @param {boolean} update_childs update global matrix in childs too
+* @param {boolean} [fast=false] skips recomputation of parent, use it only if you are sure its already updated
+* @param {boolean} [update_childs=false] update global matrix in childs too
 */
 SceneNode.prototype.updateGlobalMatrix = function(fast, update_childs)
 {
@@ -642,7 +671,7 @@ SceneNode.prototype.updateGlobalMatrix = function(fast, update_childs)
 /**
 * recompute local and global matrix
 * @method updateMatrices
-* @param {bool} fast uses the global matrix as it is in the parent node instead of crawling all the ierarchy
+* @param {bool} [fast=false] uses the global matrix as it is in the parent node instead of crawling all the ierarchy
 */
 SceneNode.prototype.updateMatrices = function(fast)
 {
@@ -654,7 +683,7 @@ SceneNode.prototype.updateMatrices = function(fast)
 * updates position, rotation and scale from the matrix
 * @method fromMatrix
 * @param {mat4} m the matrix
-* @param {bool} is_global optional, if the matrix is in global or local space
+* @param {bool} [is_global=false] if the matrix is in global or local space
 */
 SceneNode.prototype.fromMatrix = function(m, is_global)
 {
@@ -700,7 +729,7 @@ SceneNode.prototype.fromMatrix = function(m, is_global)
 * Returns a point multiplied by the local matrix
 * @method getLocalPoint
 * @param {vec3} v the point
-* @param {vec3} result optional, where to store the output
+* @param {vec3} [result=vec3] where to store the output
 * @return {vec3} result
 */
 SceneNode.prototype.getLocalPoint = function(v, result)
@@ -715,7 +744,7 @@ SceneNode.prototype.getLocalPoint = function(v, result)
 * Returns a point rotated by the local rotation
 * @method getLocalVector
 * @param {vec3} v the point
-* @param {vec3} result optional, where to store the output
+* @param {vec3} [result=vec3] where to store the output
 * @return {vec3} result
 */
 SceneNode.prototype.getLocalVector = function(v, result)
@@ -727,7 +756,7 @@ SceneNode.prototype.getLocalVector = function(v, result)
 /**
 * Returns the node position in global coordinates
 * @method getGlobalPosition
-* @param {vec3} result optional, where to store the output
+* @param {vec3} [result=vec3] where to store the output
 * @return {vec3} result
 */
 SceneNode.prototype.getGlobalPosition = function(result)
@@ -741,7 +770,7 @@ SceneNode.prototype.getGlobalPosition = function(result)
 * Returns a point multiplied by the global matrix
 * @method getGlobalPoint
 * @param {vec3} v the point
-* @param {vec3} result optional, where to store the output
+* @param {vec3} [result=vec3] where to store the output
 * @return {vec3} result
 */
 SceneNode.prototype.getGlobalPoint = function(v, result)
@@ -755,7 +784,7 @@ SceneNode.prototype.getGlobalPoint = function(v, result)
 * Returns a point rotated by the global matrix
 * @method getGlobalVector
 * @param {vec3} v the point
-* @param {vec3} result optional, where to store the output
+* @param {vec3} [result=vec3] where to store the output
 * @return {vec3} result
 */
 SceneNode.prototype.getGlobalVector = function(v, result)
@@ -1473,7 +1502,9 @@ Object.defineProperty(Scene.prototype, 'root', {
 * @class Renderer
 * @constructor
 */
-function Renderer(context) {
+function Renderer(context, options)
+{
+	options = options || {};
 	
 	var gl = this.gl = this.context = context;
 	if(!gl || !gl.enable)
@@ -1505,12 +1536,15 @@ function Renderer(context) {
 	//set some default stuff
 	global.gl = this.gl;
 	this.canvas = gl.canvas;
+
+	this.assets_folder = options.assets_folder || "";
 	
 	//global containers and basic data
 	this.meshes["plane"] = GL.Mesh.plane({size:1});
 	this.meshes["planeXZ"] = GL.Mesh.plane({size:1,xz:true});
 	this.meshes["cube"] = GL.Mesh.cube({size:1,wireframe:true});
 	this.meshes["sphere"] = GL.Mesh.sphere({size:1, subdivisions: 32, wireframe:true});
+	this.meshes["grid"] = GL.Mesh.grid({size:10});
 	
 	this.textures["notfound"] = this.default_texture = new GL.Texture(1,1,{ filter: gl.NEAREST, pixel_data: new Uint8Array([0,0,0,255]) });
 	this.textures["white"] = this.default_texture = new GL.Texture(1,1,{ filter: gl.NEAREST, pixel_data: new Uint8Array([255,255,255,255]) });
@@ -1520,6 +1554,9 @@ function Renderer(context) {
 	this.frame = 0;
 
 	this.createShaders();
+
+	if(options.shaders_file)
+		this.loadShaders( options.shaders_file );
 	
 }
 
@@ -2141,7 +2178,7 @@ RD.Renderer = Renderer;
 
 
 /**
-* Camera holds of the info about the camera
+* Camera wraps all the info about the camera (properties and view and projection matrices)
 * @class Camera
 * @constructor
 */
@@ -2150,6 +2187,7 @@ function Camera( options )
 	/**
 	* the camera type, RD.Camera.PERSPECTIVE || RD.Camera.ORTHOGRAPHIC
 	* @property type {number} 
+	* @default RD.Camera.PERSPECTIVE
 	*/
 	this.type = RD.Camera.PERSPECTIVE;
 
@@ -2158,28 +2196,33 @@ function Camera( options )
 	this._up = vec3.fromValues(0,1,0);
 	
 	/**
-	* near distance default is 0.1
+	* near distance 
 	* @property near {number} 
+	* @default 0.1
 	*/
 	this.near = 0.1;
 	/**
-	* far distance default is 10000
+	* far distance 
 	* @property far {number} 
+	* @default 10000
 	*/
 	this.far = 10000;
 	/**
 	* aspect (width / height)
 	* @property aspect {number} 
+	* @default 1
 	*/
 	this.aspect = 1.0;
 	/**
-	* fov angle in degrees, default is 45
+	* fov angle in degrees
 	* @property fov {number}
+	* @default 45
 	*/
 	this.fov = 45; //persp
 	/**
-	* size of frustrum when working in orthographic, default is 50
+	* size of frustrum when working in orthographic
 	* @property frustum_size {number} 
+	* @default 50
 	*/
 	this.frustum_size = 50; //ortho
 	this.flip_y = false;
@@ -2238,6 +2281,7 @@ Object.defineProperty(Camera.prototype, 'target', {
 /**
 * Up vector
 * @property up {vec3}
+* @default [0,1,0]
 */
 Object.defineProperty(Camera.prototype, 'up', {
 	get: function() { return this._up; },
@@ -2390,6 +2434,11 @@ Camera.prototype.getFront = function(dest)
 	return dest;
 }
 
+/**
+* move the position and the target
+* @method move
+* @param {vec3} v
+*/
 Camera.prototype.move = function(v)
 {
 	vec3.add(this._target, this._target, v);
@@ -2397,6 +2446,11 @@ Camera.prototype.move = function(v)
 	this._must_update_matrix = true;
 }
 
+/**
+* move the position and the target using the local coordinates system of the camera
+* @method move
+* @param {vec3} v
+*/
 Camera.prototype.moveLocal = function(v)
 {
 	var delta = mat4.rotateVec3(temp_vec3, this._model_matrix, v);
@@ -2405,6 +2459,12 @@ Camera.prototype.moveLocal = function(v)
 	this._must_update_matrix = true;
 }
 
+/**
+* rotate over its position
+* @method rotate
+* @param {number} angle in radians
+* @param {vec3} axis
+*/
 Camera.prototype.rotate = function(angle, axis)
 {
 	var R = quat.setAxisAngle( temp_quat, axis, angle );
@@ -2414,6 +2474,29 @@ Camera.prototype.rotate = function(angle, axis)
 	this._must_update_matrix = true;
 }
 
+/**
+* rotate over its position
+* @method rotateLocal
+* @param {number} angle in radians
+* @param {vec3} axis in local coordinates
+*/
+Camera.prototype.rotateLocal = function(angle, axis)
+{
+	var local_axis = mat4.rotateVec3(temp_vec3b, this._model_matrix, axis);
+	var R = quat.setAxisAngle( temp_quat, local_axis, angle );
+	var front = vec3.subtract( temp_vec3, this._target, this._position );
+	vec3.transformQuat(front, front, R );
+	vec3.add(this._target, this._position, front);
+	this._must_update_matrix = true;
+}
+
+/**
+* rotate around its target position
+* @method rotate
+* @param {number} angle in radians
+* @param {vec3} axis
+* @param {vec3} [center=null] if another center is provided it rotates around it
+*/
 Camera.prototype.orbit = function(angle, axis, center)
 {
 	center = center || this._target;
@@ -2436,9 +2519,9 @@ Camera.prototype.orbitDistanceFactor = function(f, center)
 /**
 * projects a point from 3D to 2D
 * @method project
-* @param {vec3} vec
-* @param {Array} viewport [optional, otherwise current viewport is used]
-* @param {vec3} result [Optional]
+* @param {vec3} vec coordinate to project
+* @param {Array} [viewport=gl.viewport]
+* @param {vec3} [result=vec3]
 * @return {vec3} the projected point
 */
 Camera.prototype.project = function( vec, viewport, result )
@@ -2458,9 +2541,9 @@ Camera.prototype.project = function( vec, viewport, result )
 /**
 * projects a point from 2D to 3D
 * @method unproject
-* @param {vec3} vec
-* @param {Array} viewport [optional, otherwise current viewport is used]
-* @param {vec3} result [Optional]
+* @param {vec3} vec coordinate to unproject
+* @param {Array} [viewport=gl.viewport]
+* @param {vec3} [result=vec3]
 * @return {vec3} the projected point
 */
 Camera.prototype.unproject = function( vec, viewport, result )
@@ -2476,7 +2559,7 @@ Camera.prototype.unproject = function( vec, viewport, result )
 * @param {number} y
 * @param {vec3} position Plane point
 * @param {vec3} normal Plane normal
-* @param {vec3} result [Optional]
+* @param {vec3} [result=vec3]
 * @return {vec3} the collision point, or null
 */
 Camera.prototype.getRayPlaneCollision = function(x,y, position, normal, result)
@@ -2489,6 +2572,48 @@ Camera.prototype.getRayPlaneCollision = function(x,y, position, normal, result)
 		return result;
 	return null;
 }
+
+Camera.controller_keys = { forward: "UP", back: "DOWN", left:"LEFT", right:"RIGHT" };
+
+/**
+* Used to move the camera (helps during debug)
+* @method applyController
+* @param {number} dt delta time from update
+* @param {Event} e mouse event or keyboard event
+*/
+Camera.prototype.applyController = function(dt, event, speed)
+{
+	speed  = speed || 10;
+	if(dt)
+	{
+		if(gl.keys[ Camera.controller_keys.forward ])
+			this.moveLocal( vec3.scale(temp_vec3,RD.FRONT,dt * speed) );
+		else if(gl.keys[ Camera.controller_keys.back ])
+			this.moveLocal( vec3.scale(temp_vec3,RD.BACK,dt * speed) );
+		if(gl.keys[ Camera.controller_keys.left ])
+			this.moveLocal( vec3.scale(temp_vec3,RD.LEFT,dt * speed) );
+		else if(gl.keys[ Camera.controller_keys.right ])
+			this.moveLocal( vec3.scale(temp_vec3,RD.RIGHT,dt * speed) );
+	}
+
+	if(event)
+	{
+		if(event.deltax)
+			this.rotate( event.deltax * -0.005, RD.UP );
+		if(event.deltay)
+			this.rotateLocal( event.deltay * -0.005, RD.RIGHT );
+	}
+}
+
+Camera.prototype.lerp = function(camera, f)
+{
+	vec3.lerp( this._position, camera._position, f );
+	vec3.lerp( this._target, camera._target, f );
+	vec3.lerp( this._up, camera._up, f );
+	this._fov = this._fov * (1.0 - f) + camera._fov * f;
+	this._must_update_matrix = true;
+}
+
 
 Camera.prototype.extractPlanes = function()
 {
@@ -2534,29 +2659,36 @@ Camera.prototype.extractPlanes = function()
 	}
 }
 
-var CLIP_INSIDE = 0;
-var CLIP_OUTSIDE = 1;
-var CLIP_OVERLAP = 2;
+var CLIP_INSIDE = RD.CLIP_INSIDE = 0;
+var CLIP_OUTSIDE = RD.CLIP_OUTSIDE = 1;
+var CLIP_OVERLAP = RD.CLIP_OVERLAP = 2;
 
-//box in {center:vec3,halfsize:vec3} format
-Camera.prototype.testBox = function(box)
+/**
+* test if box is inside frustrum (you must call camera.extractPlanes() previously to update frustrum planes)
+* @method testBox
+* @param {vec3} center center of the box
+* @param {vec3} halfsize halfsize of the box (vector from center to corner)
+* @return {number} CLIP_OUTSIDE or CLIP_INSIDE or CLIP_OVERLAP
+*/
+Camera.prototype.testBox = function(center, halfsize)
 {
-	if(!this._planes) this.extractPlanes();
+	if(!this._planes)
+		this.extractPlanes();
 	var planes = this._planes;
 
 	var flag = 0, o = 0;
 
-	flag = planeOverlap(planes.subarray(0,4),box);
+	flag = planeOverlap(planes.subarray(0,4),center, halfsize);
 	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
-	flag =  planeOverlap(planes.subarray(4,8),box);
+	flag =  planeOverlap(planes.subarray(4,8),center, halfsize);
 	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
-	flag =  planeOverlap(planes.subarray(8,12),box);
+	flag =  planeOverlap(planes.subarray(8,12),center, halfsize);
 	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
-	flag =  planeOverlap(planes.subarray(12,16),box);
+	flag =  planeOverlap(planes.subarray(12,16),center, halfsize);
 	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
-	flag =  planeOverlap(planes.subarray(16,20),box);
+	flag =  planeOverlap(planes.subarray(16,20),center, halfsize);
 	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
-	flag =  planeOverlap(planes.subarray(20,24),box);
+	flag =  planeOverlap(planes.subarray(20,24),center, halfsize);
 	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
 
 	if (o==0) return CLIP_INSIDE;
@@ -2608,22 +2740,24 @@ function distanceToPlane(plane, point)
 	return vec3.dot(plane,point) + plane[3];
 }
 
-function planeOverlap(plane, box)
+var tmp_plane_overlap = vec3.create();
+
+function planeOverlap( plane, center, halfsize )
 {
 	var n = plane.subarray(0,3);
 	var d = plane[3];
 
-	var tmp = vec3.fromValues(
-		Math.abs( box.halfsize[0] * n[0]),
-		Math.abs( box.halfsize[1] * n[1]),
-		Math.abs( box.halfsize[2] * n[2])
-	);
+	tmp_plane_overlap[0] = Math.abs( halfsize[0] * n[0]);
+	tmp_plane_overlap[1] = Math.abs( halfsize[1] * n[1]);
+	tmp_plane_overlap[2] = Math.abs( halfsize[2] * n[2]);
 
-	var radius = tmp[0]+tmp[1]+tmp[2];
-	var distance = vec3.dot(n,box.center) + d;
+	var radius = tmp_plane_overlap[0]+tmp_plane_overlap[1]+tmp_plane_overlap[2];
+	var distance = vec3.dot(n,center) + d;
 
-	if (distance <= - radius) return CLIP_OUTSIDE;
-	else if (distance <= radius) return CLIP_OVERLAP;
+	if (distance <= - radius)
+		return CLIP_OUTSIDE;
+	else if (distance <= radius)
+		return CLIP_OVERLAP;
 	else return CLIP_INSIDE;
 }
 
