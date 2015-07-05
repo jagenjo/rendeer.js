@@ -780,6 +780,8 @@ SceneNode.prototype.getGlobalPoint = function(v, result)
 	return vec3.transformMat4(result, v, m );	
 }
 
+SceneNode.prototype.localToGlobal = SceneNode.prototype.getGlobalPoint;
+
 /**
 * Returns a point rotated by the global matrix
 * @method getGlobalVector
@@ -860,6 +862,18 @@ SceneNode.prototype.loadTextConfig = function(url, callback)
         }, alert);
 }
 
+SceneNode.prototype.destroy = function()
+{
+	if(!this.scene)
+	{
+		if(this._parent)
+			this._parent.removeChild(this);
+		return;
+	}
+
+	this.scene._to_destroy.push(this);
+}
+
 /**
 * Sprite class , inherits from SceneNode but helps to render 2D planes (in 3D Space)
 * @class Sprite
@@ -881,13 +895,20 @@ Sprite.prototype._ctor = function()
 	this.flags.flipX = false;
 	this.flags.flipY = false;
 	this.shader = "texture_transform";
-	
+	this._angle = 0;
+
 	this.frame = null;
 	this.frames = {};
 	this.texture_matrix = mat3.create();
 	
 	this._uniforms["u_texture_matrix"] = this.texture_matrix;
 }
+
+Object.defineProperty(Sprite.prototype, 'angle', {
+	get: function() { return this._angle; },
+	set: function(v) { this._angle = v; quat.setAxisAngle( this._rotation, RD.FRONT, this._angle * DEG2RAD ); this._must_update_matrix = true; },
+	enumerable: true //avoid problems
+});
 
 Sprite.prototype.setSize = function(w,h)
 {
@@ -1448,6 +1469,8 @@ function Scene()
 	this._root.flags.no_transform = true; //avoid extra matrix multiplication
 	this._root._scene = this;
 	this._nodes_by_id = {};
+	this._to_destroy = [];
+
 	this.time = 0;
 	this.frame = 0;
 }
@@ -1484,6 +1507,17 @@ Scene.prototype.update = function(dt)
 {
 	this.time += dt;
 	this.root.propagate("update",[dt]);
+
+	//destroy entities marked
+	if(this._to_destroy.length)
+	{
+		var n = null;
+		while( n = this._to_destroy.pop() )
+		{
+			if(n._parent)
+				n._parent.removeChild(n);
+		}
+	}
 }
 
 /**
@@ -2618,7 +2652,7 @@ Camera.prototype.lerp = function(camera, f)
 Camera.prototype.extractPlanes = function()
 {
 	var vp = this._viewprojection_matrix;
-	var planes = this._planes || new Float32Array(4*6);
+	var planes = this._planes_data || new Float32Array(4*6);
 
 	//right
 	planes.set( [vp[3] - vp[0], vp[7] - vp[4], vp[11] - vp[8], vp[15] - vp[12] ], 0); 
@@ -2644,7 +2678,9 @@ Camera.prototype.extractPlanes = function()
 	planes.set( [ vp[ 3] + vp[ 2], vp[ 7] + vp[ 6], vp[11] + vp[10], vp[15] + vp[14] ],20);
 	normalize(20);
 
-	this._planes = planes;
+	this._planes_data = planes;
+	if(!this._frustrum_planes)
+		this._frustrum_planes = [ planes.subarray(0,4),planes.subarray(4,8),planes.subarray(8,12),planes.subarray(12,16),planes.subarray(16,20),planes.subarray(20,24) ];
 
 	function normalize(pos)
 	{
@@ -2672,23 +2708,22 @@ var CLIP_OVERLAP = RD.CLIP_OVERLAP = 2;
 */
 Camera.prototype.testBox = function(center, halfsize)
 {
-	if(!this._planes)
+	if(!this._frustrum_planes)
 		this.extractPlanes();
-	var planes = this._planes;
-
+	var planes = this._frustrum_planes;
 	var flag = 0, o = 0;
 
-	flag = planeOverlap(planes.subarray(0,4),center, halfsize);
+	flag = planeOverlap( planes[0],center, halfsize);
 	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
-	flag =  planeOverlap(planes.subarray(4,8),center, halfsize);
+	flag =  planeOverlap( planes[1],center, halfsize);
 	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
-	flag =  planeOverlap(planes.subarray(8,12),center, halfsize);
+	flag =  planeOverlap( planes[2],center, halfsize);
 	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
-	flag =  planeOverlap(planes.subarray(12,16),center, halfsize);
+	flag =  planeOverlap( planes[3],center, halfsize);
 	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
-	flag =  planeOverlap(planes.subarray(16,20),center, halfsize);
+	flag =  planeOverlap( planes[4],center, halfsize);
 	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
-	flag =  planeOverlap(planes.subarray(20,24),center, halfsize);
+	flag =  planeOverlap( planes[5],center, halfsize);
 	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
 
 	if (o==0) return CLIP_INSIDE;
@@ -2704,29 +2739,29 @@ Camera.prototype.testBox = function(center, halfsize)
 */
 Camera.prototype.testSphere = function(center, radius)
 {
-	if(!this._planes)
+	if(!this._frustrum_planes)
 		this.extractPlanes();
-	var planes = this._planes;
+	var planes = this._frustrum_planes;
 
 	var dist;
 	var overlap = false;
 
-	dist = distanceToPlane( planes.subarray(0,4), center );
+	dist = distanceToPlane( planes[0], center );
 	if( dist < -radius ) return CLIP_OUTSIDE;
 	else if(dist >= -radius && dist <= radius)	overlap = true;
-	dist = distanceToPlane( planes.subarray(4,8), center );
+	dist = distanceToPlane( planes[1], center );
 	if( dist < -radius ) return CLIP_OUTSIDE;
 	else if(dist >= -radius && dist <= radius)	overlap = true;
-	dist = distanceToPlane( planes.subarray(8,12), center );
+	dist = distanceToPlane( planes[2], center );
 	if( dist < -radius ) return CLIP_OUTSIDE;
 	else if(dist >= -radius && dist <= radius)	overlap = true;
-	dist = distanceToPlane( planes.subarray(12,16), center );
+	dist = distanceToPlane( planes[3], center );
 	if( dist < -radius ) return CLIP_OUTSIDE;
 	else if(dist >= -radius && dist <= radius)	overlap = true;
-	dist = distanceToPlane( planes.subarray(16,20), center );
+	dist = distanceToPlane( planes[4], center );
 	if( dist < -radius ) return CLIP_OUTSIDE;
 	else if(dist >= -radius && dist <= radius)	overlap = true;
-	dist = distanceToPlane( planes.subarray(20,24), center );
+	dist = distanceToPlane( planes[5], center );
 	if( dist < -radius ) return CLIP_OUTSIDE;
 	else if(dist >= -radius && dist <= radius)	overlap = true;
 }
@@ -2740,19 +2775,17 @@ function distanceToPlane(plane, point)
 	return vec3.dot(plane,point) + plane[3];
 }
 
-var tmp_plane_overlap = vec3.create();
-
 function planeOverlap( plane, center, halfsize )
 {
-	var n = plane.subarray(0,3);
+	var n = plane;//plane.subarray(0,3);
 	var d = plane[3];
 
-	tmp_plane_overlap[0] = Math.abs( halfsize[0] * n[0]);
-	tmp_plane_overlap[1] = Math.abs( halfsize[1] * n[1]);
-	tmp_plane_overlap[2] = Math.abs( halfsize[2] * n[2]);
+	var tempx = Math.abs( halfsize[0] * n[0] );
+	var tempy = Math.abs( halfsize[1] * n[1] );
+	var tempz = Math.abs( halfsize[2] * n[2] );
 
-	var radius = tmp_plane_overlap[0]+tmp_plane_overlap[1]+tmp_plane_overlap[2];
-	var distance = vec3.dot(n,center) + d;
+	var radius = tempx + tempy + tempz;
+	var distance = vec3.dot( n, center ) + d;
 
 	if (distance <= - radius)
 		return CLIP_OUTSIDE;
@@ -2984,5 +3017,5 @@ Renderer.prototype.createShaders = function()
 
 //footer
 
-})(window);
+})( typeof(window) != "undefined" ? window : (typeof(self) != "undefined" ? self : global ) );
 
