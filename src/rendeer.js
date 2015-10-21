@@ -1773,6 +1773,18 @@ Renderer.prototype.setModelMatrix = function(matrix)
 	mat4.multiply(this._mvp_matrix, this._viewprojection_matrix, matrix );
 }
 
+//allows to add some global uniforms without overwritting the existing ones
+Renderer.prototype.setGlobalUniforms = function( uniforms )
+{
+	for(var i in uniforms)
+	{
+		if( this._uniforms[i] && this._uniforms[i].set )
+			this._uniforms[i].set( uniforms[i] );
+		else
+			this._uniforms[i] = uniforms[i];
+	}
+}
+
 Renderer.prototype.renderNode = function(node, camera)
 {
 	//get mesh
@@ -1806,7 +1818,9 @@ Renderer.prototype.renderNode = function(node, camera)
 	//get shader
 	var shader = null;
 	var shader_name = node.shader;
-	if (node.shader)
+	if (this.on_getShader)
+		shader = this.on_getShader( node, camera );
+	if (!shader && node.shader)
 		shader = gl.shaders[ shader_name ];
 	if(this.shader_overwrite)
 		shader = gl.shaders[this.shader_overwrite];
@@ -1890,12 +1904,12 @@ Renderer.prototype.loadMesh = function(name, on_complete )
 	if(name.indexOf("://") == -1)
 		url = this.assets_folder + name;
 
-	var new_mesh = GL.Mesh.fromURL( url, function(t){
-		that.meshes[name] = t;
+	var new_mesh = GL.Mesh.fromURL( url, function(m){
+		that.meshes[name] = m;
 		that.num_items_loading--;
 		delete that.items_loading[name];
 		if(on_complete)
-			on_complete(t);
+			on_complete(m, name);
 	});
 
 	this.items_loading[name] = new_mesh;
@@ -1945,11 +1959,11 @@ Renderer.prototype.loadTexture = function(url, options, on_complete )
 	var new_tex = GL.Texture.fromURL( url, options, function(t){
 		that.textures[name] = t;
 		if(on_complete)
-			on_complete(t);
+			on_complete(t, name);
 		that.num_items_loading--;
 		delete that.items_loading[name];
 		if(that.on_texture_load)
-			that.on_texture_load(t);
+			that.on_texture_load(t, name);
 	});
 
 	if(options && options.preview)
@@ -2027,9 +2041,14 @@ Renderer.prototype.loadShaders = function(url, on_complete)
 		{
 			var line = lines[i];
 			var t = line.trim().split(" ");
+			var name = t[0].trim();
+			if(name.substr(0,2) == "//")
+				continue;
 			var vs = files[ t[1] ];
 			var fs = files[ t[2] ];
-			var macros = t[3];
+			var macros = null;
+			if(t.length > 2)
+				macros = t.slice(3).join(" ");
 			
 			if(t[1] && t[1][0] == '@')
 			{
@@ -2045,12 +2064,29 @@ Renderer.prototype.loadShaders = function(url, on_complete)
 			}
 			
 			if(macros)
-				macros = JSON.parse(macros);
-				
-			if(vs && fs)
-				that.shaders[ t[0] ] = new GL.Shader( vs, fs, macros );
-			else
-				console.warn("Shader file not found: ",t[1],t[2]);
+			{
+				try
+				{
+					macros = JSON.parse(macros);
+				}
+				catch (err)
+				{
+					console.error("Error in shader macros: ", name, macros, err);
+				}
+			}
+	
+			try
+			{
+				if(vs && fs)
+					that.shaders[ name ] = new GL.Shader( vs, fs, macros );
+				else
+					console.warn("Shader file not found: ",t[1],t[2]);
+			}
+			catch (err)
+			{
+				console.error("Error compiling shader: " + name);
+				console.error(err);
+			}
 		}
 		
 		if(on_complete)
@@ -2265,6 +2301,7 @@ function Camera( options )
 	this._viewprojection_matrix = mat4.create();
 	this._model_matrix = mat4.create(); //inverse of view
 	
+	this._autoupdate_matrices = true;
 	this._must_update_matrix = false;
 
 	this._top = vec3.create();
@@ -2378,17 +2415,23 @@ Camera.prototype.lookAt = function(position,target,up)
 * update view projection matrices
 * @method updateMatrices
 */
-Camera.prototype.updateMatrices = function()
+Camera.prototype.updateMatrices = function( force )
 {
-	if(this.type == Camera.ORTHOGRAPHIC)
-		mat4.ortho(this._projection_matrix, -this.frustum_size*this.aspect, this.frustum_size*this.aspect, -this.frustum_size, this.frustum_size, this.near, this.far);
-	else
-		mat4.perspective(this._projection_matrix, this.fov * DEG2RAD, this.aspect, this.near, this.far);
+	if(this._autoupdate_matrices || force)
+	{
+		//proj
+		if(this.type == Camera.ORTHOGRAPHIC)
+			mat4.ortho(this._projection_matrix, -this.frustum_size*this.aspect, this.frustum_size*this.aspect, -this.frustum_size, this.frustum_size, this.near, this.far);
+		else
+			mat4.perspective(this._projection_matrix, this.fov * DEG2RAD, this.aspect, this.near, this.far);
 
-	if(this.flip_y)
-		mat4.scale( this._projection_matrix, this._projection_matrix, [1,-1,1] );
+		if(this.flip_y)
+			mat4.scale( this._projection_matrix, this._projection_matrix, [1,-1,1] );
 
-	mat4.lookAt(this._view_matrix, this._position, this._target, this._up);
+		//view
+		mat4.lookAt(this._view_matrix, this._position, this._target, this._up);
+	}
+
 	mat4.multiply(this._viewprojection_matrix, this._projection_matrix, this._view_matrix );
 	mat4.invert(this._model_matrix, this._view_matrix );
 	
@@ -2586,6 +2629,30 @@ Camera.prototype.unproject = function( vec, viewport, result )
 }
 
 /**
+* gets the ray passing through one pixel
+* @method getRay
+* @param {number} x
+* @param {number} y
+* @param {Array} [viewport=gl.viewport]
+* @return {Object} ray object { origin: vec3, direction:vec3 }
+*/
+Camera.prototype.getRay = function( x, y, viewport )
+{
+	viewport = viewport || gl.viewport_data;
+	
+	var origin = null;
+	if(this.type == RD.Camera.ORTHOGRAPHIC)
+		origin = vec3.unproject( vec3.fromValues(), vec3.fromValues(x,y,0), this._viewprojection_matrix, viewport );
+	else
+		origin = vec3.clone( this.position );
+
+	var direction = vec3.unproject( vec3.fromValues(), vec3.fromValues(x,y,1), this._viewprojection_matrix, viewport );
+	vec3.sub( direction, direction, origin );
+	vec3.normalize( direction, direction );
+	return { origin: origin, direction: direction }
+}
+
+/**
 * given a screen coordinate it cast a ray and returns the collision point with a given plane
 * @method getRayPlaneCollision
 * @param {number} x
@@ -2685,7 +2752,8 @@ Camera.prototype.extractPlanes = function()
 	{
 		var N = planes.subarray(pos,pos+3);
 		var l = vec3.length(N);
-		if(l) return;
+		if(!l === 0.0)
+			return;
 		l = 1.0 / l;
 		planes[pos] *= l;
 		planes[pos+1] *= l;
@@ -2746,23 +2814,39 @@ Camera.prototype.testSphere = function(center, radius)
 	var overlap = false;
 
 	dist = distanceToPlane( planes[0], center );
-	if( dist < -radius ) return CLIP_OUTSIDE;
-	else if(dist >= -radius && dist <= radius)	overlap = true;
+	if( dist < -radius )
+		return CLIP_OUTSIDE;
+	else if(dist >= -radius && dist <= radius)
+		overlap = true;
 	dist = distanceToPlane( planes[1], center );
-	if( dist < -radius ) return CLIP_OUTSIDE;
-	else if(dist >= -radius && dist <= radius)	overlap = true;
+	if( dist < -radius )
+		return CLIP_OUTSIDE;
+	else if(dist >= -radius && dist <= radius)
+		overlap = true;
 	dist = distanceToPlane( planes[2], center );
-	if( dist < -radius ) return CLIP_OUTSIDE;
-	else if(dist >= -radius && dist <= radius)	overlap = true;
+	if( dist < -radius )
+		return CLIP_OUTSIDE;
+	else if(dist >= -radius && dist <= radius)
+		overlap = true;
 	dist = distanceToPlane( planes[3], center );
-	if( dist < -radius ) return CLIP_OUTSIDE;
-	else if(dist >= -radius && dist <= radius)	overlap = true;
+	if( dist < -radius )
+		return CLIP_OUTSIDE;
+	else if(dist >= -radius && dist <= radius)
+		overlap = true;
 	dist = distanceToPlane( planes[4], center );
-	if( dist < -radius ) return CLIP_OUTSIDE;
-	else if(dist >= -radius && dist <= radius)	overlap = true;
+	if( dist < -radius )
+		return CLIP_OUTSIDE;
+	else if(dist >= -radius && dist <= radius)
+		overlap = true;
 	dist = distanceToPlane( planes[5], center );
-	if( dist < -radius ) return CLIP_OUTSIDE;
-	else if(dist >= -radius && dist <= radius)	overlap = true;
+	if( dist < -radius )
+		return CLIP_OUTSIDE;
+	else if(dist >= -radius && dist <= radius)
+		overlap = true;
+	
+	if(overlap)
+		return CLIP_OVERLAP;
+	return CLIP_INSIDE;
 }
 
 
