@@ -336,6 +336,24 @@ Object.defineProperty(SceneNode.prototype, &#x27;scaling&#x27;, {
 });
 
 
+Object.defineProperty(SceneNode.prototype, &#x27;pivot&#x27;, {
+	get: function() { return this._pivot; },
+	set: function(v) { 
+		this._must_update_matrix = true; 	
+		if(!v)
+		{
+			this._pivot = null;
+			this.flags.pivot = false;
+			return;
+		}
+		if(!this._pivot)
+			this._pivot = vec3.create();
+		this._pivot.set(v);
+		this.flags.pivot = true;
+	},
+	enumerable: true
+});
+
 /**
 * The color in RGBA format
 * @property color {vec4}
@@ -639,9 +657,7 @@ SceneNode.prototype.scale = function(v)
 */
 SceneNode.prototype.setPivot = function(pivot)
 {
-	if(!this._pivot)
-		this._pivot = vec3.create();
-	this._pivot.set(pivot);
+	this.pivot = pivot;
 }
 
 SceneNode.prototype.orbit = function(angle, axis, pivot)
@@ -865,6 +881,13 @@ SceneNode.prototype.getLocalVector = function(v, result)
 SceneNode.prototype.getGlobalPosition = function(result)
 {
 	result = result || vec3.create();
+
+	if(this._parent == this._scene._root)
+	{
+		result.set( this._position );
+		return result;
+	}
+
 	var m = this.getGlobalMatrix();
 	return vec3.transformMat4(result, RD.ZERO, m );
 }
@@ -991,7 +1014,7 @@ Sprite.prototype._ctor = function()
 {
 	SceneNode.prototype._ctor.call(this);
 	this.mesh = &quot;plane&quot;;
-	this.size = vec3.fromValues(10,10);
+	this.size = vec2.fromValues(10,10); //not used
 	this.flags.two_sided = true;
 	this.flags.blend = true;
 	this.flags.depth_test = false;
@@ -1044,6 +1067,11 @@ Sprite.createFrames = function(num_rows, names, frames)
 Sprite.prototype.createFrames = function(num_rows, names)
 {
 	Sprite.createFrames(num_rows, names, this.frames );
+}
+
+Sprite.prototype.addFrame = function(name, x,y, w,h, normalized )
+{
+	this.frames[ name ] = { pos: vec2.fromValues(x,y), size: vec2.fromValues(w,h), normalized: !!normalized };
 }
 
 Sprite.prototype.updateTextureMatrix = function( renderer )
@@ -1112,7 +1140,10 @@ Sprite.prototype.render = function(renderer, camera)
 		
 	if(this.updateTextureMatrix(renderer))
 	{
-		renderer.setModelMatrix( this._global_matrix );
+		if(this.billboard)
+			RD.Billboard.orientNode( this, camera, renderer );
+		else
+			renderer.setModelMatrix( this._global_matrix );
 		renderer.renderNode( this, renderer, camera );
 	}
 }
@@ -1142,6 +1173,42 @@ Billboard.prototype._ctor = function()
 	SceneNode.prototype._ctor.call(this);
 }
 
+Billboard.orientNode = function( node, camera, renderer)
+{
+	if( node.cylindric )
+	{
+		var global_pos = node.getGlobalPosition( temp_vec3b );
+		vec3.sub(temp_vec3, camera._position, global_pos);
+		temp_vec2[0] = temp_vec3[0];
+		temp_vec2[1] = temp_vec3[2];
+		var angle = vec2.computeSignedAngle( temp_vec2, RD.FRONT2D );
+		if( !isNaN(angle) )
+		{
+			mat4.rotateY( temp_mat4, identity_mat4, -angle );
+			node._global_matrix.set( temp_mat4 );
+			mat4.setTranslation( node._global_matrix, node._position );
+			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
+		}
+	}
+	else
+	{
+		if(node.parallel)
+		{
+			node._global_matrix.set( camera._model_matrix );
+			mat4.setTranslation( node._global_matrix, node._position );
+			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
+		}
+		else
+		{
+			mat4.lookAt( node._global_matrix, node._position, camera.position, RD.UP );
+			mat4.invert( node._global_matrix, node._global_matrix );
+			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
+		}
+	}
+	
+	renderer.setModelMatrix( node._global_matrix );
+}
+
 Billboard.prototype.render = function(renderer, camera )
 {
 	//avoid orienting if it is not visible
@@ -1149,40 +1216,7 @@ Billboard.prototype.render = function(renderer, camera )
 		return;
 
 	if(this.auto_orient)
-	{
-		if(this.cylindric)
-		{
-			var global_pos = this.getGlobalPosition(temp_vec3b);
-			vec3.sub(temp_vec3, camera._position, global_pos);
-			temp_vec2[0] = temp_vec3[0];
-			temp_vec2[1] = temp_vec3[2];
-			var angle = vec2.computeSignedAngle( temp_vec2, RD.FRONT2D );
-			if( !isNaN(angle) )
-			{
-				mat4.rotateY( temp_mat4, identity_mat4, -angle );
-				this._global_matrix.set( temp_mat4 );
-				mat4.setTranslation( this._global_matrix, this._position );
-				mat4.scale( this._global_matrix, this._global_matrix, this._scale );
-			}
-		}
-		else
-		{
-			if(this.parallel)
-			{
-				this._global_matrix.set( camera._model_matrix );
-				mat4.setTranslation( this._global_matrix, this._position );
-				mat4.scale( this._global_matrix, this._global_matrix, this._scale );
-			}
-			else
-			{
-				mat4.lookAt( this._global_matrix, this._position, camera.position, RD.UP );
-				mat4.invert( this._global_matrix, this._global_matrix );
-				mat4.scale( this._global_matrix, this._global_matrix, this._scale );
-			}
-		}
-		
-		renderer.setModelMatrix( this._global_matrix );
-	}
+		Billboard.orientNode( this, camera, renderer );
 	
 	renderer.renderNode( this, renderer, camera );
 }
@@ -1810,6 +1844,8 @@ Renderer.prototype.render = function(scene, camera, nodes)
 			var node = nodes[i];
 			if(node.flags.visible === false)
 				continue;
+			if(this.mustRenderNode &amp;&amp; this.mustRenderNode(node, camera) === false)
+				continue;
 			
 			this.setModelMatrix( node._global_matrix );
 			
@@ -1877,6 +1913,18 @@ Renderer.prototype.setModelMatrix = function(matrix)
 	mat4.multiply(this._mvp_matrix, this._viewprojection_matrix, matrix );
 }
 
+//allows to add some global uniforms without overwritting the existing ones
+Renderer.prototype.setGlobalUniforms = function( uniforms )
+{
+	for(var i in uniforms)
+	{
+		if( this._uniforms[i] &amp;&amp; this._uniforms[i].set )
+			this._uniforms[i].set( uniforms[i] );
+		else
+			this._uniforms[i] = uniforms[i];
+	}
+}
+
 Renderer.prototype.renderNode = function(node, camera)
 {
 	//get mesh
@@ -1910,7 +1958,9 @@ Renderer.prototype.renderNode = function(node, camera)
 	//get shader
 	var shader = null;
 	var shader_name = node.shader;
-	if (node.shader)
+	if (this.on_getShader)
+		shader = this.on_getShader( node, camera );
+	if (!shader &amp;&amp; node.shader)
 		shader = gl.shaders[ shader_name ];
 	if(this.shader_overwrite)
 		shader = gl.shaders[this.shader_overwrite];
@@ -1994,12 +2044,12 @@ Renderer.prototype.loadMesh = function(name, on_complete )
 	if(name.indexOf(&quot;://&quot;) == -1)
 		url = this.assets_folder + name;
 
-	var new_mesh = GL.Mesh.fromURL( url, function(t){
-		that.meshes[name] = t;
+	var new_mesh = GL.Mesh.fromURL( url, function(m){
+		that.meshes[name] = m;
 		that.num_items_loading--;
 		delete that.items_loading[name];
 		if(on_complete)
-			on_complete(t);
+			on_complete(m, name);
 	});
 
 	this.items_loading[name] = new_mesh;
@@ -2049,11 +2099,11 @@ Renderer.prototype.loadTexture = function(url, options, on_complete )
 	var new_tex = GL.Texture.fromURL( url, options, function(t){
 		that.textures[name] = t;
 		if(on_complete)
-			on_complete(t);
+			on_complete(t, name);
 		that.num_items_loading--;
 		delete that.items_loading[name];
 		if(that.on_texture_load)
-			that.on_texture_load(t);
+			that.on_texture_load(t, name);
 	});
 
 	if(options &amp;&amp; options.preview)
@@ -2131,9 +2181,14 @@ Renderer.prototype.loadShaders = function(url, on_complete)
 		{
 			var line = lines[i];
 			var t = line.trim().split(&quot; &quot;);
+			var name = t[0].trim();
+			if(name.substr(0,2) == &quot;//&quot;)
+				continue;
 			var vs = files[ t[1] ];
 			var fs = files[ t[2] ];
-			var macros = t[3];
+			var macros = null;
+			if(t.length &gt; 2)
+				macros = t.slice(3).join(&quot; &quot;);
 			
 			if(t[1] &amp;&amp; t[1][0] == &#x27;@&#x27;)
 			{
@@ -2149,12 +2204,28 @@ Renderer.prototype.loadShaders = function(url, on_complete)
 			}
 			
 			if(macros)
-				macros = JSON.parse(macros);
-				
-			if(vs &amp;&amp; fs)
-				that.shaders[ t[0] ] = new GL.Shader( vs, fs, macros );
-			else
-				console.warn(&quot;Shader file not found: &quot;,t[1],t[2]);
+			{
+				try
+				{
+					macros = JSON.parse(macros);
+				}
+				catch (err)
+				{
+					console.error(&quot;Error in shader macros: &quot;, name, macros, err);
+				}
+			}
+	
+			try
+			{
+				if(vs &amp;&amp; fs)
+					that.shaders[ name ] = new GL.Shader( vs, fs, macros );
+				else
+					console.warn(&quot;Shader file not found: &quot;,t[1],t[2]);
+			}
+			catch (err)
+			{
+				GL.Shader.dumpErrorToConsole(err,vs,fs);
+			}
 		}
 		
 		if(on_complete)
@@ -2369,6 +2440,7 @@ function Camera( options )
 	this._viewprojection_matrix = mat4.create();
 	this._model_matrix = mat4.create(); //inverse of view
 	
+	this._autoupdate_matrices = true;
 	this._must_update_matrix = false;
 
 	this._top = vec3.create();
@@ -2482,17 +2554,23 @@ Camera.prototype.lookAt = function(position,target,up)
 * update view projection matrices
 * @method updateMatrices
 */
-Camera.prototype.updateMatrices = function()
+Camera.prototype.updateMatrices = function( force )
 {
-	if(this.type == Camera.ORTHOGRAPHIC)
-		mat4.ortho(this._projection_matrix, -this.frustum_size*this.aspect, this.frustum_size*this.aspect, -this.frustum_size, this.frustum_size, this.near, this.far);
-	else
-		mat4.perspective(this._projection_matrix, this.fov * DEG2RAD, this.aspect, this.near, this.far);
+	if(this._autoupdate_matrices || force)
+	{
+		//proj
+		if(this.type == Camera.ORTHOGRAPHIC)
+			mat4.ortho(this._projection_matrix, -this.frustum_size*this.aspect, this.frustum_size*this.aspect, -this.frustum_size, this.frustum_size, this.near, this.far);
+		else
+			mat4.perspective(this._projection_matrix, this.fov * DEG2RAD, this.aspect, this.near, this.far);
 
-	if(this.flip_y)
-		mat4.scale( this._projection_matrix, this._projection_matrix, [1,-1,1] );
+		if(this.flip_y)
+			mat4.scale( this._projection_matrix, this._projection_matrix, [1,-1,1] );
 
-	mat4.lookAt(this._view_matrix, this._position, this._target, this._up);
+		//view
+		mat4.lookAt(this._view_matrix, this._position, this._target, this._up);
+	}
+
 	mat4.multiply(this._viewprojection_matrix, this._projection_matrix, this._view_matrix );
 	mat4.invert(this._model_matrix, this._view_matrix );
 	
@@ -2585,7 +2663,7 @@ Camera.prototype.move = function(v)
 
 /**
 * move the position and the target using the local coordinates system of the camera
-* @method move
+* @method moveLocal
 * @param {vec3} v
 */
 Camera.prototype.moveLocal = function(v)
@@ -2634,9 +2712,11 @@ Camera.prototype.rotateLocal = function(angle, axis)
 * @param {vec3} axis
 * @param {vec3} [center=null] if another center is provided it rotates around it
 */
-Camera.prototype.orbit = function(angle, axis, center)
+Camera.prototype.orbit = function(angle, axis, center, axis_in_local)
 {
 	center = center || this._target;
+	if(axis_in_local)
+		axis = mat4.rotateVec3(temp_vec3b, this._model_matrix, axis);
 	var R = quat.setAxisAngle( temp_quat, axis, angle );
 	var front = vec3.subtract( temp_vec3, this._position, this._target );
 	vec3.transformQuat(front, front, R );
@@ -2644,6 +2724,7 @@ Camera.prototype.orbit = function(angle, axis, center)
 	this._must_update_matrix = true;
 }
 
+//multiplies front by f and updates position
 Camera.prototype.orbitDistanceFactor = function(f, center)
 {
 	center = center || this._target;
@@ -2687,6 +2768,30 @@ Camera.prototype.unproject = function( vec, viewport, result )
 {
 	viewport = viewport || gl.viewport_data;
 	return vec3.unproject( result || vec3.create(), vec, this._viewprojection_matrix, viewport );
+}
+
+/**
+* gets the ray passing through one pixel
+* @method getRay
+* @param {number} x
+* @param {number} y
+* @param {Array} [viewport=gl.viewport]
+* @return {Object} ray object { origin: vec3, direction:vec3 }
+*/
+Camera.prototype.getRay = function( x, y, viewport )
+{
+	viewport = viewport || gl.viewport_data;
+	
+	var origin = null;
+	if(this.type == RD.Camera.ORTHOGRAPHIC)
+		origin = vec3.unproject( vec3.fromValues(), vec3.fromValues(x,y,0), this._viewprojection_matrix, viewport );
+	else
+		origin = vec3.clone( this.position );
+
+	var direction = vec3.unproject( vec3.fromValues(), vec3.fromValues(x,y,1), this._viewprojection_matrix, viewport );
+	vec3.sub( direction, direction, origin );
+	vec3.normalize( direction, direction );
+	return { origin: origin, direction: direction }
 }
 
 /**
@@ -2789,7 +2894,8 @@ Camera.prototype.extractPlanes = function()
 	{
 		var N = planes.subarray(pos,pos+3);
 		var l = vec3.length(N);
-		if(l) return;
+		if(!l === 0.0)
+			return;
 		l = 1.0 / l;
 		planes[pos] *= l;
 		planes[pos+1] *= l;
@@ -2850,23 +2956,39 @@ Camera.prototype.testSphere = function(center, radius)
 	var overlap = false;
 
 	dist = distanceToPlane( planes[0], center );
-	if( dist &lt; -radius ) return CLIP_OUTSIDE;
-	else if(dist &gt;= -radius &amp;&amp; dist &lt;= radius)	overlap = true;
+	if( dist &lt; -radius )
+		return CLIP_OUTSIDE;
+	else if(dist &gt;= -radius &amp;&amp; dist &lt;= radius)
+		overlap = true;
 	dist = distanceToPlane( planes[1], center );
-	if( dist &lt; -radius ) return CLIP_OUTSIDE;
-	else if(dist &gt;= -radius &amp;&amp; dist &lt;= radius)	overlap = true;
+	if( dist &lt; -radius )
+		return CLIP_OUTSIDE;
+	else if(dist &gt;= -radius &amp;&amp; dist &lt;= radius)
+		overlap = true;
 	dist = distanceToPlane( planes[2], center );
-	if( dist &lt; -radius ) return CLIP_OUTSIDE;
-	else if(dist &gt;= -radius &amp;&amp; dist &lt;= radius)	overlap = true;
+	if( dist &lt; -radius )
+		return CLIP_OUTSIDE;
+	else if(dist &gt;= -radius &amp;&amp; dist &lt;= radius)
+		overlap = true;
 	dist = distanceToPlane( planes[3], center );
-	if( dist &lt; -radius ) return CLIP_OUTSIDE;
-	else if(dist &gt;= -radius &amp;&amp; dist &lt;= radius)	overlap = true;
+	if( dist &lt; -radius )
+		return CLIP_OUTSIDE;
+	else if(dist &gt;= -radius &amp;&amp; dist &lt;= radius)
+		overlap = true;
 	dist = distanceToPlane( planes[4], center );
-	if( dist &lt; -radius ) return CLIP_OUTSIDE;
-	else if(dist &gt;= -radius &amp;&amp; dist &lt;= radius)	overlap = true;
+	if( dist &lt; -radius )
+		return CLIP_OUTSIDE;
+	else if(dist &gt;= -radius &amp;&amp; dist &lt;= radius)
+		overlap = true;
 	dist = distanceToPlane( planes[5], center );
-	if( dist &lt; -radius ) return CLIP_OUTSIDE;
-	else if(dist &gt;= -radius &amp;&amp; dist &lt;= radius)	overlap = true;
+	if( dist &lt; -radius )
+		return CLIP_OUTSIDE;
+	else if(dist &gt;= -radius &amp;&amp; dist &lt;= radius)
+		overlap = true;
+	
+	if(overlap)
+		return CLIP_OVERLAP;
+	return CLIP_INSIDE;
 }
 
 
@@ -3058,7 +3180,7 @@ Renderer.prototype.createShaders = function()
 	
 	
 	//basic phong shader
-	var phong_uniforms = { u_lightvector: vec3.fromValues(0.577, 0.577, 0.577), u_lightcolor: RD.WHITE };
+	var phong_uniforms = { u_ambient: vec3.create(), u_lightvector: vec3.fromValues(0.577, 0.577, 0.577), u_lightcolor: RD.WHITE };
 	
 	this._phong_shader = new GL.Shader(&#x27;\
 			precision highp float;\
@@ -3074,12 +3196,13 @@ Renderer.prototype.createShaders = function()
 			&#x27;, &#x27;\
 			precision highp float;\
 			varying vec3 v_normal;\
+			uniform vec3 u_ambient;\
 			uniform vec3 u_lightcolor;\
 			uniform vec3 u_lightvector;\
 			uniform vec4 u_color;\
 			void main() {\
 			  vec3 N = normalize(v_normal);\
-			  gl_FragColor = u_color * max(0.0, dot(u_lightvector,N)) * vec4(u_lightcolor,1.0);\
+			  gl_FragColor = u_color * (vec4(u_ambient,1.0) + max(0.0, dot(u_lightvector,N)) * vec4(u_lightcolor,1.0));\
 			}\
 		&#x27;);
 	gl.shaders[&quot;phong&quot;] = this._phong_shader;

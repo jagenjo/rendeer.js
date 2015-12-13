@@ -233,6 +233,24 @@ Object.defineProperty(SceneNode.prototype, 'scaling', {
 });
 
 
+Object.defineProperty(SceneNode.prototype, 'pivot', {
+	get: function() { return this._pivot; },
+	set: function(v) { 
+		this._must_update_matrix = true; 	
+		if(!v)
+		{
+			this._pivot = null;
+			this.flags.pivot = false;
+			return;
+		}
+		if(!this._pivot)
+			this._pivot = vec3.create();
+		this._pivot.set(v);
+		this.flags.pivot = true;
+	},
+	enumerable: true
+});
+
 /**
 * The color in RGBA format
 * @property color {vec4}
@@ -536,9 +554,7 @@ SceneNode.prototype.scale = function(v)
 */
 SceneNode.prototype.setPivot = function(pivot)
 {
-	if(!this._pivot)
-		this._pivot = vec3.create();
-	this._pivot.set(pivot);
+	this.pivot = pivot;
 }
 
 SceneNode.prototype.orbit = function(angle, axis, pivot)
@@ -762,6 +778,13 @@ SceneNode.prototype.getLocalVector = function(v, result)
 SceneNode.prototype.getGlobalPosition = function(result)
 {
 	result = result || vec3.create();
+
+	if(this._parent == this._scene._root)
+	{
+		result.set( this._position );
+		return result;
+	}
+
 	var m = this.getGlobalMatrix();
 	return vec3.transformMat4(result, RD.ZERO, m );
 }
@@ -888,7 +911,7 @@ Sprite.prototype._ctor = function()
 {
 	SceneNode.prototype._ctor.call(this);
 	this.mesh = "plane";
-	this.size = vec3.fromValues(10,10);
+	this.size = vec2.fromValues(10,10); //not used
 	this.flags.two_sided = true;
 	this.flags.blend = true;
 	this.flags.depth_test = false;
@@ -941,6 +964,11 @@ Sprite.createFrames = function(num_rows, names, frames)
 Sprite.prototype.createFrames = function(num_rows, names)
 {
 	Sprite.createFrames(num_rows, names, this.frames );
+}
+
+Sprite.prototype.addFrame = function(name, x,y, w,h, normalized )
+{
+	this.frames[ name ] = { pos: vec2.fromValues(x,y), size: vec2.fromValues(w,h), normalized: !!normalized };
 }
 
 Sprite.prototype.updateTextureMatrix = function( renderer )
@@ -1009,7 +1037,10 @@ Sprite.prototype.render = function(renderer, camera)
 		
 	if(this.updateTextureMatrix(renderer))
 	{
-		renderer.setModelMatrix( this._global_matrix );
+		if(this.billboard)
+			RD.Billboard.orientNode( this, camera, renderer );
+		else
+			renderer.setModelMatrix( this._global_matrix );
 		renderer.renderNode( this, renderer, camera );
 	}
 }
@@ -1039,6 +1070,42 @@ Billboard.prototype._ctor = function()
 	SceneNode.prototype._ctor.call(this);
 }
 
+Billboard.orientNode = function( node, camera, renderer)
+{
+	if( node.cylindric )
+	{
+		var global_pos = node.getGlobalPosition( temp_vec3b );
+		vec3.sub(temp_vec3, camera._position, global_pos);
+		temp_vec2[0] = temp_vec3[0];
+		temp_vec2[1] = temp_vec3[2];
+		var angle = vec2.computeSignedAngle( temp_vec2, RD.FRONT2D );
+		if( !isNaN(angle) )
+		{
+			mat4.rotateY( temp_mat4, identity_mat4, -angle );
+			node._global_matrix.set( temp_mat4 );
+			mat4.setTranslation( node._global_matrix, node._position );
+			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
+		}
+	}
+	else
+	{
+		if(node.parallel)
+		{
+			node._global_matrix.set( camera._model_matrix );
+			mat4.setTranslation( node._global_matrix, node._position );
+			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
+		}
+		else
+		{
+			mat4.lookAt( node._global_matrix, node._position, camera.position, RD.UP );
+			mat4.invert( node._global_matrix, node._global_matrix );
+			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
+		}
+	}
+	
+	renderer.setModelMatrix( node._global_matrix );
+}
+
 Billboard.prototype.render = function(renderer, camera )
 {
 	//avoid orienting if it is not visible
@@ -1046,40 +1113,7 @@ Billboard.prototype.render = function(renderer, camera )
 		return;
 
 	if(this.auto_orient)
-	{
-		if(this.cylindric)
-		{
-			var global_pos = this.getGlobalPosition(temp_vec3b);
-			vec3.sub(temp_vec3, camera._position, global_pos);
-			temp_vec2[0] = temp_vec3[0];
-			temp_vec2[1] = temp_vec3[2];
-			var angle = vec2.computeSignedAngle( temp_vec2, RD.FRONT2D );
-			if( !isNaN(angle) )
-			{
-				mat4.rotateY( temp_mat4, identity_mat4, -angle );
-				this._global_matrix.set( temp_mat4 );
-				mat4.setTranslation( this._global_matrix, this._position );
-				mat4.scale( this._global_matrix, this._global_matrix, this._scale );
-			}
-		}
-		else
-		{
-			if(this.parallel)
-			{
-				this._global_matrix.set( camera._model_matrix );
-				mat4.setTranslation( this._global_matrix, this._position );
-				mat4.scale( this._global_matrix, this._global_matrix, this._scale );
-			}
-			else
-			{
-				mat4.lookAt( this._global_matrix, this._position, camera.position, RD.UP );
-				mat4.invert( this._global_matrix, this._global_matrix );
-				mat4.scale( this._global_matrix, this._global_matrix, this._scale );
-			}
-		}
-		
-		renderer.setModelMatrix( this._global_matrix );
-	}
+		Billboard.orientNode( this, camera, renderer );
 	
 	renderer.renderNode( this, renderer, camera );
 }
@@ -1707,6 +1741,8 @@ Renderer.prototype.render = function(scene, camera, nodes)
 			var node = nodes[i];
 			if(node.flags.visible === false)
 				continue;
+			if(this.mustRenderNode && this.mustRenderNode(node, camera) === false)
+				continue;
 			
 			this.setModelMatrix( node._global_matrix );
 			
@@ -2085,8 +2121,7 @@ Renderer.prototype.loadShaders = function(url, on_complete)
 			}
 			catch (err)
 			{
-				console.error("Error compiling shader: " + name);
-				console.error(err);
+				GL.Shader.dumpErrorToConsole(err,vs,fs);
 			}
 		}
 		
@@ -2525,7 +2560,7 @@ Camera.prototype.move = function(v)
 
 /**
 * move the position and the target using the local coordinates system of the camera
-* @method move
+* @method moveLocal
 * @param {vec3} v
 */
 Camera.prototype.moveLocal = function(v)
@@ -2574,9 +2609,11 @@ Camera.prototype.rotateLocal = function(angle, axis)
 * @param {vec3} axis
 * @param {vec3} [center=null] if another center is provided it rotates around it
 */
-Camera.prototype.orbit = function(angle, axis, center)
+Camera.prototype.orbit = function(angle, axis, center, axis_in_local)
 {
 	center = center || this._target;
+	if(axis_in_local)
+		axis = mat4.rotateVec3(temp_vec3b, this._model_matrix, axis);
 	var R = quat.setAxisAngle( temp_quat, axis, angle );
 	var front = vec3.subtract( temp_vec3, this._position, this._target );
 	vec3.transformQuat(front, front, R );
@@ -2584,6 +2621,7 @@ Camera.prototype.orbit = function(angle, axis, center)
 	this._must_update_matrix = true;
 }
 
+//multiplies front by f and updates position
 Camera.prototype.orbitDistanceFactor = function(f, center)
 {
 	center = center || this._target;
@@ -3039,7 +3077,7 @@ Renderer.prototype.createShaders = function()
 	
 	
 	//basic phong shader
-	var phong_uniforms = { u_lightvector: vec3.fromValues(0.577, 0.577, 0.577), u_lightcolor: RD.WHITE };
+	var phong_uniforms = { u_ambient: vec3.create(), u_lightvector: vec3.fromValues(0.577, 0.577, 0.577), u_lightcolor: RD.WHITE };
 	
 	this._phong_shader = new GL.Shader('\
 			precision highp float;\
@@ -3055,12 +3093,13 @@ Renderer.prototype.createShaders = function()
 			', '\
 			precision highp float;\
 			varying vec3 v_normal;\
+			uniform vec3 u_ambient;\
 			uniform vec3 u_lightcolor;\
 			uniform vec3 u_lightvector;\
 			uniform vec4 u_color;\
 			void main() {\
 			  vec3 N = normalize(v_normal);\
-			  gl_FragColor = u_color * max(0.0, dot(u_lightvector,N)) * vec4(u_lightcolor,1.0);\
+			  gl_FragColor = u_color * (vec4(u_ambient,1.0) + max(0.0, dot(u_lightvector,N)) * vec4(u_lightcolor,1.0));\
 			}\
 		');
 	gl.shaders["phong"] = this._phong_shader;

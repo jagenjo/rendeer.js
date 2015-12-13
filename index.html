@@ -31,14 +31,14 @@
 			<h2>Usage</h2>
 
 			<p>Include the script</p>
-			<pre>&lt;script src="js/rendeer.js"&gt;&lt;/script&gt;</pre>
+			<pre>&lt;script src="js/rendeer.full.min.js"&gt;&lt;/script&gt;</pre>
 
 			<p>Create the scene container</p>
 			<pre>var scene = new RD.Scene();</pre>
 
 			<p>Create the renderer</p>
-			<pre>		var context = GL.create({width: window.innerWidth, height:window.innerHeight});
-		var renderer = new RD.Renderer(context);
+			<pre>var context = GL.create({width: window.innerWidth, height:window.innerHeight});
+var renderer = new RD.Renderer(context);
 </pre>
 
 			<p>Attach to DOM</p>
@@ -65,11 +65,13 @@ box.color = [1,0,0,1];
 box.mesh = "cube";
 box.position = [0,0,0];
 box.scale([10,10,10]);
-stage.addChild(box);
+scene.root.addChild(box);
 </pre>
 
 			<p>Create main loop</p>
-			<pre>requestAnimationFrame(animate);
+			<pre>
+var now = getTime();		
+requestAnimationFrame(animate);			
 function animate() {
 	requestAnimationFrame( animate );
 
@@ -83,8 +85,7 @@ function animate() {
 
 			<a name="examples"></a>
 			<h2>Examples</h2>
-			<ul>
-			</ul>
+			<p>Some basic examples can be <a href="examples">found here</a>.</p>
 
 			<a name="doc"></a>
 			<h2>Documentation</h2>
