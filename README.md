@@ -23,7 +23,7 @@ There is a boilerplate to create an application in the folder boilerlate/
 Usage
 -----
 
-Here is a brief example of how to use it, by I totally encourage to read the more detailed guide stored in the guides folder and to check the documentation for better understanding of the API.
+Here is a brief example of how to use it, but I totally encourage to read the more detailed guide stored in the guides folder, or to check the boilerplate provided, and finally check the documentation for better understanding of the API.
 
 First include the library and dependencies
 ```html
