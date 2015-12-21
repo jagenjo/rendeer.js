@@ -68,7 +68,7 @@ scene.root.addChild( node );
 
 ### The SceneNode properties
 
-We use SceneNodes to render meshes on the screen, so the three main properties to keep in mind are node.mesh, node.shader and node.textures.
+We use SceneNodes to render meshes on the screen, so the three main properties to keep in mind are ```node.mesh```, ```node.shader``` and ```node.textures```.
 All three store strings, although textures is an object where you can store different textures for different channels (color, specular, etc).
 
 The strings are the name of the assets that will be fetched when rendering, those assets must be stored in the Renderer's containers (meshes, shaders and textures), which are the sames in the gl context (you can use them indistinguishable).
@@ -128,7 +128,21 @@ The same with loadMesh.
 
 ### The shaders
 
-For shaders you can use the old approach of compiling your own shaders and storing them in renderer.shaders or use our build-in system to compile several shaders that come from a single text file.
+When creating a shader here are some considerations:
+
+* Global parameters passed to the shader: float u_time
+* Camera parameters: mat4 u_view, mat4 u_viewprojection, mat4 u_mvp
+* Node parameters: mat4 u_model
+* Textures will have "u_" + channel_name + "_texture"
+* Other parameters stored in node._uniforms will be passed as they are.
+
+To compile and store shaders in the renderer you can use the old approach of compiling your own shaders manually using LiteGL and storing them in ```renderer.shaders```:
+
+```javascript
+renderer.shaders["flat"] = new GL.Shader( my_vertex_shader_code, my_fragment_shader_code );
+```
+
+or use our build-in system to compile several shaders that come from a single text file.
 
 To do so you must create what we call an Files Atlas (every back-slash creates a new virtual file with the given name and its content).
 Here is an example of a file atlas and its syntax:
