@@ -2,17 +2,18 @@
 
 Rendeer is a javascript library to render 3D Scenes in WebGL that provides a scene graph and a simple renderer.
 
-It doesnt forces any rendering pipeline and the user is in charge of creating the shaders and the behaviour for every element.
+It doesn't force any rendering pipeline to the developer but this means that the user is in charge of creating the shaders and the behaviour for every element. This allow to have more freedom but also implies that the user knows about Shaders.
 
-Rendeer is a helper environment for most of the common scene graph actions, like positioning on the world, creating hierarchies, crawling the scene graph and rendering to the screen, but the programmer has total freedom to use only parts of it.
+Use Rendeer as a helper environment for most of the common scene graph actions, like positioning on the world, creating hierarchies, crawling the scene graph and rendering to the screen. And you can use the parts that you need.
 
-It relies on LiteGL.js for the low-level actions (compile shaders, upload textures, create meshes and get the user input), so it is mandatory to know the basic components of LiteGL in order to use Rendeer.js (although it is very simple).
-
+It relies totally on LiteGL.js for the low-level actions (compile shaders, upload textures, create meshes and get the user input), so it is mandatory to know the basic components of LiteGL in order to use Rendeer.js (although it is very simple).
 
 ## How to Start
 
-There is boilerplate folder in the repository to help creating a basic full-website WebGL application.
+There is a [boilerplate folder](https://github.com/jagenjo/rendeer.js/tree/master/boilerplate) in the repository to help creating a basic full-website WebGL application and some basic examples in the [examples folder](https://github.com/jagenjo/rendeer.js/tree/master/examples).
 It comes with some shaders and an example of how to use LiteGL and Rendeer together to get some nice effects.
+
+But remember that there is a documentation folder (you can check it [online here](http://tamats.com/projects/rendeer/doc) )
 
 ### Libraries
 
