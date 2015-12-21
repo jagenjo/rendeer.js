@@ -35,7 +35,9 @@
 * @default[1,1,1]
 */
 
-var RD = global.RD = {};
+var RD = global.RD = {
+	version: 0.5
+};
 
 RD.ZERO = vec3.fromValues(0,0,0);
 RD.ONE = vec3.fromValues(1,1,1);
@@ -55,6 +57,10 @@ RD.PRIORITY_BACKGROUND = 30;
 RD.PRIORITY_OPAQUE = 20;
 RD.PRIORITY_ALPHA = 10;
 RD.PRIORITY_HUD = 0;
+
+RD.BLEND_NONE = 0;
+RD.BLEND_ALPHA = 1; //src_alpha, one_minus_src_alpha
+RD.BLEND_ADD = 2; //src_alpha, one
 
 RD.setup = function(o)
 {
@@ -112,13 +118,13 @@ SceneNode.prototype._ctor = function()
 		Object.observe( this._scale, inner_transform_change );
 	}
 	
-	this._render_priority = RD.PRIORITY_OPAQUE;
+	this.render_priority = RD.PRIORITY_OPAQUE;
 
 	//could be used for many things
 	this.shader = null;
+	this.blend_mode = RD.BLEND_NONE;
 	this._color = vec4.fromValues(1,1,1,1);
 	this._uniforms = { u_color: this._color, u_color_texture: 0 };
-	
 	this.flags = {};
 	this.mesh = null;
 	this.textures = {};
@@ -349,6 +355,16 @@ SceneNode.prototype.removeChild = function(node)
 		for(var i = 0, l = node.children.length; i < l; i++)
 			change_scene( node.children[i] );
 	}
+}
+
+/**
+* Remove all childs
+* @method clear
+*/
+SceneNode.prototype.clear = function()
+{
+	while(this.children.length)
+		this.removeChild( this.children[ this.children.length - 1 ] );
 }
 
 /**
@@ -717,9 +733,9 @@ SceneNode.prototype.fromMatrix = function(m, is_global)
 
 	//scale
 	var tmp = vec3.create();
-	this._scale[0] = vec3.length( mat4.rotateVec3(tmp,M,[1,0,0]) );
-	this._scale[1] = vec3.length( mat4.rotateVec3(tmp,M,[0,1,0]) );
-	this._scale[2] = vec3.length( mat4.rotateVec3(tmp,M,[0,0,1]) );
+	this._scale[0] = vec3.length( mat4.rotateVec3(tmp,M,RD.RIGHT) );
+	this._scale[1] = vec3.length( mat4.rotateVec3(tmp,M,RD.UP) );
+	this._scale[2] = vec3.length( mat4.rotateVec3(tmp,M,RD.BACK) );
 
 	mat4.scale( mat4.create(), M, [1/this._scale[0],1/this._scale[1],1/this._scale[2]] );
 
@@ -772,12 +788,16 @@ SceneNode.prototype.getLocalVector = function(v, result)
 /**
 * Returns the node position in global coordinates
 * @method getGlobalPosition
-* @param {vec3} [result=vec3] where to store the output
+* @param {vec3} [result=optional] where to store the output
+* @param {Boolean} [fast=optional] uses the current global amtrix without recomputing it, is faster but if the current matrix hasnt been updated the result will be wrong
 * @return {vec3} result
 */
-SceneNode.prototype.getGlobalPosition = function(result)
+SceneNode.prototype.getGlobalPosition = function(result, fast)
 {
 	result = result || vec3.create();
+
+	if(fast)
+		return vec3.transformMat4( result, RD.ZERO, this._global_matrix );
 
 	if(this._parent == this._scene._root)
 	{
@@ -912,8 +932,8 @@ Sprite.prototype._ctor = function()
 	SceneNode.prototype._ctor.call(this);
 	this.mesh = "plane";
 	this.size = vec2.fromValues(10,10); //not used
+	this.blend_mode = RD.BLEND_ALPHA;
 	this.flags.two_sided = true;
-	this.flags.blend = true;
 	this.flags.depth_test = false;
 	this.flags.flipX = false;
 	this.flags.flipY = false;
@@ -1037,7 +1057,7 @@ Sprite.prototype.render = function(renderer, camera)
 		
 	if(this.updateTextureMatrix(renderer))
 	{
-		if(this.billboard)
+		if(this.billboard_mode)
 			RD.Billboard.orientNode( this, camera, renderer );
 		else
 			renderer.setModelMatrix( this._global_matrix );
@@ -1062,22 +1082,36 @@ function Billboard()
 extendClass(Billboard, SceneNode);
 RD.Billboard = Billboard;
 
+Billboard.SPHERIC = 1;
+Billboard.PARALLEL_SPHERIC = 2;
+Billboard.CYLINDRIC = 3;
+Billboard.PARALLEL_CYLINDRIC = 4;
+
 Billboard.prototype._ctor = function()
 {
-	this.cylindric = false;
-	this.parallel = false;
+	this.billboard_mode = Billboard.SPHERIC;
 	this.auto_orient = true;
 	SceneNode.prototype._ctor.call(this);
 }
 
-Billboard.orientNode = function( node, camera, renderer)
+Billboard.orientNode = function( node, camera, renderer )
 {
-	if( node.cylindric )
+	if( node.billboard_mode == Billboard.CYLINDRIC || node.billboard_mode == Billboard.PARALLEL_CYLINDRIC )
 	{
-		var global_pos = node.getGlobalPosition( temp_vec3b );
-		vec3.sub(temp_vec3, camera._position, global_pos);
-		temp_vec2[0] = temp_vec3[0];
-		temp_vec2[1] = temp_vec3[2];
+		var global_pos = null;
+		if(node.billboard_mode == Billboard.CYLINDRIC)
+		{
+			global_pos = node.getGlobalPosition( temp_vec3b );
+			vec3.sub(temp_vec3, camera._position, global_pos);
+			temp_vec2[0] = temp_vec3[0];
+			temp_vec2[1] = temp_vec3[2];
+		}
+		else //Billboard.PARALLEL_CYLINDRIC
+		{
+			temp_vec2[0] = camera._front[0];
+			temp_vec2[1] = camera._front[2];
+		}
+
 		var angle = vec2.computeSignedAngle( temp_vec2, RD.FRONT2D );
 		if( !isNaN(angle) )
 		{
@@ -1089,13 +1123,13 @@ Billboard.orientNode = function( node, camera, renderer)
 	}
 	else
 	{
-		if(node.parallel)
+		if(node.billboard_mode == Billboard.PARALLEL_SPHERIC)
 		{
 			node._global_matrix.set( camera._model_matrix );
 			mat4.setTranslation( node._global_matrix, node._position );
 			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
 		}
-		else
+		else //Billboard.SPHERIC
 		{
 			mat4.lookAt( node._global_matrix, node._position, camera.position, RD.UP );
 			mat4.invert( node._global_matrix, node._global_matrix );
@@ -1142,9 +1176,9 @@ function PointCloud()
 	this.draw_range = [0,this.max_points*3];
 	this.shader = "pointcloud";
 	this.textures = { color: "white" };
-	this.flags.blend = true;
+	this.blend_mode = RD.BLEND_ALPHA;
 	this.flags.depth_write = false;
-	this._render_priority = 20;
+	this.render_priority = RD.PRIORITY_ALPHA;
 	
 	this.num_textures = 1; //atlas number of rows and columns
 
@@ -1296,9 +1330,9 @@ function ParticlesEmissor()
 	this.draw_range = [0,this.max_particles*3];
 	this.shader = "particles";
 	this.textures = { color: "white" };
-	this.flags.blend = true;
+	this.blend_mode = RD.BLEND_ALPHA;
 	this.flags.depth_write = false;
-	this._render_priority = 20;
+	this.render_priority = RD.PRIORITY_ALPHA;
 	
 	this.num_textures = 1; //atlas number of rows and columns
 
@@ -1719,7 +1753,7 @@ Renderer.prototype.render = function(scene, camera, nodes)
 
 		//sort by priority
 		if(this.sort_by_priority)
-			nodes.sort(function(a,b) { return b._render_priority - a._render_priority; } );
+			nodes.sort(function(a,b) { return b.render_priority - a.render_priority; } );
 			
 		//pre rendering
 		if(scene.root.preRender)
@@ -1874,14 +1908,14 @@ Renderer.prototype.renderNode = function(node, camera)
 		gl[ node.flags.two_sided === true ? "disable" : "enable"]( gl.CULL_FACE );
 		
 		//blend
-		if(node.flags.blend)
+		if(	node.blend_mode !== RD.BLEND_NONE )
 		{
 			gl.enable( gl.BLEND );
-			gl.blendFunc( gl.SRC_ALPHA, node.blendMode == "additive" ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA );
+			gl.blendFunc( gl.SRC_ALPHA, node.blend_mode === RD.BLEND_ADD ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA );
 		}
 	}
 	else
-		gl.blendFunc( gl.SRC_ALPHA, node.blendMode == "additive" ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA );
+		gl.blendFunc( gl.SRC_ALPHA, node.blend_mode === RD.BLEND_ADD ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA );
 	
 	if(node.onRender)
 		node.onRender(this, camera, shader);
@@ -1901,7 +1935,7 @@ Renderer.prototype.renderNode = function(node, camera)
 	{
 		if( node.flags.flip_normals ) gl.frontFace( gl.CCW );
 		if( node.flags.depth_test === false ) gl.enable( gl.DEPTH_TEST );
-		if( node.flags.blend ) gl.disable( gl.BLEND );
+		if( node.blend_mode !== RD.BLEND_NONE ) gl.disable( gl.BLEND );
 		if( node.flags.two_sided ) gl.disable( gl.CULL_FACE );
 		if( node.flags.depth_write === false )
 			gl.depthMask( true );
@@ -2061,73 +2095,83 @@ Renderer.prototype.loadShaders = function(url, on_complete)
 	
 	//load shaders code from a files atlas
 	GL.loadFileAtlas( url, function(files){
-		var info = files["shaders"];
-		 if(!info)
-		 {
-		 	console.warn("No 'shaders' found in shaders file atlas, check documentation");
-		 	return;
-		 }
-		 
-		//expand #imports "..."
-		for(var i in files)
-			files[i] = Shader.expandImports( files[i], files );
-		 
-		//compile shaders
-		var lines = info.split("\n");
-		for(var i in lines)
+		that.compileShadersFromAtlas(files);
+		if(on_complete)
+			on_complete(files);
+	});
+}
+
+Renderer.prototype.compileShadersFromAtlas = function(files)
+{
+	var info = files["shaders"];
+	 if(!info)
+	 {
+		console.warn("No 'shaders' found in shaders file atlas, check documentation");
+		return;
+	 }
+	 
+	//expand #imports "..."
+	for(var i in files)
+		files[i] = GL.Shader.expandImports( files[i], files );
+	 
+	//compile shaders
+	var lines = info.split("\n");
+	for(var i in lines)
+	{
+		var line = lines[i];
+		var t = line.trim().split(" ");
+		var name = t[0].trim();
+		if(name.substr(0,2) == "//")
+			continue;
+		var vs = files[ t[1] ];
+		var fs = files[ t[2] ];
+		var macros = null;
+		if(t.length > 2)
+			macros = t.slice(3).join(" ");
+		
+		if(t[1] && t[1][0] == '@')
 		{
-			var line = lines[i];
-			var t = line.trim().split(" ");
-			var name = t[0].trim();
-			if(name.substr(0,2) == "//")
-				continue;
-			var vs = files[ t[1] ];
-			var fs = files[ t[2] ];
-			var macros = null;
-			if(t.length > 2)
-				macros = t.slice(3).join(" ");
-			
-			if(t[1] && t[1][0] == '@')
-			{
-				var pseudoname = t[1].substr(1) + "_VERTEX_SHADER";
-				if(GL.Shader[pseudoname])
-					vs = GL.Shader[pseudoname];
-			}
-			if(t[2] && t[2][0] == '@')
-			{
-				var pseudoname = t[2].substr(1) + "_FRAGMENT_SHADER";
-				if(GL.Shader[pseudoname])
-					fs = GL.Shader[pseudoname];
-			}
-			
-			if(macros)
-			{
-				try
-				{
-					macros = JSON.parse(macros);
-				}
-				catch (err)
-				{
-					console.error("Error in shader macros: ", name, macros, err);
-				}
-			}
-	
+			var pseudoname = t[1].substr(1) + "_VERTEX_SHADER";
+			if(GL.Shader[pseudoname])
+				vs = GL.Shader[pseudoname];
+		}
+		if(t[2] && t[2][0] == '@')
+		{
+			var pseudoname = t[2].substr(1) + "_FRAGMENT_SHADER";
+			if(GL.Shader[pseudoname])
+				fs = GL.Shader[pseudoname];
+		}
+		
+		if(macros)
+		{
 			try
 			{
-				if(vs && fs)
-					that.shaders[ name ] = new GL.Shader( vs, fs, macros );
-				else
-					console.warn("Shader file not found: ",t[1],t[2]);
+				macros = JSON.parse(macros);
 			}
 			catch (err)
 			{
-				GL.Shader.dumpErrorToConsole(err,vs,fs);
+				console.error("Error in shader macros: ", name, macros, err);
 			}
 		}
-		
-		if(on_complete)
-			on_complete(files);
-	});	
+
+		try
+		{
+			if(vs && fs)
+				this.shaders[ name ] = new GL.Shader( vs, fs, macros );
+			else
+				console.warn("Shader file not found: ",t[1],t[2]);
+		}
+		catch (err)
+		{
+			GL.Shader.dumpErrorToConsole(err,vs,fs);
+		}
+	}
+}
+
+Renderer.prototype.setShadersFromFile = function( file_data )
+{
+	var files = GL.processFileAtlas( file_data );
+	this.compileShadersFromAtlas( files );
 }
 
 
@@ -2139,7 +2183,7 @@ RD.sortByDistance = function(nodes, position)
 
 RD.noBlending = function(n)
 {
-	return n.flags.blend != true;
+	return n.blend_mode === RD.BLEND_NONE;
 }
 
 
@@ -2473,9 +2517,9 @@ Camera.prototype.updateMatrices = function( force )
 	
 	this._must_update_matrix = false;
 
-	mat4.rotateVec3( this._right, this._model_matrix, [1,0,0] );
-	mat4.rotateVec3( this._top,   this._model_matrix, [0,1,0] );
-	mat4.rotateVec3( this._front, this._model_matrix, [0,0,1] );
+	mat4.rotateVec3( this._right, this._model_matrix, RD.RIGHT );
+	mat4.rotateVec3( this._top,   this._model_matrix, RD.UP );
+	mat4.rotateVec3( this._front, this._model_matrix, RD.FRONT );
 
 	this.distance = vec3.distance(this._position, this._target);
 }
@@ -2497,9 +2541,9 @@ Camera.prototype.updateVectors = function(model)
 {
 	var front = vec3.subtract( temp_vec3, this._target, this._position);
 	var dist = vec3.length(front);
-	mat4.multiplyVec3(this._position, model, [0,0,0]);
+	mat4.multiplyVec3(this._position, model, RD.ZERO);
 	mat4.multiplyVec3(this._target, model, [0,0,-dist]);
-	mat4.rotateVec3(this._up, model, [0,1,0]);
+	mat4.rotateVec3(this._up, model, RD.UP);
 }
 
 /**
