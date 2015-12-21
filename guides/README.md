@@ -31,13 +31,17 @@ Rendeers requires that you pass an existing WebGL Context when creating the rend
 
 To create the GL context follow the LiteGL.js guide, but here is an example:
 
-```var context = GL.create({width:800,height:600});```
+```javascript
+var context = GL.create({width:800,height:600});
+```
 
 You can also pass an existing HTMLCanvas element instead of the size, or any parameter from WebGL like alpha or stencil flags.
 
 Remember that the context created with LiteGL is also assigned as a global var (window.gl) so you can call the WebGL API from anywhere:
 
-```gl.enable( gl.DEPTH_TEST );```
+```javascript
+gl.enable( gl.DEPTH_TEST );
+```
 
 ### The Scene 
 
@@ -45,15 +49,21 @@ There are two classes to keep in mind when using the scene graph, the Scene clas
 
 We must create a RD.Scene to contain our scene:
 
-```var scene = new RD.Scene();```
+```javascript
+var scene = new RD.Scene();
+```
 
 And we can create nodes using the RD.SceneNode:
 
-```var node = new RD.SceneNode();```
+```javascript
+var node = new RD.SceneNode();
+```
 
 The root node of the scene is not the scene itself but another node inside the scene called root. So to add a node to the root of the scene we must do this:
 
-```scene.root.addChild( node );```
+```javascript
+scene.root.addChild( node );
+```
 
 ### The SceneNode properties
 
@@ -66,7 +76,7 @@ But user is in charge of loading the assets manually, Rendeer does not perform l
 
 ### The SceneNode transformations
 
-To perform transformations in the SceneNode there are three main properties in every SceneNode, which are position, rotation and scaling. You can also access the local matrix in _local_matrix or the global matrix in _global_matrix.
+To perform transformations in the SceneNode there are three main properties in every SceneNode, which are position, rotation and scaling. You can also access the local matrix in ```_local_matrix``` or the global matrix in ```_global_matrix```.
 
 ### The Camera
 
@@ -79,6 +89,8 @@ camera.lookAt([100,100,100],[0,0,0],[0,1,0]);
 ```
 
 When rendering the scene you must supply which camera you want to use.
+
+You have all the matrices in  ```_view_matrix```,```_projection_matrix``` and ```_viewprojection_matrix``` plus a ```_model_matrix``` with the inverse of the view. Matrices use a lazy update, so remember to change the ```_must_update_matrix``` when changing the matrices manually.
 
 Cameras have all the common properties of cameras, keep in mind that instead of eye and center it uses position and target.
 Check the API for some useful functions like move, orbit or rotate
