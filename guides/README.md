@@ -33,6 +33,7 @@ To create the GL context follow the LiteGL.js guide, but here is an example:
 
 ```javascript
 var context = GL.create({width:800,height:600});
+document.body.appendChild( renderer.canvas );
 ```
 
 You can also pass an existing HTMLCanvas element instead of the size, or any parameter from WebGL like alpha or stencil flags.
