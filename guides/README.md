@@ -21,13 +21,13 @@ You must include gl-matrix.js, litegl.js and rendeer.js, although there is a ren
 About the libraries it uses, some remarks:
 
 * gl-matrix has an specific way of working that some people could feel is not very user-friendly but it was made to have the best performance possible in Javascript, just check some examples to understand it better.
-* litegl.js is a very low-level API, it wraps some actions common to WebGL, but if you want to do anything manually feel free to call the WebGL API directly, the only problem will be that Rendeer expects some basic classes to handle the render *like GL.Shader, GL.Texture and GL.Mesh) but if you bypasss the rendering stage there is no problem.
+* litegl.js is a very low-level API, it wraps some actions common to WebGL, but if you want to do anything manually feel free to call the WebGL API directly, the only problem will be that Rendeer expects some basic classes to handle the render (like ```GL.Shader```, ```GL.Texture``` and ```GL.Mesh```) but if you bypasss the rendering stage there is no problem.
 
 Although not mandatory I recommend to also include Canvas2DToWebGL.js, a library that helps using the Canvas2D API inside WebGL, something useful if you want to skip using the DOM.
 
 ### The WebGL context
 
-Rendeers requires that you pass an existing WebGL Context when creating the renderer (RD.Renderer), to create the context you must use LiteGL, you cannot pass another WebGL Context created by another library.
+Rendeers requires that you pass an existing WebGL Context when creating the renderer (```RD.Renderer```), to create the context you must use LiteGL, you cannot pass another WebGL Context created by another library.
 
 To create the GL context follow the LiteGL.js guide, but here is an example:
 
@@ -37,7 +37,7 @@ var context = GL.create({width:800,height:600});
 
 You can also pass an existing HTMLCanvas element instead of the size, or any parameter from WebGL like alpha or stencil flags.
 
-Remember that the context created with LiteGL is also assigned as a global var (window.gl) so you can call the WebGL API from anywhere:
+Remember that the context created with LiteGL is also assigned as a global var (```window.gl```) so you can call the WebGL API from anywhere:
 
 ```javascript
 gl.enable( gl.DEPTH_TEST );
@@ -129,7 +129,7 @@ The same with loadMesh.
 
 For shaders you can use the old approach of compiling your own shaders and storing them in renderer.shaders or use our build-in system to compile several shaders that come from a single text file.
 
-To do so you must create what we call an Files Atlas (every back-slash creates a new virtual file with the given name).
+To do so you must create what we call an Files Atlas (every back-slash creates a new virtual file with the given name and its content).
 Here is an example of a file atlas and its syntax:
 
 ```
@@ -156,9 +156,11 @@ To load it just call loadShaders from the renderer:
 renderer.loadShaders( atlas_url );
 ```
 
-This function will fetch for the virtual file called 'shaders' and for every line the first word is the name of the shader, the second the name of the vertex shader and the thirth is the name of the fragment shader.
+This function will load the file in the url, and parse it to create a virtual files object, then fetch for the virtual file called 'shaders' and for every line it will compile a shader, where the first word is the name of the shader, the second the name of the vertex shader and the thirth is the name of the fragment shader.
 
-It also allows to pass a fourth parameter with some given macros in this format: {"USE_ALPHA":""}
+It also allows to pass a fourth parameter per shader with some given macros in this format: {"USE_ALPHA":""}
+
+This way it is very easy to develop shaders. You can call the function again to reload shaders during runtime without problem.
 
 ### The input
 
