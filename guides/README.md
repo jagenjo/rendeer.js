@@ -6,7 +6,7 @@ It doesn't force any rendering pipeline to the developer but this means that the
 
 Use Rendeer as a helper environment for most of the common scene graph actions, like positioning on the world, creating hierarchies, crawling the scene graph and rendering to the screen. And you don't need to use all the features, for instance, you can use just the scene graph and create your own renderer.
 
-It relies totally on LiteGL.js for the low-level actions (compile shaders, upload textures, create meshes and get the user input), so it is mandatory to know the basic components of LiteGL in order to use Rendeer.js (although it is very simple).
+It relies totally on [LiteGL.js](https://github.com/jagenjo/litegl.js) for the low-level actions (compile shaders, upload textures, create meshes and get the user input), so it is mandatory to know the basic components of LiteGL in order to use Rendeer.js (although it is very simple).
 
 ## How to Start
 
@@ -18,6 +18,8 @@ But remember that there is a documentation folder (you can check it [online here
 ### Libraries
 
 You must include gl-matrix.js, litegl.js and rendeer.js, although there is a rendeer.full.min.js that includes all three libraries, I recommend to use the separated ones so you can debug easily. I havent test if there is any performance gain in using the minified version.
+
+All the dependencies are included in the external folder.
 
 About the libraries it uses, some remarks:
 
