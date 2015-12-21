@@ -2,9 +2,9 @@
 
 Rendeer is a javascript library to render 3D Scenes in WebGL that provides a scene graph and a simple renderer.
 
-It doesn't force any rendering pipeline to the developer but this means that the user is in charge of creating the shaders and the behaviour for every element. This allow to have more freedom but also implies that the user knows about Shaders.
+It doesn't force any rendering pipeline to the developer but this means that the user is in charge of creating the shaders and the behaviour for every element. This allow to have more freedom but also implies that the user knows about coding shaders in GLSL.
 
-Use Rendeer as a helper environment for most of the common scene graph actions, like positioning on the world, creating hierarchies, crawling the scene graph and rendering to the screen. And you can use the parts that you need.
+Use Rendeer as a helper environment for most of the common scene graph actions, like positioning on the world, creating hierarchies, crawling the scene graph and rendering to the screen. And you don't need to use all the features, for instance, you can use just the scene graph and create your own renderer.
 
 It relies totally on LiteGL.js for the low-level actions (compile shaders, upload textures, create meshes and get the user input), so it is mandatory to know the basic components of LiteGL in order to use Rendeer.js (although it is very simple).
 
