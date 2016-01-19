@@ -120,14 +120,18 @@ SceneNode.prototype._ctor = function()
 	this.render_priority = RD.PRIORITY_OPAQUE;
 
 	//could be used for many things
-	this.shader = null;
 	this.blend_mode = RD.BLEND_NONE;
+	this.layers = 0xFF;
 	this._color = vec4.fromValues(1,1,1,1);
 	this._uniforms = { u_color: this._color, u_color_texture: 0 };
-	this.flags = {};
+
+	//assets
+	this.shader = null;
 	this.mesh = null;
 	this.textures = {};
-	
+
+	this.flags = {};
+
 	//object inside this object
 	this.children = [];
 }
@@ -407,9 +411,11 @@ SceneNode.prototype.getAllChildren = function(r)
 * @param {Array} [result=Array] you can specify an array where all the children will be pushed
 * @return {Array} all the children nodes
 */
-SceneNode.prototype.getVisibleChildren = function(result)
+SceneNode.prototype.getVisibleChildren = function( result, layers )
 {
 	result = result || [];
+	if(layers === undefined)
+		layers = 0xFF;
 
 	if(this.flags.visible === false)
 		return result;
@@ -417,8 +423,9 @@ SceneNode.prototype.getVisibleChildren = function(result)
 	for(var i = 0, l = this.children.length; i < l; i++)
 	{
 		var node = this.children[i];
-		result.push(node);
-		node.getVisibleChildren(result);
+		if(node.layers & layers)
+			result.push(node);
+		node.getVisibleChildren(result, layers);
 	}
 
 	return result;
@@ -432,9 +439,9 @@ SceneNode.prototype.getVisibleChildren = function(result)
 SceneNode.prototype.serialize = function()
 {
 	var r = {
-		position: [ this._position[0],this._position[1],this._position[2] ],
-		rotation: [ this._rotation[0],this._rotation[1],this._rotation[2],this._rotation[3] ],
-		scale: [ this._scale[0],this._scale[1],this._scale[2] ],
+		position: [ this._position[0], this._position[1], this._position[2] ],
+		rotation: [ this._rotation[0], this._rotation[1], this._rotation[2], this._rotation[3] ],
+		scale: [ this._scale[0], this._scale[1], this._scale[2] ],
 		children: []
 	};
 
@@ -470,7 +477,7 @@ SceneNode.prototype.configure = function(o)
 * @method setMesh
 * @param {String|Mesh} mesh_name also it accepts a mesh itself
 */
-SceneNode.prototype.setMesh = function(mesh_name)
+SceneNode.prototype.setMesh = function( mesh_name )
 {
 	if(!mesh_name)
 		this.mesh = null;
@@ -1600,10 +1607,11 @@ Object.defineProperty(Scene.prototype, 'root', {
 
 /**
 * Renderer in charge of rendering a Scene
+* Valid options: all LiteGL context creation options (canvas, WebGL Flags, etc), plus: assets_folder, autoload_assets, shaders_file
 * @class Renderer
 * @constructor
 */
-function Renderer(context, options)
+function Renderer( context, options )
 {
 	options = options || {};
 	
@@ -1639,6 +1647,8 @@ function Renderer(context, options)
 	this.canvas = gl.canvas;
 
 	this.assets_folder = options.assets_folder || "";
+	this.autoload_assets = options.autoload_assets !== undefined ? options.autoload_assets : true;
+	this.default_texture_settings = { wrap: gl.REPEAT, minFilter: gl.LINEAR_MIPMAP_LINEAR, magFilter: gl.LINEAR };
 	
 	//global containers and basic data
 	this.meshes["plane"] = GL.Mesh.plane({size:1});
@@ -1650,9 +1660,11 @@ function Renderer(context, options)
 	this.textures["notfound"] = this.default_texture = new GL.Texture(1,1,{ filter: gl.NEAREST, pixel_data: new Uint8Array([0,0,0,255]) });
 	this.textures["white"] = this.default_texture = new GL.Texture(1,1,{ filter: gl.NEAREST, pixel_data: new Uint8Array([255,255,255,255]) });
 	
-	this.num_items_loading = 0;
-	this.items_loading = {};
+	this.num_assets_loading = 0;
+	this.assets_loading = {};
+	this.assets_not_found = {};
 	this.frame = 0;
+	this.draw_calls = 0;
 
 	this.createShaders();
 
@@ -1703,8 +1715,11 @@ Renderer.prototype.clear = function( color )
 * @param {RD.Camera} camera
 * @param {Array} nodes [Optional] array with nodes to render, otherwise all nodes will be rendered
 */
-Renderer.prototype.render = function(scene, camera, nodes)
+Renderer.prototype.render = function(scene, camera, nodes, layers )
 {
+	if(layers === undefined)
+		layers = 0xFF;
+
 	if (!scene)
 		throw("Renderer.render: scene not provided");
 
@@ -1721,16 +1736,17 @@ Renderer.prototype.render = function(scene, camera, nodes)
 	
 	global.gl = this.gl;
 	
-	//stack to state
+	//stack to store state
 	this._state = [];
+	//this.draw_calls = 0;
 
 	//get matrices in the camera
 	this.enableCamera( camera );
 
 	//find which nodes should we render
 	this._nodes.length = 0;
-	if(!nodes || !nodes.length)
-		scene.root.getVisibleChildren( this._nodes );
+	if(!nodes)
+		scene.root.getVisibleChildren( this._nodes, layers );
 	nodes = nodes || this._nodes;
 
 	if(nodes.length)
@@ -1772,7 +1788,7 @@ Renderer.prototype.render = function(scene, camera, nodes)
 		for (var i = 0; i < nodes.length; ++i)
 		{
 			var node = nodes[i];
-			if(node.flags.visible === false)
+			if(node.flags.visible === false || !(node.layers & layers) )
 				continue;
 			if(this.mustRenderNode && this.mustRenderNode(node, camera) === false)
 				continue;
@@ -1783,6 +1799,7 @@ Renderer.prototype.render = function(scene, camera, nodes)
 				node.render(this, camera);
 			else
 				this.renderNode(node, camera);
+			this.draw_calls += 1;
 		}
 		
 		//post rendering
@@ -1862,7 +1879,11 @@ Renderer.prototype.renderNode = function(node, camera)
 	if (node._mesh) //hardcoded mesh
 		mesh = node._mesh;
 	else if (node.mesh) //shared mesh
+	{
 		mesh = gl.meshes[node.mesh];
+		if(!mesh && this.autoload_assets && node.mesh.indexOf(".") != -1)
+			this.loadMesh( node.mesh );
+	}
 		
 	if(!mesh)
 	{
@@ -1881,7 +1902,11 @@ Renderer.prototype.renderNode = function(node, camera)
 			continue;
 		texture = gl.textures[ texture_name ];
 		if(!texture)
+		{
+			if(this.autoload_assets && texture_name.indexOf(".") != -1)
+				this.loadTexture( texture_name, this.default_texture_settings );
 			texture = gl.textures[ "white" ];
+		}
 		node._uniforms["u_" + i + "_texture"] = texture.bind( slot++ );
 	}
 	
@@ -1953,40 +1978,59 @@ Renderer.prototype.setPointSize = function(v)
 * @param {String} name name (and url) of the mesh
 * @param {Function} on_complete callback
 */
-Renderer.prototype.loadMesh = function(name, on_complete )
+Renderer.prototype.loadMesh = function( url, on_complete )
 {
-	if(!name)
+	if(!url)
 		return console.error("loadMesh: Cannot load null name");
 
+	if( this.assets_loading[url] || this.assets_not_found[url] )
+		return;
+
+	var name = url;
+	/* no options
+	if(options)
+	{
+		if(options.name)
+			name = options.name;
+		if(options.preview)
+			name = options.preview;
+	}
+	*/
+
 	//check if we have it
-	var mesh = this.meshes[name];
+	var mesh = this.meshes[ name ];
 	if(mesh)
 	{
 		if(on_complete)
-			on_complete(mesh);
+			on_complete( mesh );
 		return mesh;
 	}
 
 	var that = this;
 	
 	//load it
-	var url = name;
-	if(name.indexOf("://") == -1)
-		url = this.assets_folder + name;
+	var full_url = url;
+	if(full_url.indexOf("://") == -1)
+		full_url = this.assets_folder + url;
 
-	var new_mesh = GL.Mesh.fromURL( url, function(m){
-		that.meshes[name] = m;
-		that.num_items_loading--;
-		delete that.items_loading[name];
+	var new_mesh = GL.Mesh.fromURL( full_url, function(m){
+		if(!m)
+		{
+			that.assets_not_found[ url ] = true;
+			delete that.meshes[ url ];
+		}
+		else
+			that.meshes[ name ] = m;
+		that.num_assets_loading--;
+		delete that.assets_loading[ url ];
 		if(on_complete)
-			on_complete(m, name);
+			on_complete(m, url);
 	});
 
-	this.items_loading[name] = new_mesh;
-	this.num_items_loading++;
+	this.assets_loading[ url ] = new_mesh;
+	this.num_assets_loading++;
 	
-	if(!mesh)
-		that.meshes[name] = new_mesh;
+	this.meshes[ name ] = new_mesh; //temporary mesh
 	return new_mesh;
 }
 
@@ -1997,10 +2041,13 @@ Renderer.prototype.loadMesh = function(name, on_complete )
 * @param {Object} options texture options as in litegl (option.name is used to store it with a different name)
 * @param {Function} on_complete callback
 */
-Renderer.prototype.loadTexture = function(url, options, on_complete )
+Renderer.prototype.loadTexture = function( url, options, on_complete )
 {
 	if(!url)
 		return console.error("loadTexture: Cannot load null name");
+
+	if( this.assets_loading[url] || this.assets_not_found[url] )
+		return;
 
 	var name = url;
 	if(options)
@@ -2023,15 +2070,19 @@ Renderer.prototype.loadTexture = function(url, options, on_complete )
 	var that = this;
 	
 	//load it
-	if(url.indexOf("://") == -1)
-		url = this.assets_folder + url;
+	var full_url = url;
+	if(full_url.indexOf("://") == -1)
+		full_url = this.assets_folder + url;
 
-	var new_tex = GL.Texture.fromURL( url, options, function(t){
-		that.textures[name] = t;
+	var new_tex = GL.Texture.fromURL( full_url, options, function(t){
+		if(!t)
+			that.assets_not_found[ url ] = true;
+		else
+			that.textures[ name ] = t;
 		if(on_complete)
 			on_complete(t, name);
-		that.num_items_loading--;
-		delete that.items_loading[name];
+		that.num_assets_loading--;
+		delete that.assets_loading[ url ];
 		if(that.on_texture_load)
 			that.on_texture_load(t, name);
 	});
@@ -2039,11 +2090,10 @@ Renderer.prototype.loadTexture = function(url, options, on_complete )
 	if(options && options.preview)
 		new_tex.is_preview = true;
 
-	this.items_loading[name] = new_tex;
-	this.num_items_loading++;
+	this.assets_loading[ url ] = new_tex;
+	this.num_assets_loading++;
 	
-	if(!tex)
-		that.textures[name] = new_tex;
+	this.textures[ name ] = new_tex;
 	return new_tex;
 }
 

@@ -38,7 +38,7 @@
 
 		//inner update
 		box.update = function(dt) { 
-			this.rotate(dt,RD.UP);
+			this.rotate(dt * 0.1,RD.UP);
 			this.color[1] = Math.sin( getTime() * 0.001 );
 			this.color[2] = 1.0 - this.color[1];
 		}
@@ -59,6 +59,14 @@
 			renderer.clear(bg_color);
 			renderer.render(scene, camera);
 			scene.update(dt);
+		}
+
+		//input
+		renderer.context.captureMouse();
+		renderer.context.onmousemove = function(e)
+		{
+			if(e.dragging)
+				box.rotate( e.deltax * 0.01, RD.UP );
 		}
 	}
 

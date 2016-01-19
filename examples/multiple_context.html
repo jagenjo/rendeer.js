@@ -33,17 +33,10 @@
 		camera.perspective( 45, gl.canvas.width / gl.canvas.height, 1, 1000 );
 		camera.lookAt( [0,200,300],[0,100,0],[0,1,0] );
 
-
-		//load assets for every context
-		GL.Mesh.fromURL("data/man.obj", function(mesh){
-			renderer.addMesh("man",mesh);
-			renderer2.addMesh("man",mesh);
-		});
-
 		//create a node
 		var node = new RD.SceneNode();
 		node.color = [1,0,0,1];
-		node.mesh = "man";
+		node.mesh = "data/man.obj";
 		//node.scale([50,50,50]);
 		node.shader = "phong";
 		//inner update
