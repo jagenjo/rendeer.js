@@ -88,9 +88,11 @@ var temp_quat = quat.create();
 * @class SceneNode
 * @constructor
 */
-function SceneNode()
+function SceneNode( o )
 {
 	this._ctor();
+	if(o)
+		this.configure( o );
 }
 
 RD.SceneNode = SceneNode;
@@ -461,14 +463,37 @@ SceneNode.prototype.serialize = function()
 */
 SceneNode.prototype.configure = function(o)
 {
-	//transform
-	if(o.position) vec3.copy( this._position, o.position );
-	if(o.rotation && o.rotation.length == 4) quat.copy( this._rotation, o.rotation );
-	if(o.scaling) vec3.copy( this._scale, o.scaling );
+	//copy to attributes
+	for(var i in o)
+	{
+		if(i === "children") //special case
+			continue;
+		if(i === "uniforms") //special case
+		{
+			for(var j in o.uniforms)
+				this.uniforms[j] = o.uniforms[j];
+			continue;
+		}
+
+		var v = this[i];
+
+		if(v === undefined)
+			continue;
+
+		if( v && v.constructor === Float32Array )
+			v.set( o[i] );
+		else 
+			this[i] = o[i];
+	}
+
+	//update matrix
 	this.updateGlobalMatrix();
 
-	//children
-	//...
+	if(o.children)
+	{
+		for(var i = 0; i < o.children.length; ++i)
+			console.warn("configure children: feature not implemented");		
+	}
 }
 
 

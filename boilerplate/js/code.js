@@ -1,24 +1,24 @@
+var scene = null;
+
 function init()
 {
-	//create a scene
-	var scene = new RD.Scene();
-
 	//create the rendering context
 	var context = GL.create({width: window.innerWidth, height:window.innerHeight});
 	var renderer = new RD.Renderer(context);
 	document.body.appendChild(renderer.canvas); //attach
-	
-	renderer.meshes["sphere"] = GL.Mesh.sphere({subdivisions:64});
+
+	//create a scene
+	scene = new RD.Scene();
 
 	//get shaders for text file	
 	renderer.loadShaders("shaders.txt");
 
 	//folder where stuff will be loaded	
 	renderer.setDataFolder("data");
-	
-	//load texture
-	renderer.loadTexture("texture_sun.jpg", { wrap: gl.REPEAT, minFilter: gl.LINEAR_MIPMAP_LINEAR });
 
+	//create mesh
+	renderer.meshes["sphere"] = GL.Mesh.sphere({subdivisions:64});
+	
 	//create camera
 	var camera = new RD.Camera();
 	camera.perspective( 45, gl.canvas.width / gl.canvas.height, 1, 1000 );
@@ -28,14 +28,15 @@ function init()
 	var bg_color = vec4.fromValues(0.1,0.1,0.1,1);
 
 	//create a mesh in the scene
-	var node = new RD.SceneNode();
-	node.position = [0,0,0];
-	node.color = [1,1,1,1];
-	node.mesh = "sphere";
-	node.shader = "sun";
-	node.texture = "texture_sun.jpg";
-	node.scale([50,50,50]);
-	node.uniforms["u_bgcolor"] = bg_color;
+	var node = new RD.SceneNode({
+		position: [0,0,0],
+		scaling: [50,50,50],
+		color: [1,1,1,1],
+		mesh: "sphere",
+		shader: "sphere",
+		texture: "texture_sun.jpg",
+		uniforms: {  u_bgcolor: bg_color }
+	});
 	scene.root.addChild(node);
 	
 	context.ondraw = function(){
