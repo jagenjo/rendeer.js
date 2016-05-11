@@ -46,7 +46,7 @@
             "extension_for": [],
             "namespace": "RD",
             "file": "../src/rendeer.js",
-            "line": 80,
+            "line": 86,
             "description": "SceneNode class to hold an scene item",
             "is_constructor": 1
         },
@@ -60,7 +60,7 @@
             "extension_for": [],
             "namespace": "RD",
             "file": "../src/rendeer.js",
-            "line": 899,
+            "line": 956,
             "description": "Sprite class , inherits from SceneNode but helps to render 2D planes (in 3D Space)",
             "is_constructor": 1
         },
@@ -74,7 +74,7 @@
             "extension_for": [],
             "namespace": "RD",
             "file": "../src/rendeer.js",
-            "line": 1051,
+            "line": 1108,
             "description": "Billboard class to hold an scene item, used for camera aligned objects",
             "is_constructor": 1
         },
@@ -88,7 +88,7 @@
             "extension_for": [],
             "namespace": "RD",
             "file": "../src/rendeer.js",
-            "line": 1129,
+            "line": 1200,
             "description": "PointCloud renders an array of points",
             "is_constructor": 1
         },
@@ -102,7 +102,7 @@
             "extension_for": [],
             "namespace": "RD",
             "file": "../src/rendeer.js",
-            "line": 1283,
+            "line": 1354,
             "description": "ParticlesEmissor renders points and animate them as particles",
             "is_constructor": 1
         },
@@ -116,7 +116,7 @@
             "extension_for": [],
             "namespace": "RD",
             "file": "../src/rendeer.js",
-            "line": 1494,
+            "line": 1565,
             "description": "Scene holds the full scene graph, use root to access the root child",
             "is_constructor": 1
         },
@@ -130,8 +130,8 @@
             "extension_for": [],
             "namespace": "RD",
             "file": "../src/rendeer.js",
-            "line": 1567,
-            "description": "Renderer in charge of rendering a Scene",
+            "line": 1638,
+            "description": "Renderer in charge of rendering a Scene\nValid options: all LiteGL context creation options (canvas, WebGL Flags, etc), plus: assets_folder, autoload_assets, shaders_file",
             "is_constructor": 1
         },
         "RD.Camera": {
@@ -144,11 +144,12 @@
             "extension_for": [],
             "namespace": "RD",
             "file": "../src/rendeer.js",
-            "line": 2284,
+            "line": 2426,
             "description": "Camera wraps all the info about the camera (properties and view and projection matrices)",
             "is_constructor": 1
         }
     },
+    "elements": {},
     "classitems": [
         {
             "file": "../src/rendeer.js",
@@ -199,7 +200,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 163,
+            "line": 178,
             "description": "A unique identifier, useful to retrieve nodes by name",
             "itemtype": "property",
             "name": "id",
@@ -209,7 +210,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 178,
+            "line": 193,
             "description": "the name of the shader in the shaders manager",
             "itemtype": "property",
             "name": "shader",
@@ -219,7 +220,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 184,
+            "line": 199,
             "description": "The position relative to its parent",
             "itemtype": "property",
             "name": "uniforms",
@@ -229,7 +230,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 198,
+            "line": 213,
             "description": "The position relative to its parent in vec3 format",
             "itemtype": "property",
             "name": "position",
@@ -239,7 +240,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 208,
+            "line": 223,
             "description": "The orientation relative to its parent in quaternion format",
             "itemtype": "property",
             "name": "rotation",
@@ -249,7 +250,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 219,
+            "line": 234,
             "description": "The scaling relative to its parent in vec3 format (default is [1,1,1])",
             "itemtype": "property",
             "name": "scaling",
@@ -259,7 +260,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 253,
+            "line": 268,
             "description": "The color in RGBA format",
             "itemtype": "property",
             "name": "color",
@@ -270,7 +271,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 264,
+            "line": 279,
             "description": "This number is the 4� component of color but can be accessed directly",
             "itemtype": "property",
             "name": "opacity",
@@ -280,7 +281,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 274,
+            "line": 289,
             "description": "The scene where this node is attached",
             "itemtype": "property",
             "name": "scene",
@@ -290,7 +291,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 285,
+            "line": 300,
             "description": "The parent node where this node is attached",
             "itemtype": "property",
             "name": "parentNode",
@@ -300,7 +301,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 296,
+            "line": 311,
             "description": "Attach node to its children list",
             "itemtype": "method",
             "name": "addChild",
@@ -316,7 +317,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 322,
+            "line": 337,
             "description": "Remove a node from its children list",
             "itemtype": "method",
             "name": "removeChild",
@@ -332,7 +333,16 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 353,
+            "line": 368,
+            "description": "Remove all childs",
+            "itemtype": "method",
+            "name": "clear",
+            "class": "RD.SceneNode",
+            "namespace": "RD"
+        },
+        {
+            "file": "../src/rendeer.js",
+            "line": 378,
             "description": "Change the order inside the children, useful when rendering without Depth Test",
             "itemtype": "method",
             "name": "setChildIndex",
@@ -353,7 +363,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 368,
+            "line": 393,
             "description": "Recursively retrieves all children nodes (this doesnt include itself)",
             "itemtype": "method",
             "name": "getAllChildren",
@@ -373,7 +383,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 388,
+            "line": 413,
             "description": "Recursively retrieves all children nodes taking into account visibility (flags.visible)",
             "itemtype": "method",
             "name": "getVisibleChildren",
@@ -395,7 +405,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 411,
+            "line": 439,
             "description": "Returns an object that represents the current state of this object an its children",
             "itemtype": "method",
             "name": "serialize",
@@ -408,7 +418,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 434,
+            "line": 462,
             "description": "Configure this SceneNode to a state from an object (used with serialize)",
             "itemtype": "method",
             "name": "configure",
@@ -424,7 +434,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 452,
+            "line": 505,
             "description": "sets the name of the mesh to be used to render the object",
             "itemtype": "method",
             "name": "setMesh",
@@ -440,7 +450,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 467,
+            "line": 520,
             "description": "Sets the name of the mesh to be used to render the object",
             "itemtype": "method",
             "name": "setTexture",
@@ -461,7 +471,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 481,
+            "line": 534,
             "description": "name of texture to use in the color channel (the same as SetTexture(\"color\", name ))",
             "itemtype": "property",
             "name": "texture",
@@ -471,7 +481,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 491,
+            "line": 544,
             "description": "clears position, rotation and scale",
             "itemtype": "method",
             "name": "resetTransform",
@@ -480,7 +490,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 503,
+            "line": 556,
             "description": "Translate object in local space",
             "itemtype": "method",
             "name": "translate",
@@ -496,7 +506,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 514,
+            "line": 567,
             "description": "Rotate object (supports local or global but doesnt takes into account parent)",
             "itemtype": "method",
             "name": "rotate",
@@ -522,7 +532,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 532,
+            "line": 585,
             "description": "Scale object",
             "itemtype": "method",
             "name": "scale",
@@ -538,7 +548,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 549,
+            "line": 602,
             "description": "Set the pivot point, 0,0,0 by default (WARNING: use flags.pivot = true  to enable the use of the pivot)",
             "itemtype": "method",
             "name": "setPivot",
@@ -554,7 +564,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 567,
+            "line": 620,
             "description": "Get transform local matrix",
             "itemtype": "method",
             "name": "getLocalMatrix",
@@ -567,7 +577,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 579,
+            "line": 632,
             "description": "Get transform global matrix (concatenating parents) (its a reference)",
             "itemtype": "method",
             "name": "getGlobalMatrix",
@@ -580,7 +590,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 590,
+            "line": 643,
             "description": "Get global rotation (concatenating parent rotations)",
             "itemtype": "method",
             "name": "getGlobalRotation",
@@ -602,7 +612,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 612,
+            "line": 665,
             "description": "recomputes _local_matrix according to position, rotation and scaling",
             "itemtype": "method",
             "name": "updateLocalMatrix",
@@ -611,7 +621,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 653,
+            "line": 706,
             "description": "recomputes _global_matrix according to position, rotation and scaling",
             "itemtype": "method",
             "name": "updateGlobalMatrix",
@@ -636,7 +646,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 686,
+            "line": 739,
             "description": "recompute local and global matrix",
             "itemtype": "method",
             "name": "updateMatrices",
@@ -654,7 +664,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 697,
+            "line": 750,
             "description": "updates position, rotation and scale from the matrix",
             "itemtype": "method",
             "name": "fromMatrix",
@@ -677,7 +687,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 743,
+            "line": 796,
             "description": "Returns a point multiplied by the local matrix",
             "itemtype": "method",
             "name": "getLocalPoint",
@@ -704,7 +714,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 758,
+            "line": 811,
             "description": "Returns a point rotated by the local rotation",
             "itemtype": "method",
             "name": "getLocalVector",
@@ -731,7 +741,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 771,
+            "line": 824,
             "description": "Returns the node position in global coordinates",
             "itemtype": "method",
             "name": "getGlobalPosition",
@@ -741,7 +751,14 @@
                     "description": "where to store the output",
                     "type": "Vec3",
                     "optional": true,
-                    "optdefault": "vec3"
+                    "optdefault": "optional"
+                },
+                {
+                    "name": "fast",
+                    "description": "uses the current global amtrix without recomputing it, is faster but if the current matrix hasnt been updated the result will be wrong",
+                    "type": "Boolean",
+                    "optional": true,
+                    "optdefault": "optional"
                 }
             ],
             "return": {
@@ -753,7 +770,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 791,
+            "line": 848,
             "description": "Returns a point multiplied by the global matrix",
             "itemtype": "method",
             "name": "getGlobalPoint",
@@ -780,7 +797,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 807,
+            "line": 864,
             "description": "Returns a point rotated by the global matrix",
             "itemtype": "method",
             "name": "getGlobalVector",
@@ -807,7 +824,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 821,
+            "line": 878,
             "description": "Returns the distance between the center of the node and the position in global coordinates",
             "itemtype": "method",
             "name": "getDistanceTo",
@@ -827,7 +844,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 834,
+            "line": 891,
             "description": "Searchs the node and returns the first child node with the matching id, it is a recursive search so it is slow",
             "itemtype": "method",
             "name": "findNode",
@@ -847,7 +864,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 854,
+            "line": 911,
             "description": "calls a function in child nodes",
             "itemtype": "method",
             "name": "propagate",
@@ -868,7 +885,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 1513,
+            "line": 1584,
             "description": "clears all nodes inside",
             "itemtype": "method",
             "name": "clear",
@@ -877,7 +894,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 1524,
+            "line": 1595,
             "description": "returns gets node by id",
             "itemtype": "method",
             "name": "getNodeById",
@@ -886,7 +903,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 1534,
+            "line": 1605,
             "description": "propagate update method",
             "itemtype": "method",
             "name": "update",
@@ -902,7 +919,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 1556,
+            "line": 1627,
             "description": "The root node",
             "itemtype": "property",
             "name": "root",
@@ -912,7 +929,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 1632,
+            "line": 1708,
             "description": "whats the data folder where all data should be fetch",
             "itemtype": "method",
             "name": "setDataFolder",
@@ -928,7 +945,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 1651,
+            "line": 1727,
             "description": "clear color and depth buffer",
             "itemtype": "method",
             "name": "clear",
@@ -944,7 +961,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 1665,
+            "line": 1759,
             "description": "renders once scene from one camera",
             "itemtype": "method",
             "name": "render",
@@ -970,7 +987,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 1916,
+            "line": 2023,
             "description": "Loads one mesh and stores inside the meshes object to be reused in the future, if it is already loaded it skips the loading",
             "itemtype": "method",
             "name": "loadMesh",
@@ -991,7 +1008,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 1959,
+            "line": 2085,
             "description": "Loads one texture and stores inside the textures object to be reused in the future, if it is already loaded it skips the loading",
             "itemtype": "method",
             "name": "loadTexture",
@@ -1017,7 +1034,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2048,
+            "line": 2180,
             "description": "Loads a shaders file in the Atlas file format (check GL.loadFileAtlas in litegl)",
             "itemtype": "method",
             "name": "loadShaders",
@@ -1038,7 +1055,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2242,
+            "line": 2384,
             "description": "container with all the registered meshes (same as gl.meshes)",
             "itemtype": "property",
             "name": "meshes",
@@ -1048,7 +1065,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2252,
+            "line": 2394,
             "description": "container with all the registered textures (same as gl.textures)",
             "itemtype": "property",
             "name": "textures",
@@ -1058,7 +1075,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2262,
+            "line": 2404,
             "description": "container with all the registered shaders (same as gl.shaders)",
             "itemtype": "property",
             "name": "shaders",
@@ -1068,7 +1085,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2291,
+            "line": 2433,
             "description": "the camera type, RD.Camera.PERSPECTIVE || RD.Camera.ORTHOGRAPHIC",
             "itemtype": "property",
             "name": "type",
@@ -1079,7 +1096,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2302,
+            "line": 2444,
             "description": "near distance",
             "itemtype": "property",
             "name": "near",
@@ -1090,7 +1107,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2308,
+            "line": 2450,
             "description": "far distance",
             "itemtype": "property",
             "name": "far",
@@ -1101,7 +1118,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2314,
+            "line": 2456,
             "description": "aspect (width / height)",
             "itemtype": "property",
             "name": "aspect",
@@ -1112,7 +1129,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2320,
+            "line": 2462,
             "description": "fov angle in degrees",
             "itemtype": "property",
             "name": "fov",
@@ -1123,7 +1140,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2326,
+            "line": 2468,
             "description": "size of frustrum when working in orthographic",
             "itemtype": "property",
             "name": "frustum_size",
@@ -1134,7 +1151,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2366,
+            "line": 2508,
             "description": "Position where the camera eye is located",
             "itemtype": "property",
             "name": "position",
@@ -1144,7 +1161,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2376,
+            "line": 2518,
             "description": "Where the camera is looking at, the center of where is looking",
             "itemtype": "property",
             "name": "target",
@@ -1154,7 +1171,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2386,
+            "line": 2528,
             "description": "Up vector",
             "itemtype": "property",
             "name": "up",
@@ -1165,7 +1182,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2397,
+            "line": 2539,
             "description": "changes the camera to perspective mode",
             "itemtype": "method",
             "name": "perspective",
@@ -1196,7 +1213,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2416,
+            "line": 2558,
             "description": "changes the camera to orthographic mode (frustumsize is top-down)",
             "itemtype": "method",
             "name": "orthographic",
@@ -1227,7 +1244,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2433,
+            "line": 2577,
             "description": "configure view of the camera",
             "itemtype": "method",
             "name": "lookAt",
@@ -1253,7 +1270,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2449,
+            "line": 2593,
             "description": "update view projection matrices",
             "itemtype": "method",
             "name": "updateMatrices",
@@ -1262,13 +1279,13 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2490,
-            "description": "update camera using a model as reference",
+            "line": 2634,
+            "description": "update camera using a model_matrix as reference",
             "itemtype": "method",
-            "name": "updateMatrices",
+            "name": "updateVectors",
             "params": [
                 {
-                    "name": "model",
+                    "name": "model_matrix",
                     "description": "",
                     "type": "Mat4"
                 }
@@ -1278,7 +1295,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2504,
+            "line": 2648,
             "description": "transform vector (only rotates) from local to global",
             "itemtype": "method",
             "name": "getLocalVector",
@@ -1303,7 +1320,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2519,
+            "line": 2663,
             "description": "transform point from local to global",
             "itemtype": "method",
             "name": "getLocalVector",
@@ -1328,7 +1345,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2534,
+            "line": 2678,
             "description": "gets the front vector normalized",
             "itemtype": "method",
             "name": "getFront",
@@ -1348,7 +1365,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2548,
+            "line": 2692,
             "description": "move the position and the target",
             "itemtype": "method",
             "name": "move",
@@ -1364,7 +1381,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2560,
+            "line": 2704,
             "description": "move the position and the target using the local coordinates system of the camera",
             "itemtype": "method",
             "name": "moveLocal",
@@ -1380,7 +1397,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2573,
+            "line": 2717,
             "description": "rotate over its position",
             "itemtype": "method",
             "name": "rotate",
@@ -1401,7 +1418,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2588,
+            "line": 2732,
             "description": "rotate over its position",
             "itemtype": "method",
             "name": "rotateLocal",
@@ -1422,7 +1439,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2604,
+            "line": 2748,
             "description": "rotate around its target position",
             "itemtype": "method",
             "name": "rotate",
@@ -1450,7 +1467,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2633,
+            "line": 2777,
             "description": "projects a point from 3D to 2D",
             "itemtype": "method",
             "name": "project",
@@ -1484,7 +1501,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2655,
+            "line": 2800,
             "description": "projects a point from 2D to 3D",
             "itemtype": "method",
             "name": "unproject",
@@ -1518,7 +1535,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2669,
+            "line": 2816,
             "description": "gets the ray passing through one pixel",
             "itemtype": "method",
             "name": "getRay",
@@ -1539,6 +1556,12 @@
                     "type": "Array",
                     "optional": true,
                     "optdefault": "gl.viewport"
+                },
+                {
+                    "name": "out",
+                    "description": "{ origin: vec3, direction: vec3 }",
+                    "type": "Object",
+                    "optional": true
                 }
             ],
             "return": {
@@ -1550,7 +1573,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2693,
+            "line": 2850,
             "description": "given a screen coordinate it cast a ray and returns the collision point with a given plane",
             "itemtype": "method",
             "name": "getRayPlaneCollision",
@@ -1581,6 +1604,13 @@
                     "type": "Vec3",
                     "optional": true,
                     "optdefault": "vec3"
+                },
+                {
+                    "name": "viewport",
+                    "description": "",
+                    "type": "Vec4",
+                    "optional": true,
+                    "optdefault": "vec4"
                 }
             ],
             "return": {
@@ -1592,7 +1622,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2716,
+            "line": 2883,
             "description": "Used to move the camera (helps during debug)",
             "itemtype": "method",
             "name": "applyController",
@@ -1613,7 +1643,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2807,
+            "line": 2974,
             "description": "test if box is inside frustrum (you must call camera.extractPlanes() previously to update frustrum planes)",
             "itemtype": "method",
             "name": "testBox",
@@ -1638,7 +1668,7 @@
         },
         {
             "file": "../src/rendeer.js",
-            "line": 2838,
+            "line": 3005,
             "description": "test if sphere is inside frustrum (you must call camera.extractPlanes() previously to update frustrum planes)",
             "itemtype": "method",
             "name": "testSphere",

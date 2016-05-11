@@ -12,6 +12,7 @@ YUI.add("yuidoc-meta", function(Y) {
         "RD.Sprite"
     ],
     "modules": [],
-    "allModules": []
+    "allModules": [],
+    "elements": []
 } };
 });

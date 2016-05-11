@@ -35,15 +35,17 @@ function init()
 		mesh: "sphere",
 		shader: "sphere",
 		texture: "texture_sun.jpg",
-		uniforms: {  u_bgcolor: bg_color }
+		uniforms: { u_bgcolor: bg_color }
 	});
-	scene.root.addChild(node);
+	scene.root.addChild( node );
 	
+	//main draw function
 	context.ondraw = function(){
 		renderer.clear(bg_color);
 		renderer.render(scene, camera);
 	}
-	
+
+	//main update
 	context.onupdate = function(dt)
 	{
 		scene.update(dt);

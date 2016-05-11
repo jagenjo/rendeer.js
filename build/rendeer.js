@@ -112,6 +112,7 @@ SceneNode.prototype._ctor = function()
 	this._must_update_matrix = false;
 
 	//observer to catch changes made directly to the values
+	/*
 	if(Object.observe)
 	{
 		var inner_transform_change = (function(c) { this._must_update_matrix = true; }).bind(this);
@@ -119,7 +120,9 @@ SceneNode.prototype._ctor = function()
 		Object.observe( this._rotation, inner_transform_change );
 		Object.observe( this._scale, inner_transform_change );
 	}
-	
+	//*/
+
+	//rendering priority (order)
 	this.render_priority = RD.PRIORITY_OPAQUE;
 
 	//could be used for many things
@@ -486,6 +489,8 @@ SceneNode.prototype.configure = function(o)
 		else 
 			this[i] = o[i];
 	}
+
+	this._must_update_matrix = true;
 
 	//update matrix
 	this.updateGlobalMatrix();
@@ -1734,6 +1739,24 @@ Renderer.prototype.clear = function( color )
 	this.gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
 }
 
+Renderer._sort_by_dist_func = function(a,b)
+{
+	return b._distance - a._distance;
+}
+
+Renderer._sort_by_priority_func = function(a,b)
+{
+	return b.render_priority - a.render_priority;
+}
+
+Renderer._sort_by_priority_and_dist_func = function(a,b)
+{
+	var r = b.render_priority - a.render_priority;
+	if(r != 0)
+		return r;
+	return b._distance - a._distance;
+}
+
 /**
 * renders once scene from one camera
 * @method render
@@ -1788,14 +1811,14 @@ Renderer.prototype.render = function(scene, camera, nodes, layers )
 		var that = this;
 		nodes = nodes.filter( function(n) { return !n.mustRender || n.mustRender(that,camera) != false; }); //GC
 		
-		//sort by distance
-		if(this.sort_by_distance)
-			nodes.sort(function(a,b) { return b._distance - a._distance; } );
-
-		//sort by priority
-		if(this.sort_by_priority)
-			nodes.sort(function(a,b) { return b.render_priority - a.render_priority; } );
-			
+		//sort 
+		if(this.sort_by_distance && this.sort_by_priority)
+			nodes.sort( RD.Renderer._sort_by_priority_and_dist_func );
+		else if(this.sort_by_priority)
+			nodes.sort( RD.Renderer._sort_by_priority_func );
+		else if(this.sort_by_distance)
+			nodes.sort( RD.Renderer._sort_by_dist_func );
+		
 		//pre rendering
 		if(scene.root.preRender)
 			scene.root.preRender(this,camera);
@@ -2548,6 +2571,8 @@ Camera.prototype.orthographic = function(frustum_size, near, far, aspect)
 	this.frustum_size = frustum_size;
 	this.near = near;
 	this.far = far;
+
+	this._must_update_matrix = true;
 }
 
 /**
@@ -2608,17 +2633,17 @@ Camera.prototype.getModel = function(m)
 }
 
 /**
-* update camera using a model as reference
-* @method updateMatrices
-* @param {mat4} model
+* update camera using a model_matrix as reference
+* @method updateVectors
+* @param {mat4} model_matrix
 */
-Camera.prototype.updateVectors = function(model)
+Camera.prototype.updateVectors = function( model_matrix )
 {
 	var front = vec3.subtract( temp_vec3, this._target, this._position);
 	var dist = vec3.length(front);
-	mat4.multiplyVec3(this._position, model, RD.ZERO);
-	mat4.multiplyVec3(this._target, model, [0,0,-dist]);
-	mat4.rotateVec3(this._up, model, RD.UP);
+	mat4.multiplyVec3(this._position, model_matrix, RD.ZERO);
+	mat4.multiplyVec3(this._target, model_matrix, [0,0,-dist]);
+	mat4.rotateVec3(this._up, model_matrix, RD.UP);
 }
 
 /**
@@ -2762,7 +2787,8 @@ Camera.prototype.project = function( vec, viewport, result )
 {
 	result = result || vec3.create();
 	viewport = viewport || gl.viewport_data;
-
+	if(this._must_update_matrix)
+		this.updateMatrices();
 	mat4.projectVec3(result, this._viewprojection_matrix, vec );
 
 	//adjust to viewport
@@ -2783,6 +2809,8 @@ Camera.prototype.project = function( vec, viewport, result )
 Camera.prototype.unproject = function( vec, viewport, result )
 {
 	viewport = viewport || gl.viewport_data;
+	if(this._must_update_matrix)
+		this.updateMatrices();
 	return vec3.unproject( result || vec3.create(), vec, this._viewprojection_matrix, viewport );
 }
 
@@ -2792,22 +2820,32 @@ Camera.prototype.unproject = function( vec, viewport, result )
 * @param {number} x
 * @param {number} y
 * @param {Array} [viewport=gl.viewport]
+* @param {Object} [out] { origin: vec3, direction: vec3 }
 * @return {Object} ray object { origin: vec3, direction:vec3 }
 */
-Camera.prototype.getRay = function( x, y, viewport )
+Camera.prototype.getRay = function( x, y, viewport, out )
 {
 	viewport = viewport || gl.viewport_data;
-	
-	var origin = null;
-	if(this.type == RD.Camera.ORTHOGRAPHIC)
-		origin = vec3.unproject( vec3.fromValues(), vec3.fromValues(x,y,0), this._viewprojection_matrix, viewport );
-	else
-		origin = vec3.clone( this.position );
 
-	var direction = vec3.unproject( vec3.fromValues(), vec3.fromValues(x,y,1), this._viewprojection_matrix, viewport );
+	if(!out)
+		out = { origin: vec3.create(), direction: vec3.create() };
+
+	if(this._must_update_matrix)
+		this.updateMatrices();
+	
+	var origin = out.origin;
+	vec3.set( origin, x,y,0 );
+	if(this.type == RD.Camera.ORTHOGRAPHIC)
+		vec3.unproject( origin, origin, this._viewprojection_matrix, viewport );
+	else
+		vec3.copy( origin, this.position );
+
+	var direction = out.direction;
+	vec3.set( direction, x,y,1 );
+	vec3.unproject( direction, direction, this._viewprojection_matrix, viewport );
 	vec3.sub( direction, direction, origin );
 	vec3.normalize( direction, direction );
-	return { origin: origin, direction: direction }
+	return out;
 }
 
 /**
@@ -2818,17 +2856,27 @@ Camera.prototype.getRay = function( x, y, viewport )
 * @param {vec3} position Plane point
 * @param {vec3} normal Plane normal
 * @param {vec3} [result=vec3]
+* @param {vec4} [viewport=vec4]
 * @return {vec3} the collision point, or null
 */
-Camera.prototype.getRayPlaneCollision = function(x,y, position, normal, result)
+Camera.prototype.getRayPlaneCollision = function(x,y, position, normal, result, viewport )
 {
-	var RT = new GL.Raytracer(this._view_matrix, this._projection_matrix);
+	result = result || vec3.create();
+	//*
+	var ray = this.getRay( x, y, viewport );
+	if( geo.testRayPlane( ray.origin, ray.direction, position, normal, result ) )
+		return result;
+	return null;
+	/*/
+	if(this._must_update_matrix)
+		this.updateMatrices();
+	var RT = new GL.Raytracer( this._viewprojection_matrix, viewport );
 	var start = this._position;
 	var dir = RT.getRayForPixel( x,y );
-	result = result || vec3.create();
 	if( geo.testRayPlane( start, dir, position, normal, result ) )
 		return result;
 	return null;
+	//*/
 }
 
 Camera.controller_keys = { forward: "UP", back: "DOWN", left:"LEFT", right:"RIGHT" };
