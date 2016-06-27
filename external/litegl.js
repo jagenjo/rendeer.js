@@ -7,6 +7,8 @@
 
 /**
 * The static module that contains all the features
+* @module GL
+* @namespace GL
 * @class GL
 */
 var GL = global.GL = {};
@@ -19,13 +21,16 @@ GL.blockable_keys = {"Up":true,"Down":true,"Left":true,"Right":true};
 
 //some consts
 GL.LEFT_MOUSE_BUTTON = 1;
-GL.RIGHT_MOUSE_BUTTON = 3;
 GL.MIDDLE_MOUSE_BUTTON = 2;
+GL.RIGHT_MOUSE_BUTTON = 3;
 GL.last_context_id = 0;
 
 
-//Define WEBGL ENUMS as statics
-//sometimes I need some gl enums before having the gl context, solution: define them globally because the specs says they are constant:
+//Define WEBGL ENUMS as statics (more to come in WebGL 2)
+//sometimes we need some gl enums before having the gl context, solution: define them globally because the specs says they are constant)
+
+GL.TEXTURE_2D = 3553;
+GL.TEXTURE_CUBE_MAP = 34067;
 
 GL.BYTE = 5120;
 GL.UNSIGNED_BYTE = 5121;
@@ -34,6 +39,26 @@ GL.UNSIGNED_SHORT = 5123;
 GL.INT = 5124;
 GL.UNSIGNED_INT = 5125;
 GL.FLOAT = 5126;
+GL.HALF_FLOAT_OES = 36193;
+GL.DEPTH_COMPONENT16 = 33189;
+
+GL.ALPHA = 6406;
+GL.RGB = 6407;
+GL.RGBA = 6408;
+GL.LUMINANCE = 6409;
+GL.LUMINANCE_ALPHA = 6410;
+GL.DEPTH_COMPONENT = 6402;
+
+GL.NEAREST = 9728;
+GL.LINEAR = 9729;
+GL.NEAREST_MIPMAP_NEAREST = 9984;
+GL.LINEAR_MIPMAP_NEAREST = 9985;
+GL.NEAREST_MIPMAP_LINEAR = 9986;
+GL.LINEAR_MIPMAP_LINEAR = 9987;
+
+GL.REPEAT = 10497;
+GL.CLAMP_TO_EDGE = 33071;
+GL.MIRRORED_REPEAT = 33648;
 
 GL.ZERO = 0;
 GL.ONE = 1;
@@ -51,9 +76,13 @@ GL.ONE_MINUS_CONSTANT_COLOR = 32770;
 GL.CONSTANT_ALPHA = 32771;
 GL.ONE_MINUS_CONSTANT_ALPHA = 32772;
 
+GL.VERTEX_SHADER = 35633;
+GL.FRAGMENT_SHADER = 35632;
+
 GL.temp_vec3 = vec3.create();
 GL.temp2_vec3 = vec3.create();
 GL.temp_vec4 = vec4.create();
+GL.temp_quat = quat.create();
 GL.temp_mat4 = mat4.create();
 
 
@@ -385,41 +414,33 @@ global.loadFileAtlas = GL.loadFileAtlas = function loadFileAtlas(url, callback, 
 	return { done: function(callback) { deferred_callback = callback; } };
 }
 
-global.processFileAtlas = GL.processFileAtlas = function(data)
+//This parses a text file that contains several text files (they are separated by "\filename"), and returns an object with every file separatly
+global.processFileAtlas = GL.processFileAtlas = function(data, skip_trim)
 {
-	//var reg = /^[a-z0-9/_]+$/i;
 	var lines = data.split("\n");
 	var files = {};
-	var file = [];
-	var filename = "";
+
+	var current_file_lines = [];
+	var current_file_name = "";
 	for(var i = 0, l = lines.length; i < l; i++)
 	{
-		var line = lines[i].trim();
+		var line = skip_trim ? lines[i] : lines[i].trim();
 		if(!line.length)
 			continue;
-		if( line[0] == "\\") // || (line[0] == '/' && reg.test( line[1] ) ) //allow to use forward slash instead of backward slash
+		if( line[0] != "\\")
 		{
-			if(!filename)
-			{
-				filename = line.substr(1);
-				continue;
-			}
-			inner_newfile();
+			current_file_lines.push(line);
+			continue;
 		}
-		else
-			file.push(line);
+
+		if( current_file_lines.length )
+			files[ current_file_name ] = current_file_lines.join("\n");
+		current_file_lines.length = 0;
+		current_file_name = line.substr(1);
 	}
 
-	if(filename)
-		inner_newfile();
-
-	function inner_newfile()
-	{
-		var resource = file.join("\n");
-		files[ filename ] = resource;
-		file.length = 0;
-		filename = line.substr(1);
-	}
+	if( current_file_lines.length )
+		files[ current_file_name ] = current_file_lines.join("\n");
 
 	return files;
 }
@@ -466,7 +487,7 @@ global.hexColorToRGBA = (function() {
 			color[3] = alpha;
 		else
 			color[3] *= alpha;
-		return;
+		return color;
 	}
 
 	//rgba colors
@@ -1165,6 +1186,30 @@ vec2.rotate = function(out,vec,angle_in_rad)
 
 vec3.zero = function(a)
 {
+	a[0] = a[1] = 0.0;
+	return a;
+}
+
+//for signed angles
+vec2.perpdot = function(a,b)
+{
+	return a[1] * b[0] + -a[0] * b[1];
+}
+
+vec2.computeSignedAngle = function( a, b )
+{
+	return Math.atan2( vec2.perpdot(a,b), vec2.dot(a,b) );
+}
+
+vec2.random = function(vec)
+{
+	vec[0] = Math.random();
+	vec[1] = Math.random();
+	return vec;
+}
+
+vec3.zero = function(a)
+{
 	a[0] = a[1] = a[2] = 0.0;
 	return a;
 }
@@ -1203,7 +1248,6 @@ vec3.subValue = function(out,a,v)
 	out[1] = a[1] - v;
 	out[2] = a[2] - v;
 }
-
 
 vec3.toArray = function(vec)
 {
@@ -1246,25 +1290,6 @@ vec3.rotateZ = function(out,vec,angle_in_rad)
 	return out;
 }
 
-//signed angles
-vec2.perpdot = function(a,b)
-{
-	return a[1] * b[0] + -a[0] * b[1];
-}
-
-vec2.computeSignedAngle = function( a, b )
-{
-	return Math.atan2( vec2.perpdot(a,b), vec2.dot(a,b) );
-}
-
-//random value
-vec2.random = function(vec)
-{
-	vec[0] = Math.random();
-	vec[1] = Math.random();
-	return vec;
-}
-
 vec3.angle = function( a, b )
 {
 	return Math.acos( vec3.dot(a,b) );
@@ -1278,16 +1303,6 @@ vec3.random = function(vec)
 	return vec;
 }
 
-//random value
-vec4.random = function(vec)
-{
-	vec[0] = Math.random();
-	vec[1] = Math.random();
-	vec[2] = Math.random();
-	vec[3] = Math.random();	
-	return vec;
-}
-
 //converts a polar coordinate (radius, lat, long) to (x,y,z)
 vec3.polarToCartesian = function(out, v)
 {
@@ -1298,6 +1313,21 @@ vec3.polarToCartesian = function(out, v)
 	out[1] = r * Math.sin(lat);
 	out[2] = r * Math.cos(lat) * Math.cos(lon);
 	return out;
+}
+
+/* VEC4 */
+vec4.random = function(vec)
+{
+	vec[0] = Math.random();
+	vec[1] = Math.random();
+	vec[2] = Math.random();
+	vec[3] = Math.random();	
+	return vec;
+}
+
+vec4.toArray = function(vec)
+{
+	return [vec[0],vec[1],vec[2],vec[3]];
 }
 
 
@@ -1517,6 +1547,43 @@ quat.toEuler = function(out, quat) {
 }
 */
 
+/*
+//FROM https://en.wikipedia.org/wiki/Conversion_between_quaternions_and_Euler_angles
+//doesnt work well
+quat.toEuler = function(out, q)
+{
+    var yaw = Math.atan2(2*q[0]*q[3] + 2*q[1]*q[2], 1 - 2*q[2]*q[2] - 2*q[3]*q[3]);
+    var pitch = Math.asin(2*q[0]*q[2] - 2*q[3]*q[1]);
+    var roll = Math.atan2(2*q[0]*q[1] + 2*q[2]*q[3], 1 - 2*q[1]*q[1] - 2*q[2]*q[2]);
+	if(!out)
+		out = vec3.create();
+	vec3.set(out, yaw, pitch, roll);
+	return out;
+}
+
+quat.fromEuler = function(out, vec) {
+	var yaw = vec[0];
+	var pitch = vec[1];
+	var roll = vec[2];
+
+	var C1 = Math.cos(yaw*0.5);
+	var C2 = Math.cos(pitch*0.5);
+	var C3 = Math.cos(roll*0.5);
+	var S1 = Math.sin(yaw*0.5);
+	var S2 = Math.sin(pitch*0.5);
+	var S3 = Math.sin(roll*0.5);
+
+	var x = C1*C2*C3 + S1*S2*S3;
+	var y = S1*C2*C3 - C1*S2*S3;
+	var z = C1*S2*C3 + S1*C2*S3;
+	var w = C1*C2*S3 - S1*S2*C3;
+
+	quat.set(out, x,y,z,w );
+	quat.normalize(out,out); //necessary?
+	return out;
+}
+*/
+
 quat.toEuler = function(out, q)
 {
     var heading = Math.atan2(2*q[1]*q[3] - 2*q[0]*q[2], 1 - 2*q[1]*q[1] - 2*q[2]*q[2]);
@@ -1533,20 +1600,29 @@ quat.fromEuler = function(out, vec) {
 	var attitude = vec[1];
 	var bank = vec[2];
 
-	var C1 = Math.cos(heading);
-	var C2 = Math.cos(attitude);
-	var C3 = Math.cos(bank);
+	var C1 = Math.cos(heading); //yaw
+	var C2 = Math.cos(attitude); //pitch
+	var C3 = Math.cos(bank); //roll
 	var S1 = Math.sin(heading);
 	var S2 = Math.sin(attitude);
 	var S3 = Math.sin(bank);
 
 	var w = Math.sqrt(1.0 + C1 * C2 + C1*C3 - S1 * S2 * S3 + C2*C3) * 0.5;
+	if(w == 0.0)
+	{
+		w = 0.000001;
+		//quat.set(out, 0,0,0,1 );
+		//return out;
+	}
+
 	var x = (C2 * S3 + C1 * S3 + S1 * S2 * C3) / (4.0 * w);
 	var y = (S1 * C2 + S1 * C3 + C1 * S2 * S3) / (4.0 * w);
 	var z = (-S1 * S3 + C1 * S2 * C3 + S2) /(4.0 * w);
 	quat.set(out, x,y,z,w );
+	quat.normalize(out,out);
 	return out;
 };
+
 
 //not tested
 quat.fromMat4 = function(out,m)
@@ -1610,6 +1686,10 @@ quat.fromMat4.lookAt = (function(){
 
 
 /**
+* @namespace GL
+*/
+
+/**
 * Indexer used to reuse vertices among a mesh
 * @class Indexer
 * @constructor
@@ -1640,6 +1720,9 @@ GL.Indexer.prototype = {
 * @param {enum} stream_type default gl.STATIC_DRAW (other: gl.DYNAMIC_DRAW, gl.STREAM_DRAW 
 */
 global.Buffer = GL.Buffer = function Buffer( target, data, spacing, stream_type, gl ) {
+	if(GL.debug)
+		console.log("GL.Buffer created");
+
 	if(gl !== null)
 		gl = gl || global.gl;
 
@@ -1838,6 +1921,9 @@ GL.Buffer.prototype.clone = function(share)
 */
 global.Mesh = GL.Mesh = function Mesh( vertexbuffers, indexbuffers, options, gl )
 {
+	if(GL.debug)
+		console.log("GL.Mesh created");
+
 	if( gl !== null )
 	{
 		gl = gl || global.gl;
@@ -1849,6 +1935,9 @@ global.Mesh = GL.Mesh = function Mesh( vertexbuffers, indexbuffers, options, gl 
 
 	this.vertexBuffers = {};
 	this.indexBuffers = {};
+
+	this.info = null; //here you can store extra info, like groups, which is an array of { name, start, length, material }
+	this.bounding = null; //here you can store a AABB in BBox format
 
 	if(vertexbuffers || indexbuffers)
 		this.addBuffers( vertexbuffers, indexbuffers, options ? options.stream_type : null );
@@ -2066,6 +2155,21 @@ Mesh.prototype.getVertexBuffer = function(name)
 */
 Mesh.prototype.createIndexBuffer = function(name, buffer_data, stream_type) {
 	//(target, data, spacing, stream_type, gl)
+
+	//cast to typed
+	if(buffer_data.constructor === Array)
+	{
+		var datatype = Uint16Array;
+		var vertices = this.vertexBuffers["vertices"];
+		if(vertices)
+		{
+			var num_vertices = vertices.data.length / 3;
+			if(num_vertices > 256*256)
+				datatype = Uint32Array;
+			buffer_data = new datatype( buffer_data );
+		}
+	}
+
 	var buffer = this.indexBuffers[name] = new GL.Buffer(gl.ELEMENT_ARRAY_BUFFER, buffer_data, 0, stream_type, this.gl );
 	return buffer;
 }
@@ -2373,7 +2477,7 @@ Mesh.prototype.flipNormals = function( stream_type  ) {
 	normals_buffer.upload( stream_type );
 
 	//reverse indices too
-	if(!this.indexBuffers["triangles"])
+	if(this.indexBuffers["triangles"])
 		this.computeIndices();
 
 	var triangles_buffer = this.indexBuffers["triangles"];
@@ -2677,7 +2781,8 @@ Mesh.prototype.getNumVertices = function() {
 */
 Mesh.computeBounding = function( vertices, bb ) {
 
-	if(!vertices) return;
+	if(!vertices)
+		return;
 
 	var min = vec3.clone( vertices.subarray(0,3) );
 	var max = vec3.clone( vertices.subarray(0,3) );
@@ -2687,6 +2792,14 @@ Mesh.computeBounding = function( vertices, bb ) {
 		v = vertices.subarray(i,i+3);
 		vec3.min( min,v, min);
 		vec3.max( max,v, max);
+	}
+
+	if( isNaN(min[0]) || isNaN(min[1]) || isNaN(min[2]) ||
+		isNaN(max[0]) || isNaN(max[1]) || isNaN(max[2]) )
+	{
+		min[0] = min[1] = min[2] = 0;
+		max[0] = max[1] = max[2] = 0;
+		console.warn("Warning: GL.Mesh has NaN values in vertices");
 	}
 
 	var center = vec3.add( vec3.create(), min,max );
@@ -2869,9 +2982,10 @@ Mesh.mergeMeshes = function( meshes, options )
 
 	var vertex_buffers = {};
 	var index_buffers = {};
-	var offsets = {};
+	var offsets = {}; //tells how many positions indices must be offseted
 	var vertex_offsets = [];
 	var current_vertex_offset = 0;
+	var groups = [];
 
 	//vertex buffers
 	//compute size
@@ -2879,8 +2993,10 @@ Mesh.mergeMeshes = function( meshes, options )
 	{
 		var mesh_info = meshes[i];
 		var mesh = mesh_info.mesh;
-		vertex_offsets.push( current_vertex_offset );
-		current_vertex_offset += mesh.vertexBuffers["vertices"].data.length / 3;
+		var offset = current_vertex_offset;
+		vertex_offsets.push( offset );
+		var length = mesh.vertexBuffers["vertices"].data.length / 3;
+		current_vertex_offset += length;
 
 		for(var j in mesh.vertexBuffers)
 		{
@@ -2897,6 +3013,16 @@ Mesh.mergeMeshes = function( meshes, options )
 			else
 				index_buffers[j] += mesh.indexBuffers[j].data.length;
 		}
+
+		//groups
+		var group = {
+			name: "mesh_" + i,
+			start: offset,
+			length: length,
+			material: ""
+		};
+
+		groups.push( group );
 	}
 
 	//allocate
@@ -2927,11 +3053,16 @@ Mesh.mergeMeshes = function( meshes, options )
 	{
 		var mesh_info = meshes[i];
 		var mesh = mesh_info.mesh;
+		var offset = 0;
+		var length = 0;
 
 		for(var j in mesh.vertexBuffers)
 		{
 			if(!vertex_buffers[j])
 				continue;
+
+			if(j == "vertices")
+				length = mesh.vertexBuffers[j].data.length / 3;
 
 			vertex_buffers[j].set( mesh.vertexBuffers[j].data, offsets[j] );
 
@@ -2984,10 +3115,12 @@ Mesh.mergeMeshes = function( meshes, options )
 			array[i] += offset;
 	}
 
+	var extra = { info: { groups: groups } };
+
 	//return
 	if( typeof(gl) != "undefined" )
-		return new GL.Mesh( vertex_buffers,index_buffers );
-	return { vertexBuffers: vertex_buffers, indexBuffers: index_buffers };
+		return new GL.Mesh( vertex_buffers,index_buffers, extra );
+	return { vertexBuffers: vertex_buffers, indexBuffers: index_buffers, info: { groups: groups } };
 }
 
 
@@ -3022,30 +3155,45 @@ Mesh.fromURL = function(url, on_complete, gl, options)
 	return mesh;
 }
 
+/**
+* given some data an information about the format, it search for a parser in Mesh.parsers and tries to extract the mesh information
+* Only obj supported now
+* @method parse
+* @param {*} data could be string or ArrayBuffer
+* @param {String} format parser file format name (p.e. "obj")
+* @return {?} depending on the parser
+*/
 Mesh.prototype.parse = function( data, format )
 {
 	format = format.toLowerCase();
 	var parser = GL.Mesh.parsers[ format ];
 	if(parser)
 		return parser.call(null, data, {mesh: this});
-	else
-		throw("GL.Mesh.parse: no parser found for format " + format );
-	return null;
+	throw("GL.Mesh.parse: no parser found for format " + format );
 }
 
+/**
+* It returns the mesh data encoded in the format specified
+* Only obj supported now
+* @method encode
+* @param {String} format to encode the data to (p.e. "obj")
+* @return {?} String with the info
+*/
 Mesh.prototype.encode = function( format, options )
 {
 	format = format.toLowerCase();
 	var encoder = GL.Mesh.encoders[ format ];
 	if(encoder)
 		return encoder.call(null, this, options );
-	else
-		throw("GL.Mesh.encode: no encoder found for format " + format );
-	return null;
+	throw("GL.Mesh.encode: no encoder found for format " + format );
 }
 
-
-
+/**
+* Returns a shared mesh containing a quad to be used when rendering to the screen
+* Reusing the same quad helps not filling the memory
+* @method getScreenQuad
+* @return {GL.Mesh} the screen quad
+*/
 Mesh.getScreenQuad = function(gl)
 {
 	gl = gl || global.gl;
@@ -3059,6 +3207,10 @@ Mesh.getScreenQuad = function(gl)
 	return gl.meshes[":screen_quad"] = mesh;
 }
 
+
+/**
+* @class Mesh
+*/
 
 /**
 * Returns a planar mesh (you can choose how many subdivisions)
@@ -3652,20 +3804,24 @@ Mesh.icosahedron = function( options, gl ) {
 	return new GL.Mesh.load({vertices: vertices, coords: coords, normals: normals, triangles: indices},options,gl);
 }
 /**
-* Texture class to upload images to the GPU, default is gl.TEXTURE_2D, gl.RGBA of gl.UNSIGNED_BYTE with filters set to gl.LINEAR and wrap to gl.CLAMP_TO_EDGE
-	There is a list of options
-	==========================
-	- texture_type: gl.TEXTURE_2D, gl.TEXTURE_CUBE_MAP, default gl.TEXTURE_2D
-	- format: gl.RGB, gl.RGBA, gl.DEPTH_COMPONENT, default gl.RGBA
-	- type: gl.UNSIGNED_BYTE, gl.UNSIGNED_SHORT, gl.HALF_FLOAT_OES, gl.FLOAT, default gl.UNSIGNED_BYTE
-	- filter: filtering for mag and min: gl.NEAREST or gl.LINEAR, default gl.NEAREST
-	- magFilter: magnifying filter: gl.NEAREST, gl.LINEAR, default gl.NEAREST
-	- minFilter: minifying filter: gl.NEAREST, gl.LINEAR, gl.LINEAR_MIPMAP_LINEAR, default gl.NEAREST
-	- wrap: texture wrapping: gl.CLAMP_TO_EDGE, gl.REPEAT, gl.MIRROR, default gl.CLAMP_TO_EDGE (also accepts wrapT and wrapS for separate settings)
-	- pixel_data: ArrayBufferView with the pixel data to upload to the texture, otherwise the texture will be black
-	- premultiply_alpha : multiply the color by the alpha value when uploading, default FALSE
-	- no_flip : do not flip in Y, default TRUE
-	- anisotropic : number of anisotropic fetches, default 0
+* @namespace GL
+*/
+
+/**
+* Texture class to upload images to the GPU, default is gl.TEXTURE_2D, gl.RGBA of gl.UNSIGNED_BYTE with filters set to gl.LINEAR and wrap to gl.CLAMP_TO_EDGE <br/>
+	There is a list of options <br/>
+	========================== <br/>
+	- texture_type: gl.TEXTURE_2D, gl.TEXTURE_CUBE_MAP, default gl.TEXTURE_2D <br/>
+	- format: gl.RGB, gl.RGBA, gl.DEPTH_COMPONENT, default gl.RGBA <br/>
+	- type: gl.UNSIGNED_BYTE, gl.UNSIGNED_SHORT, gl.HALF_FLOAT_OES, gl.FLOAT, default gl.UNSIGNED_BYTE <br/>
+	- filter: filtering for mag and min: gl.NEAREST or gl.LINEAR, default gl.NEAREST <br/>
+	- magFilter: magnifying filter: gl.NEAREST, gl.LINEAR, default gl.NEAREST <br/>
+	- minFilter: minifying filter: gl.NEAREST, gl.LINEAR, gl.LINEAR_MIPMAP_LINEAR, default gl.NEAREST <br/>
+	- wrap: texture wrapping: gl.CLAMP_TO_EDGE, gl.REPEAT, gl.MIRROR, default gl.CLAMP_TO_EDGE (also accepts wrapT and wrapS for separate settings) <br/>
+	- pixel_data: ArrayBufferView with the pixel data to upload to the texture, otherwise the texture will be black <br/>
+	- premultiply_alpha : multiply the color by the alpha value when uploading, default FALSE <br/>
+	- no_flip : do not flip in Y, default TRUE <br/>
+	- anisotropic : number of anisotropic fetches, default 0 <br/>
 
 * @class Texture
 * @param {number} width texture width (any supported but Power of Two allows to have mipmaps), 0 means no memory reserved till its filled
@@ -3686,19 +3842,22 @@ global.Texture = GL.Texture = function Texture(width, height, options, gl) {
 	width = parseInt(width); 
 	height = parseInt(height);
 
+	if(GL.debug)
+		console.log("GL.Texture created: ",width,height);
+
 	//create texture handler
 	this.handler = gl.createTexture();
 
 	//set settings
 	this.width = width;
 	this.height = height;
-	this.format = options.format || gl.RGBA; //(if gl.DEPTH_COMPONENT remember format: gl.UNSIGNED_SHORT)
-	this.type = options.type || gl.UNSIGNED_BYTE; //gl.UNSIGNED_SHORT, gl.FLOAT or gl.HALF_FLOAT_OES (or gl.HIGH_PRECISION_FORMAT which could be half or float)
 	this.texture_type = options.texture_type || gl.TEXTURE_2D; //or gl.TEXTURE_CUBE_MAP
-	this.magFilter = options.magFilter || options.filter || gl.LINEAR;
-	this.minFilter = options.minFilter || options.filter || gl.LINEAR;
-	this.wrapS = options.wrap || options.wrapS || gl.CLAMP_TO_EDGE;
-	this.wrapT = options.wrap || options.wrapT || gl.CLAMP_TO_EDGE;
+	this.format = options.format || Texture.DEFAULT_FORMAT; //gl.RGBA (if gl.DEPTH_COMPONENT remember format: gl.UNSIGNED_SHORT)
+	this.type = options.type || Texture.DEFAULT_TYPE; //gl.UNSIGNED_BYTE, gl.UNSIGNED_SHORT, gl.FLOAT or gl.HALF_FLOAT_OES (or gl.HIGH_PRECISION_FORMAT which could be half or float)
+	this.magFilter = options.magFilter || options.filter || Texture.DEFAULT_MAG_FILTER;
+	this.minFilter = options.minFilter || options.filter || Texture.DEFAULT_MIN_FILTER;
+	this.wrapS = options.wrap || options.wrapS || Texture.DEFAULT_WRAP_S; 
+	this.wrapT = options.wrap || options.wrapT || Texture.DEFAULT_WRAP_T;
 
 	//precompute the max amount of texture units
 	if(!Texture.MAX_TEXTURE_IMAGE_UNITS)
@@ -3712,7 +3871,9 @@ global.Texture = GL.Texture = function Texture(width, height, options, gl) {
 		throw("Float Texture not supported");
 	if(this.type == gl.HALF_FLOAT_OES && !gl.extensions["OES_texture_half_float"])
 		throw("Half Float Texture not supported");
-	if(( (this.minFilter != gl.NEAREST && this.minFilter != gl.LINEAR) || this.wrapS != gl.CLAMP_TO_EDGE || this.wrapT != gl.CLAMP_TO_EDGE) && (!isPowerOfTwo(this.width) || !isPowerOfTwo(this.height)))
+	if( (!isPowerOfTwo(this.width) || !isPowerOfTwo(this.height)) && //non power of two
+		( (this.minFilter != gl.NEAREST && this.minFilter != gl.LINEAR) || //uses mipmaps
+		(this.wrapS != gl.CLAMP_TO_EDGE || this.wrapT != gl.CLAMP_TO_EDGE) ) ) //uses wrap
 	{
 		if(!options.ignore_pot)
 			throw("Cannot use texture-wrap or mipmaps in Non-Power-of-Two textures");
@@ -3767,6 +3928,13 @@ global.Texture = GL.Texture = function Texture(width, height, options, gl) {
 	}
 }
 
+Texture.DEFAULT_TYPE = GL.UNSIGNED_BYTE;
+Texture.DEFAULT_FORMAT = GL.RGBA;
+Texture.DEFAULT_MAG_FILTER = GL.LINEAR;
+Texture.DEFAULT_MIN_FILTER = GL.LINEAR;
+Texture.DEFAULT_WRAP_S = GL.CLAMP_TO_EDGE;
+Texture.DEFAULT_WRAP_T = GL.CLAMP_TO_EDGE;
+
 //used for render to FBOs
 Texture.framebuffer = null;
 Texture.renderbuffer = null;
@@ -3774,8 +3942,8 @@ Texture.loading_color = new Uint8Array([0,0,0,0]);
 Texture.use_renderbuffer_pool = true; //should improve performance
 
 /**
-* Free the texture memory, the handler is null
-* @method isDepthSupported
+* Free the texture memory from the GPU, sets the texture handler to null
+* @method delete
 */
 Texture.prototype.delete = function()
 {
@@ -3808,6 +3976,7 @@ Texture.prototype.toJSON = function()
 /**
 * Returns if depth texture is supported by the GPU
 * @method isDepthSupported
+* @return {Boolean} true if supported
 */
 Texture.isDepthSupported = function()
 {
@@ -3932,14 +4101,28 @@ Texture.prototype.uploadData = function(data, options )
 	gl.bindTexture(this.texture_type, null); //disable
 }
 
+//When creating cubemaps this is helpful
 Texture.cubemap_camera_parameters = [
-	{ type:"posX", dir: vec3.fromValues(1,0,0), 	up: vec3.fromValues(0,-1,0) }, //positive X
-	{ type:"negX", dir: vec3.fromValues(-1,0,0),	up: vec3.fromValues(0,-1,0) }, //negative X
-	{ type:"posY", dir: vec3.fromValues(0,1,0), 	up: vec3.fromValues(0,0,1) }, //positive Y
-	{ type:"negY", dir: vec3.fromValues(0,-1,0),	up: vec3.fromValues(0,0,-1) }, //negative Y
-	{ type:"posZ", dir: vec3.fromValues(0,0,1), 	up: vec3.fromValues(0,-1,0) }, //positive Z
-	{ type:"negZ", dir: vec3.fromValues(0,0,-1),	up: vec3.fromValues(0,-1,0) } //negative Z
+	{ type:"posX", dir: vec3.fromValues(-1,0,0), 	up: vec3.fromValues(0,1,0),	right: vec3.fromValues(0,0,-1) },
+	{ type:"negX", dir: vec3.fromValues(1,0,0),		up: vec3.fromValues(0,1,0),	right: vec3.fromValues(0,0,1) },
+	{ type:"posY", dir: vec3.fromValues(0,-1,0), 	up: vec3.fromValues(0,0,-1), right: vec3.fromValues(1,0,0) },
+	{ type:"negY", dir: vec3.fromValues(0,1,0),		up: vec3.fromValues(0,0,1),	right: vec3.fromValues(-1,0,0) },
+	{ type:"posZ", dir: vec3.fromValues(0,0,-1), 	up: vec3.fromValues(0,1,0),	right: vec3.fromValues(1,0,0) },
+	{ type:"negZ", dir: vec3.fromValues(0,0,1),		up: vec3.fromValues(0,1,0),	right: vec3.fromValues(-1,0,0) }
 ];
+
+/* OLD VERSION, DOESNT MAKE SENSE
+Texture.cubemap_camera_parameters = [
+	{ type:"posX", dir: vec3.fromValues(1,0,0), 	up: vec3.fromValues(0,-1,0),	right: vec3.fromValues(0,0,-1) }, //positive X
+	{ type:"negX", dir: vec3.fromValues(-1,0,0),	up: vec3.fromValues(0,-1,0),	right: vec3.fromValues(0,0,1) }, //negative X
+	{ type:"posY", dir: vec3.fromValues(0,1,0), 	up: vec3.fromValues(0,0,1),		right: vec3.fromValues(1,0,0) }, //positive Y
+	{ type:"negY", dir: vec3.fromValues(0,-1,0),	up: vec3.fromValues(0,0,-1),	right: vec3.fromValues(-1,0,0) }, //negative Y
+	{ type:"posZ", dir: vec3.fromValues(0,0,1), 	up: vec3.fromValues(0,-1,0),	right: vec3.fromValues(1,0,0) }, //positive Z
+	{ type:"negZ", dir: vec3.fromValues(0,0,-1),	up: vec3.fromValues(0,-1,0),	right: vec3.fromValues(-1,0,0) } //negative Z
+];
+*/
+
+
 
 /**
 * Render to texture using FBO, just pass the callback to a rendering function and the content of the texture will be updated
@@ -3954,8 +4137,8 @@ Texture.prototype.drawTo = function(callback, params)
 {
 	var gl = this.gl;
 
-	if(this.format == gl.DEPTH_COMPONENT)
-		throw("cannot use drawTo in depth textures, use Texture.drawToColorAndDepth");
+	//if(this.format == gl.DEPTH_COMPONENT)
+	//	throw("cannot use drawTo in depth textures, use Texture.drawToColorAndDepth");
 
 	var v = gl.getViewport();
 	var now = GL.getTime();
@@ -3989,7 +4172,7 @@ Texture.prototype.drawTo = function(callback, params)
 			renderbuffer.time = now;
 			renderbuffer.width = this.width;
 			renderbuffer.height = this.height;
-			gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer );
+			gl.bindRenderbuffer( gl.RENDERBUFFER, renderbuffer );
 
 			//destroy after one minute 
 			setTimeout( inner_check_destroy.bind(renderbuffer), 1000*60 );
@@ -4000,12 +4183,15 @@ Texture.prototype.drawTo = function(callback, params)
 		renderbuffer = gl._renderbuffer = gl._renderbuffer || gl.createRenderbuffer();
 		renderbuffer.width = this.width;
 		renderbuffer.height = this.height;
-		gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer );
+		gl.bindRenderbuffer( gl.RENDERBUFFER, renderbuffer );
 	}
 
 
-	//bind buffer
-	gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, this.width, this.height);
+	//bind render buffer for depth or color
+	if( this.format === gl.DEPTH_COMPONENT )
+		gl.renderbufferStorage( gl.RENDERBUFFER, gl.RGBA4, this.width, this.height);
+	else
+		gl.renderbufferStorage( gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, this.width, this.height);
 
 
 	//clears memory from unused buffer
@@ -4040,41 +4226,39 @@ Texture.prototype.drawTo = function(callback, params)
 	gl._current_fbo_color = framebuffer;
 	gl._current_fbo_depth = renderbuffer;
 
-
-
-	//try
-	//{
-		if(this.texture_type == gl.TEXTURE_2D)
-		{
-			gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.handler, 0);
-			gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderbuffer);
-			callback(this, params);
-		}
-		else if(this.texture_type == gl.TEXTURE_CUBE_MAP)
-		{
-			//var faces = [ gl.TEXTURE_CUBE_MAP_POSITIVE_X, gl.TEXTURE_CUBE_MAP_NEGATIVE_X, gl.TEXTURE_CUBE_MAP_POSITIVE_Y, gl.TEXTURE_CUBE_MAP_NEGATIVE_Y, gl.TEXTURE_CUBE_MAP_POSITIVE_Z, gl.TEXTURE_CUBE_MAP_NEGATIVE_Z ];
-			for(var i = 0; i < 6; i++)
-			{
-				gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0,  gl.TEXTURE_CUBE_MAP_POSITIVE_X + i, this.handler, 0);
-				gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderbuffer);
-				callback(this,i, params);
-			}
-		}
-	/*
-	}
-	catch (err)
+	if(this.texture_type == gl.TEXTURE_2D)
 	{
-		//clean stuff
-		gl._current_texture_drawto = null;
-		gl._current_fbo_color = null;
-		gl._current_fbo_depth = null;
-		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-		gl.bindRenderbuffer(gl.RENDERBUFFER, null);
-		gl.viewport(v[0], v[1], v[2], v[3]);
-		console.trace();
-		throw(err);
+		if( this.format !== gl.DEPTH_COMPONENT )
+		{
+			gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.handler, 0 );
+			gl.framebufferRenderbuffer( gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderbuffer );
+		}
+		else
+		{
+			gl.framebufferRenderbuffer( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, renderbuffer );
+			gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D,  this.handler, 0);
+		}
+		callback(this, params);
 	}
-	*/
+	else if(this.texture_type == gl.TEXTURE_CUBE_MAP)
+	{
+		//bind the fixed ones out of the loop to save calls
+		if( this.format !== gl.DEPTH_COMPONENT )
+			gl.framebufferRenderbuffer( gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderbuffer );
+		else
+			gl.framebufferRenderbuffer( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, renderbuffer );
+
+		//for every face of the cubemap
+		for(var i = 0; i < 6; i++)
+		{
+			if( this.format !== gl.DEPTH_COMPONENT )
+				gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_CUBE_MAP_POSITIVE_X + i, this.handler, 0);
+			else
+				gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_CUBE_MAP_POSITIVE_X + i,  this.handler, 0 );
+			callback(this,i, params);
+		}
+	}
+
 
 	gl._current_texture_drawto = null;
 	gl._current_fbo_color = null;
@@ -4094,69 +4278,96 @@ Texture.prototype.drawTo = function(callback, params)
 * @param {Texture} depth_texture
 * @param {Function} callback
 */
-Texture.drawTo = function(color_textures, callback, depth_texture)
+Texture.drawTo = function( color_textures, callback, depth_texture )
 {
 	var w = -1,
 		h = -1,
 		type = null;
 
-	for(var i = 0; i < color_textures.length; i++)
+	if(!color_textures && !depth_texture)
+		throw("Textures missing in drawTo");
+
+	if(color_textures && color_textures.length)
 	{
-		var t = color_textures[i];
-		if(w == -1) 
-			w = t.width;
-		else if(w != t.width)
-			throw("Cannot use Texture.drawTo if textures have different dimensions");
-		if(h == -1) 
-			h = t.height;
-		else if(h != t.height)
-			throw("Cannot use Texture.drawTo if textures have different dimensions");
-		if(type == null) //first one defines the type
-			type = t.type;
-		else if (type != t.type)
-			throw("Cannot use Texture.drawTo if textures have different data type, all must have the same type");
+		for(var i = 0; i < color_textures.length; i++)
+		{
+			var t = color_textures[i];
+			if(w == -1) 
+				w = t.width;
+			else if(w != t.width)
+				throw("Cannot use Texture.drawTo if textures have different dimensions");
+			if(h == -1) 
+				h = t.height;
+			else if(h != t.height)
+				throw("Cannot use Texture.drawTo if textures have different dimensions");
+			if(type == null) //first one defines the type
+				type = t.type;
+			else if (type != t.type)
+				throw("Cannot use Texture.drawTo if textures have different data type, all must have the same type");
+		}
 	}
+	else
+	{
+		w = depth_texture.width;
+		h = depth_texture.height;
+	}
+
+	var ext = gl.extensions["WEBGL_draw_buffers"];
+	if(!ext && color_textures && color_textures.length > 1)
+		throw("Rendering to several textures not supported");
 
 	var v = gl.getViewport();
 	gl._framebuffer =  gl._framebuffer || gl.createFramebuffer();
 	gl.bindFramebuffer( gl.FRAMEBUFFER,  gl._framebuffer );
 
 	gl.viewport( 0, 0, w, h );
-	var ext = gl.extensions["WEBGL_draw_buffers"];
-	if(!ext && color_textures.length > 1)
-		throw("Rendering to several textures not supported");
 
 	var renderbuffer = null;
-	if( !depth_texture )
+	if( depth_texture && depth_texture.format !== gl.DEPTH_COMPONENT || depth_texture.type != gl.UNSIGNED_INT )
+		throw("Depth texture must be of format: gl.DEPTH_COMPONENT and type: gl.UNSIGNED_INT");
+
+	if( depth_texture )
 	{
+		gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depth_texture.handler, 0);
+	}
+	else //create a temporary depth renderbuffer
+	{
+		//create renderbuffer for depth
 		renderbuffer = gl._renderbuffer = gl._renderbuffer || gl.createRenderbuffer();
 		renderbuffer.width = w;
 		renderbuffer.height = h;
 		gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer );
-	}
-
-	if( depth_texture )
-	{
-		gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depth_texture.handler, 0);
-	}
-	else //create a temporary renderbuffer
-	{
 		gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);
+
 		gl.framebufferRenderbuffer( gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderbuffer );
 	}
 
-	var order = []; //draw_buffers request the use of an array with the order of the attachments
-	for(var i = 0; i < color_textures.length; i++)
+	if( color_textures )
 	{
-		var t = color_textures[i];
-		gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, t.handler, 0);
-		order.push( gl.COLOR_ATTACHMENT0 + i );
+		var order = []; //draw_buffers request the use of an array with the order of the attachments
+		for(var i = 0; i < color_textures.length; i++)
+		{
+			var t = color_textures[i];
+			gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, t.handler, 0);
+			order.push( gl.COLOR_ATTACHMENT0 + i );
+		}
+
+		if(color_textures.length > 1)
+			ext.drawBuffersWEBGL( order );
+	}
+	else //create temporary color render buffer
+	{
+		var color_renderbuffer = this._color_renderbuffer = this._color_renderbuffer || gl.createRenderbuffer();
+		color_renderbuffer.width = w;
+		color_renderbuffer.height = h;
+
+		gl.bindRenderbuffer( gl.RENDERBUFFER, color_renderbuffer );
+		gl.renderbufferStorage( gl.RENDERBUFFER, gl.RGBA4, w, h );
+
+		gl.framebufferRenderbuffer( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, color_renderbuffer );
 	}
 
-	if(color_textures.length > 1)
-		ext.drawBuffersWEBGL( order );
-
-	var complete = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+	var complete = gl.checkFramebufferStatus( gl.FRAMEBUFFER );
 	if(complete !== gl.FRAMEBUFFER_COMPLETE)
 		throw("FBO not complete: " + complete);
 
@@ -4174,7 +4385,7 @@ Texture.drawTo = function(color_textures, callback, depth_texture)
 * @param {Texture} depth_texture
 * @param {Function} callback
 */
-Texture.drawToColorAndDepth = function(color_texture, depth_texture, callback) {
+Texture.drawToColorAndDepth = function( color_texture, depth_texture, callback ) {
 	var gl = color_texture.gl; //static function
 
 	if(depth_texture.width != color_texture.width || depth_texture.height != color_texture.height)
@@ -4184,7 +4395,7 @@ Texture.drawToColorAndDepth = function(color_texture, depth_texture, callback) {
 
 	gl._framebuffer =  gl._framebuffer || gl.createFramebuffer();
 
-	gl.bindFramebuffer(gl.FRAMEBUFFER,  gl._framebuffer);
+	gl.bindFramebuffer( gl.FRAMEBUFFER,  gl._framebuffer);
 
 	gl.viewport(0, 0, color_texture.width, color_texture.height);
 
@@ -4215,18 +4426,41 @@ Texture.prototype.copyTo = function( target_texture, shader, uniforms ) {
 	var current_fbo = gl.getParameter( gl.FRAMEBUFFER_BINDING );
 	var viewport = gl.getViewport(); 
 
-	//reuse fbo
-	var fbo = gl.__copy_fbo = gl.__copy_fbo || gl.createFramebuffer();
-	gl.bindFramebuffer( gl.FRAMEBUFFER, fbo );
-	gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target_texture.handler, 0);
-	gl.viewport(0,0,target_texture.width, target_texture.height);
+	if(!shader)
+		shader = this.texture_type == gl.TEXTURE_2D ? GL.Shader.getScreenShader() : GL.Shader.getCubemapCopyShader();
 
 	//render
 	gl.disable( gl.BLEND );
 	gl.disable( gl.DEPTH_TEST );
 	if(shader && uniforms)
 		shader.uniforms( uniforms );
-	this.toViewport( shader );
+
+	//reuse fbo
+	var fbo = gl.__copy_fbo;
+	if(!fbo)
+		fbo = gl.__copy_fbo || gl.createFramebuffer();
+	gl.bindFramebuffer( gl.FRAMEBUFFER, fbo );
+
+	gl.viewport(0,0,target_texture.width, target_texture.height);
+	if(this.texture_type == gl.TEXTURE_2D)
+	{
+		gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target_texture.handler, 0);
+		this.toViewport( shader );
+	}
+	else if(this.texture_type == gl.TEXTURE_CUBE_MAP)
+	{
+		shader.uniforms({u_texture: 0});
+		var rot_matrix = mat3.create();
+		for(var i = 0; i < 6; i++)
+		{
+			gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_CUBE_MAP_POSITIVE_X + i, target_texture.handler, 0);
+			var face_info = GL.Texture.cubemap_camera_parameters[ i ];
+			rot_matrix.set( face_info.right, 0 );
+			rot_matrix.set( face_info.up, 3 );
+			rot_matrix.set( face_info.dir, 6 );
+			this.toViewport( shader,{ u_rotation: rot_matrix });
+		}
+	}
 	
 	//restore previous state
 	gl.setViewport(viewport); //restore viewport
@@ -4307,7 +4541,7 @@ Texture.prototype.renderQuad = (function() {
 
 
 /**
-* Applies a blur filter of one pixel to the texture (be careful using it, it is slow)
+* Applies a blur filter of four pixels to the texture (be careful using it, it is slow)
 * @method applyBlur
 * @param {Number} offsetx scalar that multiplies the offset when fetching pixels horizontally (default 1)
 * @param {Number} offsety scalar that multiplies the offset when fetching pixels vertically (default 1)
@@ -4316,30 +4550,99 @@ Texture.prototype.renderQuad = (function() {
 * @param {Texture} output_texture [optional] if not passed the output is the own texture
 * @return {Texture} returns the temp_texture in case you want to reuse it
 */
-Texture.prototype.applyBlur = function(offsetx, offsety, intensity, temp_texture, output_texture)
+Texture.prototype.applyBlur = function( offsetx, offsety, intensity, temp_texture, output_texture )
 {
-	var self = this;
+	var that = this;
 	var gl = this.gl;
-	var shader = GL.Shader.getBlurShader();
-	if(!temp_texture)
-		temp_texture = new GL.Texture(this.width, this.height, this.getProperties() );
-
+	if(offsetx === undefined)
+		offsetx = 1;
+	if(offsety === undefined)
+		offsety = 1;
 	offsetx = offsetx / this.width;
 	offsety = offsety / this.height;
 	gl.disable( gl.DEPTH_TEST );
 	gl.disable( gl.BLEND );
 
-	temp_texture.drawTo( function() {
-		self.toViewport(shader, {u_texture: 0, u_intensity: intensity, u_offset: [0, offsety ] });
-	});	
+	if(this === output_texture && this.texture_type === gl.TEXTURE_CUBE_MAP )
+		throw("cannot use applyBlur in a texture with itself when blurring a CUBE_MAP");
 
-	output_texture = output_texture || this;
-	output_texture.drawTo( function() {
-		temp_texture.toViewport(shader, {u_intensity: intensity, u_offset: [offsetx, 0] });
-	});	
-	return temp_texture;
+	if(output_texture && this.texture_type !== output_texture.texture_type )
+		throw("cannot use applyBlur with textures of different texture_type");
+
+	var result_texture = null;
+
+	//save state
+	var current_fbo = gl.getParameter( gl.FRAMEBUFFER_BINDING );
+	var viewport = gl.getViewport(); 
+
+	//reuse fbo
+	var fbo = gl.__copy_fbo;
+	if(!fbo)
+		fbo = gl.__copy_fbo || gl.createFramebuffer();
+	gl.bindFramebuffer( gl.FRAMEBUFFER, fbo );
+	gl.viewport(0,0, this.width, this.height);
+
+	if( this.texture_type === gl.TEXTURE_2D )
+	{
+		var shader = GL.Shader.getBlurShader();
+
+		if(!temp_texture)
+			temp_texture = new GL.Texture( this.width, this.height, this.getProperties() );
+
+		gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, temp_texture.handler, 0);
+		this.toViewport( shader, {u_texture: 0, u_intensity: intensity, u_offset: [0, offsety ] });
+
+		output_texture = output_texture || this;
+		gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, output_texture.handler, 0);
+		temp_texture.toViewport( shader, {u_intensity: intensity, u_offset: [offsetx, 0] });
+
+		result_texture = temp_texture;
+	}
+	else if( this.texture_type === gl.TEXTURE_CUBE_MAP )
+	{
+		//var weights = new Float32Array([ 0.16/0.98, 0.15/0.98, 0.12/0.98, 0.09/0.98, 0.05/0.98 ]);
+		//var weights = new Float32Array([ 0.05/0.98, 0.09/0.98, 0.12/0.98, 0.15/0.98, 0.16/0.98, 0.15/0.98, 0.12/0.98, 0.09/0.98, 0.05/0.98, 0.0 ]); //extra 0 to avoid mat3
+
+		var shader = GL.Shader.getCubemapBlurShader();
+		shader.uniforms({u_texture: 0, u_intensity: intensity, u_offset: [ offsetx, offsety ] });
+		this.bind(0);
+		var mesh = Mesh.getScreenQuad();
+		mesh.bindBuffers( shader );
+		shader.bind();
+
+		if(!output_texture)
+			output_texture = new GL.Texture( this.width, this.height, this.getProperties() );
+
+		var rot_matrix = mat3.create();
+		for(var i = 0; i < 6; ++i)
+		{
+			gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_CUBE_MAP_POSITIVE_X + i, output_texture.handler, 0);
+			var face_info = GL.Texture.cubemap_camera_parameters[ i ];
+			rot_matrix.set( face_info.right, 0 );
+			rot_matrix.set( face_info.up, 3 );
+			rot_matrix.set( face_info.dir, 6 );
+			shader._setUniform( "u_rotation", rot_matrix );
+			gl.drawArrays( gl.TRIANGLES, 0, 6 );
+		}
+
+		mesh.unbindBuffers( shader );
+		result_texture = output_texture;
+	}
+
+	//restore previous state
+	gl.setViewport(viewport); //restore viewport
+	gl.bindFramebuffer( gl.FRAMEBUFFER, current_fbo ); //restore fbo
+
+	//generate mipmaps when needed
+	if (output_texture.minFilter && output_texture.minFilter != gl.NEAREST && output_texture.minFilter != gl.LINEAR) {
+		output_texture.bind();
+		gl.generateMipmap(output_texture.texture_type);
+		output_texture.has_mipmaps = true;
+	}
+
+	gl.bindTexture(output_texture.texture_type, null); //disable
+	return result_texture;
 }
-
 
 
 /**
@@ -4412,8 +4715,16 @@ Texture.fromImage = function(image, options) {
 	options = options || {};
 
 	var texture = options.texture || new GL.Texture(image.width, image.height, options);
+
+	texture.uploadImage( image, options );
+
 	texture.bind();
-	texture.uploadImage(image, options);
+	gl.texParameteri(texture.texture_type, gl.TEXTURE_MAG_FILTER, texture.magFilter );
+	gl.texParameteri(texture.texture_type, gl.TEXTURE_MIN_FILTER, texture.minFilter );
+	gl.texParameteri(texture.texture_type, gl.TEXTURE_WRAP_S, texture.wrapS );
+	gl.texParameteri(texture.texture_type, gl.TEXTURE_WRAP_T, texture.wrapT );
+
+
 	if (GL.isPowerOfTwo(texture.width) && GL.isPowerOfTwo(texture.height) && options.minFilter && options.minFilter != gl.NEAREST && options.minFilter != gl.LINEAR) {
 		texture.bind();
 		gl.generateMipmap(texture.texture_type);
@@ -4455,12 +4766,21 @@ Texture.fromVideo = function(video, options) {
 * @param {Object} options
 * @return {Texture} the texture
 */
-Texture.fromTexture = function(old_texture, options) {
+Texture.fromTexture = function( old_texture, options) {
 	options = options || {};
 	var texture = new GL.Texture( old_texture.width, old_texture.height, options );
 	old_texture.copyTo( texture );
 	return texture;
 };
+
+Texture.prototype.clone = function( options )
+{
+	var old_options = this.getProperties();
+	if(options)
+		for(var i in options)
+			old_options[i] = options[i];
+	return Texture.fromTexture( this, old_options);
+}
 
 /**
 * Create a texture from an ArrayBuffer containing the pixels
@@ -4534,7 +4854,7 @@ Texture.fromShader = function(width, height, shader, options) {
 	var texture = new GL.Texture( width, height, options );
 	//copy content
 	texture.drawTo(function() {
-		gl.disable( gl.BLEND );
+		gl.disable( gl.BLEND ); 
 		gl.disable( gl.DEPTH_TEST );
 		gl.disable( gl.CULL_FACE );
 		var mesh = Mesh.getScreenQuad();
@@ -4560,7 +4880,17 @@ Texture.cubemapFromImages = function(images, options) {
 	var height = images[0].height;
 	options.texture_type = gl.TEXTURE_CUBE_MAP;
 
-	var texture = options.texture || new Texture(width, height, options);
+	var texture = null;
+	
+	if(options.texture)
+	{
+		texture = options.texture;
+		texture.width = width;
+		texture.height = height;
+	}
+	else
+		texture = new GL.Texture( width, height, options );
+
 	Texture.setUploadOptions(options);
 	texture.bind();
 
@@ -4650,7 +4980,7 @@ Texture.cubemapFromImage = function( image, options ) {
 /**
 * Given the width and the height of an image, and in which column is the top and bottom sides of the cubemap, it gets the info to pass to Texture.cubemapFromImage in options.faces
 * @method Texture.generateCubemapCrossFaces
-* @param {number} width
+* @param {number} width of the CROSS image (not the side image)
 * @param {number} column the column where the top and the bottom is located
 * @return {Object} object to pass to Texture.cubemapFromImage in options.faces
 */
@@ -4718,7 +5048,7 @@ Texture.cubemapFromURL = function(url, options, on_complete) {
 * @param {bool} force_rgba if yo want to force the output to have 4 components per pixel (useful to transfer to canvas)
 * @return {ArrayBuffer} the data ( Uint8Array or Float32Array )
 */
-Texture.prototype.getPixels = function( type, force_rgba )
+Texture.prototype.getPixels = function( type, force_rgba, cubemap_face )
 {
 	var gl = this.gl;
 	var v = gl.getViewport();
@@ -4726,27 +5056,25 @@ Texture.prototype.getPixels = function( type, force_rgba )
 
 	type = type || this.type;
 
-	
-
-	var framebuffer = gl.createFramebuffer();
-	var renderbuffer = gl.createRenderbuffer();
 	if(this.format == gl.DEPTH_COMPONENT)
 		throw("cannot use getPixels in depth textures");
 
-	gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer );
-	gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer );
+	gl.disable( gl.DEPTH_TEST );
 
-	//create to store depth
-	renderbuffer.width = this.width;
-	renderbuffer.height = this.height;
-	gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, this.width, this.height);
+	//reuse fbo
+	var fbo = gl.__copy_fbo;
+	if(!fbo)
+		fbo = gl.__copy_fbo || gl.createFramebuffer();
+	gl.bindFramebuffer( gl.FRAMEBUFFER, fbo );
+
+	var buffer = null;
 
 	gl.viewport(0, 0, this.width, this.height);
-	if(this.texture_type != gl.TEXTURE_2D)
-		throw("getPixels only work with texture2D");
 
-	gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.handler, 0);
-	gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderbuffer);
+	if(this.texture_type == gl.TEXTURE_2D)
+		gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.handler, 0);
+	else if(this.texture_type == gl.TEXTURE_CUBE_MAP)
+		gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_CUBE_MAP_POSITIVE_X + (cubemap_face || 0), this.handler, 0);
 
 	var channels = this.format == gl.RGB ? 3 : 4;
 	if(force_rgba)
@@ -4754,17 +5082,14 @@ Texture.prototype.getPixels = function( type, force_rgba )
 	channels = 4; //WEBGL DOES NOT SUPPORT READING 3 CHANNELS ONLY, YET...
 	//type = gl.UNSIGNED_BYTE; //WEBGL DOES NOT SUPPORT READING FLOAT seems, YET...
 
-	var buffer = null;
 	if(type == gl.UNSIGNED_BYTE)
 		buffer = new Uint8Array( this.width * this.height * channels );
 	else //half float and float forced to float
 		buffer = new Float32Array( this.width * this.height * channels );
 
-	//gl.readPixels(0,0, this.width, this.height, gl.RGBA, gl.UNSIGNED_BYTE, buffer ); 
-	gl.readPixels(0,0, this.width, this.height, channels == 3 ? gl.RGB : gl.RGBA, type, buffer ); //NOT SUPPORTED FLOAT or RGB BY WEBGL YET
+	gl.readPixels( 0,0, this.width, this.height, channels == 3 ? gl.RGB : gl.RGBA, type, buffer ); //NOT SUPPORTED FLOAT or RGB BY WEBGL YET
 
 	//restore
-	gl.bindRenderbuffer(gl.RENDERBUFFER, null );
 	gl.bindFramebuffer(gl.FRAMEBUFFER, old_fbo );
 	gl.viewport(v[0], v[1], v[2], v[3]);
 	return buffer;
@@ -4776,49 +5101,73 @@ Texture.prototype.getPixels = function( type, force_rgba )
 * @method toCanvas
 * @param {Canvas} canvas must have the same size, if different the canvas will be resized
 * @param {boolean} flip_y optional, flip vertically
-* @param {Number} max_size optional, if it is supplied the canvas wont be bigger of max_size (the iamge will be scaled down)
+* @param {Number} max_size optional, if it is supplied the canvas wont be bigger of max_size (the image will be scaled down)
 */
 Texture.prototype.toCanvas = function( canvas, flip_y, max_size )
 {
 	max_size = max_size || 8192;
 	var gl = this.gl;
 
-	if(this.texture_type != gl.TEXTURE_2D)
-		return null;
-
 	var w = Math.min( this.width, max_size );
 	var h = Math.min( this.height, max_size );
 
-	canvas = canvas || createCanvas(w,h);
+	if(this.texture_type == gl.TEXTURE_CUBE_MAP)
+	{
+		w = w * 4;
+		h = h * 3;
+	}
+
+	canvas = canvas || createCanvas( w, h );
 	if(canvas.width != w) 
 		canvas.width = w;
 	if(canvas.height != h)
 		canvas.height = h;
 
 	var buffer = null;
-	if(this.width != w || this.height != h )
+	if(this.texture_type == gl.TEXTURE_2D )
 	{
-		//create a temporary texture
-		var temp = new GL.Texture(w,h,{ format: gl.RGBA, filter: gl.NEAREST });
-		this.copyTo( temp );	
-		buffer = temp.getPixels( gl.UNSIGNED_BYTE, true );
+		if(this.width != w || this.height != h ) //resize image to fit the canvas
+		{
+			//create a temporary texture
+			var temp = new GL.Texture(w,h,{ format: gl.RGBA, filter: gl.NEAREST });
+			this.copyTo( temp );	
+			buffer = temp.getPixels( gl.UNSIGNED_BYTE, true );
+		}
+		else
+			buffer = this.getPixels( gl.UNSIGNED_BYTE, true );
+
+		var ctx = canvas.getContext("2d");
+		var pixels = ctx.getImageData(0,0,w,h);
+		pixels.data.set( buffer );
+		ctx.putImageData(pixels,0,0);
+
+		if(flip_y)
+		{
+			var temp = createCanvas(w,h);
+			var temp_ctx = temp.getContext("2d");
+			temp_ctx.translate(0,temp.height);
+			temp_ctx.scale(1,-1);
+			temp_ctx.drawImage( canvas, 0, 0, temp.width, temp.height );
+			ctx.drawImage( temp, 0, 0 );
+		}
 	}
-	else
-		buffer = this.getPixels( gl.UNSIGNED_BYTE, true );
-
-	var ctx = canvas.getContext("2d");
-	var pixels = ctx.getImageData(0,0,w,h);
-	pixels.data.set( buffer );
-	ctx.putImageData(pixels,0,0);
-
-	if(flip_y)
+	else if(this.texture_type == gl.TEXTURE_CUBE_MAP )
 	{
-		var temp = createCanvas(w,h);
-		var temp_ctx = temp.getContext("2d");
-		temp_ctx.translate(0,temp.height);
-		temp_ctx.scale(1,-1);
-		temp_ctx.drawImage( canvas, 0, 0, temp.width, temp.height );
-		ctx.drawImage( temp, 0, 0 );
+		var temp_canvas = createCanvas( this.width, this.height );
+		var temp_ctx = temp_canvas.getContext("2d");
+		var info = GL.Texture.generateCubemapCrossFacesInfo( canvas.width, 1 );
+		var ctx = canvas.getContext("2d");
+		ctx.fillStyle = "black";
+		ctx.fillRect(0,0,canvas.width, canvas.height );
+
+		for(var i = 0; i < 6; i++)
+		{
+			buffer = this.getPixels( gl.UNSIGNED_BYTE, true, i );
+			var pixels = temp_ctx.getImageData(0,0, temp_canvas.width, temp_canvas.height );
+			pixels.data.set( buffer );
+			temp_ctx.putImageData(pixels,0,0);
+			ctx.drawImage( temp_canvas, info[i].x, info[i].y, temp_canvas.width, temp_canvas.height );
+		}
 	}
 
 	return canvas;
@@ -4829,56 +5178,44 @@ Texture.prototype.toCanvas = function( canvas, flip_y, max_size )
 * @method toBlob
 * @return {Blob} the blob containing the data
 */
-Texture.prototype.toBlob = function()
+Texture.prototype.toBlob = function(flip_y, type)
 {
-	var w = this.width;
-	var h = this.height;
+	//dump to canvas
+	var canvas = this.toCanvas(null,flip_y);
 
-	if(this.texture_type == gl.TEXTURE_CUBE_MAP)
+	//use the slow method (because its sync)
+	var data = canvas.toDataURL( type );
+	var index = data.indexOf(",");
+	var base64_data = data.substr(index+1);
+	var binStr = atob( base64_data );
+	var len = binStr.length,
+	arr = new Uint8Array(len);
+	for (var i=0; i<len; ++i ) {
+		arr[i] = binStr.charCodeAt(i);
+	}
+	var blob = new Blob( [arr], {type: type || 'image/png'} );
+	return blob;
+}
+
+//faster depending on the browser
+Texture.prototype.toBlobAsync = function(flip_y, type, callback)
+{
+	//dump to canvas
+	var canvas = this.toCanvas(null,flip_y);
+
+	//some browser support a fast way to blob a canvas
+	if(canvas.toBlob)
 	{
-		if(!this.image)
-		{
-			console.warning("Litegl: cannot call toBlob of a cubemap GL.Texture");
-			return null; //cannot blob
-		}
-		else
-		{
-			//use the associated image
-			var final_canvas = createCanvas(this.image.width,this.image.height);
-			var final_ctx = final_canvas.getContext("2d");
-			final_ctx.drawImage( this.image, 0, 0 );
-			return final_canvas.toBlob();
-		}
+		canvas.toBlob( callback, type );
+		return;
 	}
 
-	//Read pixels form WebGL
-	var buffer = this.getPixels();
-	/*
-	var buffer = new Uint8Array(w*h*4);
-	this.drawTo( function() {
-		gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,buffer);
-	});
-	*/
-
-	//dump to canvas
-	var canvas = createCanvas(w,h);
-	if(!canvas.toBlob)
-		throw "toBlob not supported on Canvas element";
-
-	var ctx = canvas.getContext("2d");
-	var pixels = ctx.getImageData(0,0,w,h);
-	pixels.data.set( buffer );
-	ctx.putImageData(pixels,0,0);
-
-	//reverse
-	var final_canvas = createCanvas(w,h);
-	var final_ctx = final_canvas.getContext("2d");
-	final_ctx.translate(0,final_canvas.height);
-	final_ctx.scale(1,-1);
-	final_ctx.drawImage( canvas, 0, 0 );
-
-	return final_canvas.toBlob();
+	//use the slow method
+	var blob = this.toBlob( flip_y, type );
+	if(callback)
+		callback(blob);
 }
+
 
 /**
 * returns a base64 String containing all the data from the texture
@@ -4893,14 +5230,8 @@ Texture.prototype.toBase64 = function( flip_y )
 
 	//Read pixels form WebGL
 	var buffer = this.getPixels();
-	/*
-	var buffer = new Uint8Array(w*h*4);
-	this.drawTo( function() {
-		gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,buffer);
-	});
-	*/
 
-	//dump to canvas
+	//dump to canvas so we can encode it
 	var canvas = createCanvas(w,h);
 	var ctx = canvas.getContext("2d");
 	var pixels = ctx.getImageData(0,0,w,h);
@@ -4937,13 +5268,72 @@ Texture.prototype.generateMetadata = function()
 
 Texture.compareFormats = function(a,b)
 {
-	if(!a || !b) return false;
-	if(a == b) return true;
-	if(a.width != b.width || a.height != b.height || a.type != b.type || a.texture_type != b.texture_type) 
+	if(!a || !b) 
+		return false;
+	if(a == b) 
+		return true;
+
+	if( a.width != b.width || 
+		a.height != b.height || 
+		a.type != b.type || //gl.UNSIGNED_BYTE
+		a.format != b.format || //gl.RGB
+		a.texture_type != b.texture_type) //gl.TEXTURE_2D
 		return false;
 	return true;
 }
 
+/**
+* blends texture A and B and stores the result in OUT
+* @method blend
+* @param {Texture} a
+* @param {Texture} b
+* @param {Texture} out [optional]
+* @return {Object}
+*/
+Texture.blend = function( a, b, factor, out )
+{
+	if(!a || !b) 
+		return false;
+	if(a == b) 
+	{
+		if(out)
+			a.copyTo(out);
+		else
+			a.toViewport();
+		return true;
+	}
+
+	gl.disable( gl.BLEND );
+	gl.disable( gl.DEPTH_TEST );
+	gl.disable( gl.CULL_FACE );
+
+	var shader = GL.Shader.getBlendShader();
+	var mesh = GL.Mesh.getScreenQuad();
+	b.bind(1);
+	shader.uniforms({u_texture: 0, u_texture2: 1, u_factor: factor});
+
+	if(out)
+	{
+		out.drawTo( function(){
+			if(a == out || b == out)
+				throw("Blend output cannot be the same as the input");
+			a.bind(0);
+			shader.draw( mesh, gl.TRIANGLES );
+		});
+		return true;
+	}
+
+	a.bind(0);
+	shader.draw( mesh, gl.TRIANGLES );
+	return true;
+}
+
+
+/**
+* returns a white texture of 1x1 pixel 
+* @method Texture.getWhiteTexture
+* @return {Texture} the white texture
+*/
 Texture.getWhiteTexture = function()
 {
 	var gl = this.gl;
@@ -4955,6 +5345,11 @@ Texture.getWhiteTexture = function()
 	return gl.textures[":white"] = new GL.Texture(1,1,{ pixel_data: color });
 }
 
+/**
+* returns a black texture of 1x1 pixel 
+* @method Texture.getBlackTexture
+* @return {Texture} the black texture
+*/
 Texture.getBlackTexture = function()
 {
 	var gl = this.gl;
@@ -4965,9 +5360,65 @@ Texture.getBlackTexture = function()
 	return gl.textures[":black"] = new GL.Texture(1,1,{ pixel_data: color });
 }
 
+
+/* Texture pool */
+Texture.getTemporary = function( width, height, options )
+{
+	if(!Texture.temporary_pool)
+		Texture.temporary_pool = [];
+
+	var pool = Texture.temporary_pool;
+	var result = null;
+
+	var texture_type = GL.TEXTURE_2D;
+	var type = Texture.DEFAULT_TYPE;
+	var format = Texture.DEFAULT_FORMAT;
+
+	if(options)
+	{
+		if(options.texture_type)
+			texture_type = options.texture_type;
+		if(options.type)
+			type = options.type;
+		if(options.format)
+			format = options.format;
+	}
+
+	for(var i = 0; i < pool.length; ++i)
+	{
+		var tex = pool[i];
+
+		if( tex.width != width || 
+			tex.height != height ||
+			tex.type != type ||
+			tex.texture_type != texture_type ||
+			tex.format != format )
+			continue;
+		pool.splice(i,1); //remove from the pool
+		return tex;
+	}
+
+	//not found, create it
+	var tex = new GL.Texture( width, height, { type: type, texture_type: texture_type, format: format });
+	return tex;
+}
+
+Texture.releaseTemporary = function( tex )
+{
+	if(!Texture.temporary_pool)
+		Texture.temporary_pool = [];
+	Texture.temporary_pool.push( tex );
+}
+
+//returns the next power of two bigger than size
+Texture.nextPOT = function( size )
+{
+	return Math.pow( 2, Math.ceil( Math.log(size) / Math.log(2) ) );
+}
 /** 
 * FBO for FrameBufferObjects, FBOs are used to store the render inside one or several textures 
 * Supports multibuffer and depthbuffer texture, useful for deferred rendering
+* @namespace GL
 * @class FBO
 * @param {Array} color_textures an array containing the color textures, if not supplied a render buffer will be used
 * @param {GL.Texture} depth_texture the depth texture, if not supplied a render buffer will be used
@@ -5004,6 +5455,8 @@ GL.FBO = FBO;
 */
 FBO.prototype.setTextures = function( color_textures, depth_texture, skip_disable )
 {
+	if( depth_texture && (depth_texture.format !== gl.DEPTH_COMPONENT || depth_texture.type != gl.UNSIGNED_INT ) )
+		throw("FBO Depth texture must be of format: gl.DEPTH_COMPONENT and type: gl.UNSIGNED_INT");
 	//test if is already binded
 	var same = this.depth_texture == depth_texture;
 	if( same && color_textures)
@@ -5039,7 +5492,12 @@ FBO.prototype.setTextures = function( color_textures, depth_texture, skip_disabl
 	if( this.color_textures )
 		previously_attached = this.color_textures.length;
 
-	this.color_textures = color_textures || [];
+	//copy textures in place
+	this.color_textures.length = color_textures ? color_textures.length : 0;
+	if(color_textures)
+		for(var i = 0; i < color_textures.length; ++i)
+			this.color_textures[i] = color_textures[i];
+
 	this.depth_texture = depth_texture;
 
 	//compute the W and H (and check they have the same size)
@@ -5050,15 +5508,17 @@ FBO.prototype.setTextures = function( color_textures, depth_texture, skip_disabl
 			if(w == -1) 
 				w = t.width;
 			else if(w != t.width)
-				throw("Cannot use Texture.drawTo if textures have different dimensions");
+				throw("Cannot bind textures with different dimensions");
 			if(h == -1) 
 				h = t.height;
 			else if(h != t.height)
-				throw("Cannot use Texture.drawTo if textures have different dimensions");
+				throw("Cannot bind textures with different dimensions");
 			if(type == null) //first one defines the type
 				type = t.type;
 			else if (type != t.type)
-				throw("Cannot use Texture.drawTo if textures have different data type, all must have the same type");
+				throw("Cannot bind textures to a FBO with different pixel formats");
+			if (t.texture_type != gl.TEXTURE_2D)
+				throw("Cannot bind a Cubemap to a FBO");
 		}
 	else
 	{
@@ -5171,6 +5631,11 @@ FBO.prototype.unbind = function()
 
 
 
+
+/**
+* @namespace GL
+*/
+
 /**
 * Shader class to upload programs to the GPU
 * @class Shader
@@ -5181,6 +5646,9 @@ FBO.prototype.unbind = function()
 */
 global.Shader = GL.Shader = function Shader( vertexSource, fragmentSource, macros )
 {
+	if(GL.debug)
+		console.log("GL.Shader created");
+
 	//used to avoid problems with resources moving between different webgl context
 	this._context_id = global.gl.context_id; 
 	var gl = this.gl = global.gl;
@@ -5200,6 +5668,9 @@ global.Shader = GL.Shader = function Shader( vertexSource, fragmentSource, macro
 		throw 'link error: ' + gl.getProgramInfoLog(this.program);
 	}
 
+	this.vs_shader = vs;
+	this.fs_shader = fs;
+
 	//Extract info from the shader
 	this.attributes = {}; 
 	this.uniformInfo = {};
@@ -5211,7 +5682,7 @@ global.Shader = GL.Shader = function Shader( vertexSource, fragmentSource, macro
 
 Shader.expandMacros = function(macros)
 {
-	var extra_code = "";
+	var extra_code = ""; //add here preprocessor directives that should be above everything
 	if(macros)
 		for(var i in macros)
 			extra_code += "#define " + i + " " + (macros[i] ? macros[i] : "") + "\n";
@@ -5225,18 +5696,58 @@ Shader.expandMacros = function(macros)
 * @method Shader.compileSource
 * @param {Number} type could be gl.VERTEX_SHADER or gl.FRAGMENT_SHADER
 * @param {String} source the source file to compile
-* @return {WebGLHandler}
+* @return {WebGLShader} the handler from webgl
 */
-Shader.compileSource = function(type, source, gl)
+Shader.compileSource = function( type, source, gl, shader )
 {
 	gl = gl || global.gl;
-	var shader = gl.createShader(type);
+	shader = shader || gl.createShader(type);
 	gl.shaderSource(shader, source);
 	gl.compileShader(shader);
 	if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
 		throw (type == gl.VERTEX_SHADER ? "Vertex" : "Fragment") + ' shader compile error: ' + gl.getShaderInfoLog(shader);
 	}
 	return shader;
+}
+
+/**
+* It updates the code inside one shader
+* @method updateShader
+* @param {String} vertexSource 
+* @param {String} fragmentSource 
+* @param {Object} macros [optional]
+*/
+Shader.prototype.updateShader = function( vertexSource, fragmentSource, macros )
+{
+	var gl = this.gl || global.gl;
+
+	//expand macros
+	var extra_code = Shader.expandMacros( macros );
+
+	if(this.program)
+		this.program = gl.createProgram();
+
+	var vs = vertexSource.constructor === String ? GL.Shader.compileSource( gl.VERTEX_SHADER, extra_code + vertexSource, gl, this.vs_shader ) : vertexSource;
+	var fs = fragmentSource.constructor === String ? GL.Shader.compileSource( gl.FRAGMENT_SHADER, extra_code + fragmentSource, gl, this.fs_shader ) : fragmentSource;
+
+	gl.attachShader( this.program, vs, gl );
+	gl.attachShader( this.program, fs, gl );
+	gl.linkProgram( this.program );
+	if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) {
+		throw 'link error: ' + gl.getProgramInfoLog( this.program );
+	}
+
+	//store shaders separated
+	this.vs_shader = vs;
+	this.fs_shader = fs;
+
+	//Extract info from the shader
+	this.attributes = {}; 
+	this.uniformInfo = {};
+	this.samplers = {};
+
+	//extract info about the shader to speed up future processes
+	this.extractShaderInfo();
 }
 
 /**
@@ -5248,7 +5759,7 @@ Shader.prototype.extractShaderInfo = function()
 {
 	var gl = this.gl;
 	
-	var l = gl.getProgramParameter(this.program, gl.ACTIVE_UNIFORMS);
+	var l = gl.getProgramParameter( this.program, gl.ACTIVE_UNIFORMS );
 
 	//extract uniforms info
 	for(var i = 0; i < l; ++i)
@@ -5278,7 +5789,7 @@ Shader.prototype.extractShaderInfo = function()
 			is_matrix = true;
 
 
-		//save the info so I the user doesnt have to specify types when uploading data to the shader
+		//save the info so the user doesnt have to specify types when uploading data to the shader
 		this.uniformInfo[ uniformName ] = { type: data.type, func: func, size: data.size, is_matrix: is_matrix, loc: gl.getUniformLocation(this.program, uniformName) };
 	}
 
@@ -5750,6 +6261,17 @@ Shader.SCREEN_COLORED_FRAGMENT_SHADER = "\n\
 			}\n\
 			";
 
+Shader.BLEND_FRAGMENT_SHADER = "\n\
+			precision highp float;\n\
+			uniform sampler2D u_texture;\n\
+			uniform sampler2D u_texture2;\n\
+			uniform float u_factor;\n\
+			varying vec2 v_coord;\n\
+			void main() {\n\
+				gl_FragColor = mix( texture2D(u_texture, v_coord), texture2D(u_texture2, v_coord), u_factor);\n\
+			}\n\
+			";
+
 Shader.SCREEN_FLAT_FRAGMENT_SHADER = "\n\
 			precision highp float;\n\
 			uniform vec4 u_color;\n\
@@ -5842,13 +6364,16 @@ Shader.FLAT_FRAGMENT_SHADER = "\n\
 * @param {string} code string containg code, like "color = color * 2.0;"
 * @param {string} [uniforms=null] string containg extra uniforms, like "uniform vec3 u_pos;"
 */
-Shader.createFX = function(code, uniforms)
+Shader.createFX = function(code, uniforms, shader)
 {
 	var macros = {
 		FX_CODE: code,
 		FX_UNIFORMS: uniforms || ""
 	}
-	return new GL.Shader( GL.Shader.SCREEN_VERTEX_SHADER, GL.Shader.SCREEN_FRAGMENT_FX, macros );
+	if(!shader)
+		return new GL.Shader( GL.Shader.SCREEN_VERTEX_SHADER, GL.Shader.SCREEN_FRAGMENT_FX, macros );
+	shader.updateShader( GL.Shader.SCREEN_VERTEX_SHADER, GL.Shader.SCREEN_FRAGMENT_FX, macros );
+	return shader;
 }
 
 /**
@@ -5925,6 +6450,20 @@ Shader.getPartialQuadShader = function(gl)
 }
 
 /**
+* Returns a shader that blends two textures
+* shader must have: u_factor, u_texture, u_texture2
+* @method Shader.getBlendShader
+*/
+Shader.getBlendShader = function(gl)
+{
+	gl = gl || global.gl;
+	var shader = gl.shaders[":blend"];
+	if(shader)
+		return shader;
+	return gl.shaders[":blend"] = new GL.Shader( Shader.SCREEN_VERTEX_SHADER, Shader.BLEND_FRAGMENT_SHADER );
+}
+
+/**
 * Returns a shader used to apply gaussian blur to one texture in one axis (you should use it twice to get a gaussian blur)
 * shader params are: vec2 u_offset, float u_intensity
 * @method Shader.getBlurShader
@@ -5958,6 +6497,72 @@ Shader.getBlurShader = function(gl)
 			");
 	return gl.shaders[":blur"] = shader;
 }
+
+Shader.getCubemapCopyShader = function(gl)
+{
+	gl = gl || global.gl;
+	var shader = gl.shaders[":copy_cubemap"];
+	if(shader)
+		return shader;
+
+	var shader = new GL.Shader( Shader.SCREEN_VERTEX_SHADER,"\n\
+			precision highp float;\n\
+			varying vec2 v_coord;\n\
+			uniform samplerCube u_texture;\n\
+			uniform mat3 u_rotation;\n\
+			void main() {\n\
+				vec2 uv = vec2( v_coord.x, 1.0 - v_coord.y );\n\
+				vec3 dir = vec3( uv - vec2(0.5), -0.5 );\n\
+				dir = u_rotation * dir;\n\
+			   gl_FragColor = textureCube( u_texture, dir );\n\
+			}\n\
+			");
+	return gl.shaders[":copy_cubemap"] = shader;
+}
+
+
+Shader.getCubemapBlurShader = function(gl)
+{
+	gl = gl || global.gl;
+	var shader = gl.shaders[":blur_cubemap"];
+	if(shader)
+		return shader;
+
+	var shader = new GL.Shader( Shader.SCREEN_VERTEX_SHADER,"\n\
+			#ifndef NUM_SAMPLES\n\
+				#define NUM_SAMPLES 4\n\
+			#endif\n\
+			\n\
+			precision highp float;\n\
+			varying vec2 v_coord;\n\
+			uniform samplerCube u_texture;\n\
+			uniform mat3 u_rotation;\n\
+			uniform vec2 u_offset;\n\
+			uniform float u_intensity;\n\
+			void main() {\n\
+				vec4 sum = vec4(0.0);\n\
+				vec2 uv = vec2( v_coord.x, 1.0 - v_coord.y ) - vec2(0.5);\n\
+				vec3 dir = vec3(0.0);\n\
+				vec4 color = vec4(0.0);\n\
+				for( int x = -2; x <= 2; x++ )\n\
+				{\n\
+					for( int y = -2; y <= 2; y++ )\n\
+					{\n\
+						dir.xy = uv + vec2( u_offset.x * float(x), u_offset.y * float(y)) * 0.5;\n\
+						dir.z = -0.5;\n\
+						dir = u_rotation * dir;\n\
+						color = textureCube( u_texture, dir );\n\
+						color.xyz = color.xyz * color.xyz;/*linearize*/\n\
+						sum += color;\n\
+					}\n\
+				}\n\
+				sum /= 25.0;\n\
+			   gl_FragColor = vec4( sqrt( sum.xyz ), sum.w ) ;\n\
+			}\n\
+			");
+	return gl.shaders[":blur_cubemap"] = shader;
+}
+
 
 Shader.FXAA_FUNC = "\n\
 	uniform vec2 u_viewportSize;\n\
@@ -6133,14 +6738,18 @@ GL.create = function(options) {
 		if(v) { v[0] = gl.viewport_data[0]; v[1] = gl.viewport_data[1]; v[2] = gl.viewport_data[2]; v[3] = gl.viewport_data[3]; return v; }
 		return new Float32Array( gl.viewport_data );
 	};
-	gl.setViewport = function(v) { gl.viewport_data.set(v); this._viewport_func(v[0],v[1],v[2],v[3]); };
+	gl.setViewport = function( v, flip_y ) {
+		gl.viewport_data.set(v);
+		if(flip_y)
+			gl.viewport_data[1] = this.drawingBufferHeight-v[1]-v[3];
+		this._viewport_func(v[0],gl.viewport_data[1],v[2],v[3]);
+	};
 	
 	//just some checks
 	if(typeof(glMatrix) == "undefined")
 		throw("glMatrix not found, LiteGL requires glMatrix to be included");
 
 	var last_click_time = 0;
-	gl.mouse_buttons = 0;
 
 	//some global containers, use them to reuse assets
 	gl.shaders = {};
@@ -6245,13 +6854,17 @@ GL.create = function(options) {
 	}
 
 	var mouse = gl.mouse = {
+		buttons: 0, //this should always be up-to-date with mouse state
 		left_button: false,
 		middle_button: false,
 		right_button: false,
-		x:0,
+		position: new Float32Array(2),
+		x:0, //in canvas coordinates
 		y:0,
 		deltax: 0,
 		deltay: 0,
+		clientx:0, //in client coordinates
+		clienty:0,
 		isInsideRect: function(x,y,w,h, flip_y )
 		{
 			var mouse_y = this.y;
@@ -6261,6 +6874,10 @@ GL.create = function(options) {
 				mouse_y > y && mouse_y < y + h)
 				return true;
 			return false;
+		},
+		isButtonPressed: function(num)
+		{
+			return this.buttons & (1<<GL.RIGHT_MOUSE_BUTTON);
 		}
 	};
 
@@ -6296,26 +6913,25 @@ GL.create = function(options) {
 	}
 
 	function onmouse(e) {
-		var old_mouse_mask = gl.mouse_buttons;
+		var old_mouse_mask = gl.mouse.buttons;
 		GL.augmentEvent(e, canvas);
 		e.eventType = e.eventType || e.type; //type cannot be overwritten, so I make a clone to allow me to overwrite
 		var now = getTime();
 
 		//gl.mouse info
 		mouse.dragging = e.dragging;
+		mouse.position[0] = e.canvasx;
+		mouse.position[1] = e.canvasy;
 		mouse.x = e.canvasx;
 		mouse.y = e.canvasy;
-		mouse.left_button = gl.mouse_buttons & (1<<GL.LEFT_MOUSE_BUTTON);
-		mouse.right_button = gl.mouse_buttons & (1<<GL.RIGHT_MOUSE_BUTTON);
-		//console.log(e.eventType, e.mousex, e.mousey, e.deltax, e.deltay );
+		mouse.clientx = e.mousex;
+		mouse.clienty = e.mousey;
+		mouse.left_button = mouse.buttons & (1<<GL.LEFT_MOUSE_BUTTON);
+		mouse.middle_button = mouse.buttons & (1<<GL.MIDDLE_MOUSE_BUTTON);
+		mouse.right_button = mouse.buttons & (1<<GL.RIGHT_MOUSE_BUTTON);
 
 		if(e.eventType == "mousedown")
 		{
-			if(e.leftButton)
-				mouse.left_button = true;
-			if(e.rightButton)
-				mouse.right_button = true;
-
 			if(old_mouse_mask == 0) //no mouse button was pressed till now
 			{
 				canvas.removeEventListener("mousemove", onmouse);
@@ -6337,7 +6953,7 @@ GL.create = function(options) {
 		} 
 		else if(e.eventType == "mouseup")
 		{
-			if(gl.mouse_buttons == 0) //no more buttons pressed
+			if(gl.mouse.buttons == 0) //no more buttons pressed
 			{
 				canvas.addEventListener("mousemove", onmouse);
 				var doc = canvas.ownerDocument;
@@ -6345,7 +6961,7 @@ GL.create = function(options) {
 				doc.removeEventListener("mouseup", onmouse);
 			}
 			e.click_time = now - last_click_time;
-			last_click_time = now;
+			//last_click_time = now; //commented to avoid reseting click time when unclicking two mouse buttons
 
 			if(gl.onmouseup)
 				gl.onmouseup(e);
@@ -6355,12 +6971,13 @@ GL.create = function(options) {
 		{ 
 			e.eventType = "mousewheel";
 			if(e.type == "wheel")
-				e.wheel = -e.deltaY;
+				e.wheel = -e.deltaY; //in firefox deltaY is 1 while in Chrome is 120
 			else
 				e.wheel = (e.wheelDeltaY != null ? e.wheelDeltaY : e.detail * -60);
 
 			//from stack overflow
-			e.delta = e.wheelDelta ? e.wheelDelta/40 : e.deltaY ? -e.deltaY/3 : 0;
+			//firefox doesnt have wheelDelta
+			e.delta = e.wheelDelta !== undefined ? (e.wheelDelta/40) : (e.deltaY ? -e.deltaY/3 : 0);
 			//console.log(e.delta);
 			if(gl.onmousewheel)
 				gl.onmousewheel(e);
@@ -6380,7 +6997,7 @@ GL.create = function(options) {
 	//translates touch events in mouseevents
 	function ontouch(e)
 	{
-		var touches = event.changedTouches,
+		var touches = e.changedTouches,
 			first = touches[0],
 			type = "";
 
@@ -6391,7 +7008,7 @@ GL.create = function(options) {
 		if(touches > 1)
 			return;
 
-		 switch(event.type)
+		 switch(e.type)
 		{
 			case "touchstart": type = "mousedown"; break;
 			case "touchmove":  type = "mousemove"; break;        
@@ -6405,7 +7022,7 @@ GL.create = function(options) {
 								  first.clientX, first.clientY, false,
 								  false, false, false, 0/*left*/, null);
 		first.target.dispatchEvent(simulatedEvent);
-		event.preventDefault();
+		e.preventDefault();
 	}
 
 	function ongesture(e)
@@ -6484,6 +7101,7 @@ GL.create = function(options) {
 
 	//gamepads
 	gl.gamepads = null;
+	/*
 	function onButton(e, pressed)
 	{
 		console.log(e);
@@ -6495,13 +7113,13 @@ GL.create = function(options) {
 			gl.onbutton(e);
 		LEvent.trigger(gl, pressed ? "buttondown" : "buttonup", e );
 	}
-	
 	function onGamepad(e)
 	{
 		console.log(e);
 		if(gl.ongamepad) 
 			gl.ongamepad(e);
 	}
+	*/
 
 	/**
 	* Tells the system to capture gamepad events on the canvas. 
@@ -6513,76 +7131,133 @@ GL.create = function(options) {
 		if(!getGamepads) return;
 		this.gamepads = getGamepads.call(navigator);
 
-		//only in firefox
+		//only in firefox, so I cannot rely on this
+		/*
 		window.addEventListener("gamepadButtonDown", function(e) { onButton(e, true); }, false);
 		window.addEventListener("MozGamepadButtonDown", function(e) { onButton(e, true); }, false);
 		window.addEventListener("WebkitGamepadButtonDown", function(e) { onButton(e, true); }, false);
 		window.addEventListener("gamepadButtonUp", function(e) { onButton(e, false); }, false);
 		window.addEventListener("MozGamepadButtonUp", function(e) { onButton(e, false); }, false);
 		window.addEventListener("WebkitGamepadButtonUp", function(e) { onButton(e, false); }, false);
-
 		window.addEventListener("gamepadconnected", onGamepad, false);
 		window.addEventListener("gamepaddisconnected", onGamepad, false);
+		*/
+
 	}
 
 	/**
 	* returns the detected gamepads on the system
 	* @method getGamepads
+	* @param {bool} skip_mapping if set to true it returns the basic gamepad, otherwise it returns a class with mapping info to XBOX controller
 	*/
-	gl.getGamepads = function()
+	gl.getGamepads = function(skip_mapping)
 	{
 		//gamepads
 		var getGamepads = navigator.getGamepads || navigator.webkitGetGamepads || navigator.mozGetGamepads; 
-		if(!getGamepads) return;
+		if(!getGamepads)
+			return;
 		var gamepads = getGamepads.call(navigator);
-		var gamepad = null;
+		if(!this.gamepads)
+			this.gamepads = [];
 		for(var i = 0; i < 4; i++)
-			if (gamepads[i])
-			{
-				gamepad = gamepads[i];
-				if(this.gamepads) //launch connected gamepads: NOT TESTED
-				{
-					if(!this.gamepads[i] && gamepads[i] && this.ongamepadconnected)
-						this.ongamepadconnected(gamepad);
-					else if(this.gamepads[i] && !gamepads[i] && this.ongamepaddisconnected)
-						this.ongamepaddisconnected(this.gamepads[i]);
-				}
-				//xbox controller mapping
-				var xbox = { axes:[], buttons:{}, hat: ""};
-				xbox.axes["lx"] = gamepad.axes[0];
-				xbox.axes["ly"] = gamepad.axes[1];
-				xbox.axes["rx"] = gamepad.axes[2];
-				xbox.axes["ry"] = gamepad.axes[3];
-				xbox.axes["triggers"] = gamepad.axes[4];
+		{
+			var gamepad = gamepads[i]; //current state
 
-				for(var i = 0; i < gamepad.buttons.length; i++)
+			if(gamepad && !skip_mapping)
+				addGamepadXBOXmapping(gamepad);
+
+			var old_gamepad = this.gamepads[i]; //old state
+
+			//launch connected gamepads events
+			if(!old_gamepad && gamepad)
+			{
+				var event = new CustomEvent("gamepadconnected");
+				event.eventType = event.type;
+				event.gamepad = gamepad;;
+				if(this.ongamepadconnected)
+					this.ongamepadconnected(event);
+				LEvent.trigger(gl,"gamepadconnected",event);
+			}
+			else if(old_gamepad && !gamepad)
+			{
+				var event = new CustomEvent("gamepaddisconnected");
+				event.eventType = event.type;
+				event.gamepad = old_gamepad;
+				if(this.ongamepaddisconnected)
+					this.ongamepaddisconnected(event);
+				LEvent.trigger(gl,"gamepaddisconnected",event);
+			}
+
+			//seek buttons changes to trigger events
+			if(gamepad)
+			{
+				for(var j = 0; j < gamepad.buttons.length; ++j)
 				{
-					switch(i) //I use a switch to ensure that a player with another gamepad could play
+					var button = gamepad.buttons[j];
+					if( button.pressed && (!old_gamepad || !old_gamepad.buttons[j].pressed))
 					{
-						case 0: xbox.buttons["a"] = gamepad.buttons[i].pressed; break;
-						case 1: xbox.buttons["b"] = gamepad.buttons[i].pressed; break;
-						case 2: xbox.buttons["x"] = gamepad.buttons[i].pressed; break;
-						case 3: xbox.buttons["y"] = gamepad.buttons[i].pressed; break;
-						case 4: xbox.buttons["lb"] = gamepad.buttons[i].pressed; break;
-						case 5: xbox.buttons["rb"] = gamepad.buttons[i].pressed; break;
-						case 6: xbox.buttons["lt"] = gamepad.buttons[i].pressed; break;
-						case 7: xbox.buttons["rt"] = gamepad.buttons[i].pressed; break;
-						case 8: xbox.buttons["back"] = gamepad.buttons[i].pressed; break;
-						case 9: xbox.buttons["start"] = gamepad.buttons[i].pressed; break;
-						case 10: xbox.buttons["ls"] = gamepad.buttons[i].pressed; break;
-						case 11: xbox.buttons["rs"] = gamepad.buttons[i].pressed; break;
-						case 12: if( gamepad.buttons[i].pressed) xbox.hat += "up"; break;
-						case 13: if( gamepad.buttons[i].pressed) xbox.hat += "down"; break;
-						case 14: if( gamepad.buttons[i].pressed) xbox.hat += "left"; break;
-						case 15: if( gamepad.buttons[i].pressed) xbox.hat += "right"; break;
-						case 16: xbox.buttons["home"] = gamepad.buttons[i].pressed; break;
-						default:
+						var event = new CustomEvent("gamepadButtonDown");
+						event.eventType = event.type;
+						event.button = button;
+						event.which = j;
+						event.gamepad = gamepad;
+						if(gl.onbuttondown)
+							gl.onbuttondown(event);
+						LEvent.trigger(gl,"buttondown",event);
+					}
+					else if( !button.pressed && (old_gamepad && old_gamepad.buttons[j].pressed))
+					{
+						var event = new CustomEvent("gamepadButtonUp");
+						event.eventType = event.type;
+						event.button = button;
+						event.which = j;
+						event.gamepad = gamepad;
+						if(gl.onbuttondown)
+							gl.onbuttondown(event);
+						LEvent.trigger(gl,"buttonup",event);
 					}
 				}
-				gamepad.xbox = xbox;
 			}
+		}
 		this.gamepads = gamepads;
 		return gamepads;
+	}
+
+	function addGamepadXBOXmapping(gamepad)
+	{
+		//xbox controller mapping
+		var xbox = { axes:[], buttons:{}, hat: ""};
+		xbox.axes["lx"] = gamepad.axes[0];
+		xbox.axes["ly"] = gamepad.axes[1];
+		xbox.axes["rx"] = gamepad.axes[2];
+		xbox.axes["ry"] = gamepad.axes[3];
+		xbox.axes["triggers"] = gamepad.axes[4];
+
+		for(var i = 0; i < gamepad.buttons.length; i++)
+		{
+			switch(i) //I use a switch to ensure that a player with another gamepad could play
+			{
+				case 0: xbox.buttons["a"] = gamepad.buttons[i].pressed; break;
+				case 1: xbox.buttons["b"] = gamepad.buttons[i].pressed; break;
+				case 2: xbox.buttons["x"] = gamepad.buttons[i].pressed; break;
+				case 3: xbox.buttons["y"] = gamepad.buttons[i].pressed; break;
+				case 4: xbox.buttons["lb"] = gamepad.buttons[i].pressed; break;
+				case 5: xbox.buttons["rb"] = gamepad.buttons[i].pressed; break;
+				case 6: xbox.buttons["lt"] = gamepad.buttons[i].pressed; break;
+				case 7: xbox.buttons["rt"] = gamepad.buttons[i].pressed; break;
+				case 8: xbox.buttons["back"] = gamepad.buttons[i].pressed; break;
+				case 9: xbox.buttons["start"] = gamepad.buttons[i].pressed; break;
+				case 10: xbox.buttons["ls"] = gamepad.buttons[i].pressed; break;
+				case 11: xbox.buttons["rs"] = gamepad.buttons[i].pressed; break;
+				case 12: if( gamepad.buttons[i].pressed) xbox.hat += "up"; break;
+				case 13: if( gamepad.buttons[i].pressed) xbox.hat += "down"; break;
+				case 14: if( gamepad.buttons[i].pressed) xbox.hat += "left"; break;
+				case 15: if( gamepad.buttons[i].pressed) xbox.hat += "right"; break;
+				case 16: xbox.buttons["home"] = gamepad.buttons[i].pressed; break;
+				default:
+			}
+		}
+		gamepad.xbox = xbox;
 	}
 
 	/**
@@ -6784,6 +7459,7 @@ GL.mapKeyCode = function(code)
 GL.dragging = false;
 GL.last_pos = [0,0];
 
+//adds extra info to the MouseEvent (coordinates in canvas axis, deltas and button state)
 GL.augmentEvent = function(e, root_element)
 {
 	var offset_left = 0;
@@ -6793,27 +7469,25 @@ GL.augmentEvent = function(e, root_element)
 	root_element = root_element || e.target || gl.canvas;
 	b = root_element.getBoundingClientRect();
 		
-	e.mousex = e.pageX - b.left;
-	e.mousey = e.pageY - b.top;
+	e.mousex = e.clientX - b.left;
+	e.mousey = e.clientY - b.top;
 	e.canvasx = e.mousex;
 	e.canvasy = b.height - e.mousey;
 	e.deltax = 0;
 	e.deltay = 0;
 	
-	//console.log("WHICH: ",e.which," BUTTON: ",e.button, e.type);
 	if(e.type == "mousedown")
 	{
 		this.dragging = true;
-		gl.mouse_buttons |= (1 << e.which); //enable
+		gl.mouse.buttons |= (1 << e.which); //enable
 	}
 	else if (e.type == "mousemove")
 	{
 	}
 	else if (e.type == "mouseup")
 	{
-		gl.mouse_buttons = gl.mouse_buttons & ~(1 << e.which);
-		//console.log("BUT:", e.button, "MASK:", gl.mouse_buttons);
-		if(gl.mouse_buttons == 0)
+		gl.mouse.buttons = gl.mouse.buttons & ~(1 << e.which);
+		if(gl.mouse.buttons == 0)
 			this.dragging = false;
 	}
 
@@ -6822,13 +7496,18 @@ GL.augmentEvent = function(e, root_element)
 	this.last_pos[0] = e.mousex;
 	this.last_pos[1] = e.mousey;
 
+	//insert info in event
 	e.dragging = this.dragging;
-	e.buttons_mask = gl.mouse_buttons;			
-
-	e.leftButton = gl.mouse_buttons & (1<<GL.LEFT_MOUSE_BUTTON);
-	e.rightButton = gl.mouse_buttons & (1<<GL.RIGHT_MOUSE_BUTTON);
+	e.buttons_mask = gl.mouse.buttons;
+	e.leftButton = gl.mouse.buttons & (1<<GL.LEFT_MOUSE_BUTTON);
+	e.middleButton = gl.mouse.buttons & (1<<GL.MIDDLE_MOUSE_BUTTON);
+	e.rightButton = gl.mouse.buttons & (1<<GL.RIGHT_MOUSE_BUTTON);
 	e.isButtonPressed = function(num) { return this.buttons_mask & (1<<num); }
 }
+
+/**
+* @namespace 
+*/
 
 /**
 * LEvent is a lightweight events library focused in low memory footprint and fast delivery.
@@ -6838,7 +7517,6 @@ GL.augmentEvent = function(e, root_element)
 */
 
 var LEvent = global.LEvent = GL.LEvent = {
-	//map: new Weakmap(),
 
 	/**
 	* Binds an event to an instance
@@ -6914,7 +7592,7 @@ var LEvent = global.LEvent = GL.LEvent = {
 	* @param {Object} instance where the events are binded
 	* @param {Object} target_instance [Optional] target_instance of the events to remove
 	**/
-	unbindAll: function( instance, target_instance )
+	unbindAll: function( instance, target_instance, callback )
 	{
 		if(!instance) 
 			throw("cannot unbind events in null");
@@ -6936,13 +7614,11 @@ var LEvent = global.LEvent = GL.LEvent = {
 			var array = events[i];
 			for(var j = array.length - 1; j >= 0; --j) //iterate backwards to avoid problems after removing
 			{
-				if( array[j][1] != target_instance ) 
+				if( array[j][1] != target_instance || (callback && callback !== array[j][0]) ) 
 					continue;
+
 				array.splice(j,1);//remove
 			}
-
-			//if(array.length == 0) //add two passes to avoid read and delete
-			//	delete events[i];
 		}
 	},
 
@@ -7024,14 +7700,17 @@ var LEvent = global.LEvent = GL.LEvent = {
 		var events = instance.__levents;
 
 		//no events binded
-		if(!events || !events.hasOwnProperty( event_type ) || !events[event_type].length) 
+		if(!events) 
 			return false;
 
-		var binds = events[event_type];
-		for(var i = 0; i < binds.length; ++i)
+		for(var j in events)
 		{
-			if(binds[i][1] == target) //one found
-				return true;
+			var binds = events[j];
+			for(var i = 0; i < binds.length; ++i)
+			{
+				if(binds[i][1] === target) //one found
+					return true;
+			}
 		}
 
 		return false;
@@ -7096,182 +7775,82 @@ var LEvent = global.LEvent = GL.LEvent = {
 		}
 
 		return true;
-	}
-};
-
-// NOT FINISHED, STILL HAS SOME ISSUES TO SOLVE, TEST OR DELETE
-//There is a secondary implementation using WeakMap, this implementation clears the events from the objects
-//and moves them to one global object, so objects are not constantly changing, but I must test performance.
-/*
-if(global.WeakMap && 0)
-{
-	(function(){
-
-	//local scope
-	var map = new WeakMap;
-
-	LEvent.bind = function( instance, event_type, callback, target_instance )
-	{
-		if(!instance) 
-			throw("cannot bind event to null");
-		if(!callback) 
-			throw("cannot bind to null callback");
-		if(instance.constructor === String ) 
-			throw("cannot bind event to a string");
-		var name = event_type;
-
-		var obj = map[instance];
-		if(!obj)
-			obj = map[instance] = {};
-
-		if(obj.hasOwnProperty(name))
-			obj[name].push([callback,target_instance]);
-		else
-			obj[name] = [[callback,target_instance]];
-	}
-
-	LEvent.unbind = function( instance, event_type, callback, target_instance )
-	{
-		if(!instance) 
-			throw("cannot unbind event to null");
-		if(!callback) 
-			throw("cannot unbind from null callback");
-		if(instance.constructor === String ) 
-			throw("cannot bind event to a string");
-
-		var obj = map[instance];
-		if(!obj)
-			return;
-
-		var name = event_type;
-		if(!obj[name]) 
-			return;
-
-		for(var i = 0, l = obj[name].length; i < l; ++i)
-		{
-			var v = obj[name][i];
-			if(v[0] === callback && v[1] === target_instance)
-			{
-				obj[name].splice( i, 1);
-				break;
-			}
-		}
-
-		if (obj[name].length == 0)
-			delete obj[name];
 	},
 
-	LEvent.unbindAll = function(instance, target_instance)
+	extendObject: function( object )
 	{
-		if(!instance) 
-			throw("cannot unbind events in null");
-		if(!target_instance) //remove all
-		{
-			map.delete(instance);
-			return;
-		}
-
-		//remove only the target_instance
-		//for every property in the instance
-		var obj = map[instance];
-		if(!obj)
-			return;
-
-		for(var i in obj)
-		{
-			var array = obj[i];
-			for(var j=0; j < array.length; ++j)
+		object.on = function( event_type, callback, instance ){
+			if(!callback) 
+				throw("cannot bind to null callback");
+			var events = this.__levents;
+			if(!this)
 			{
-				if( array[j][1] != target_instance ) 
-					continue;
-				array.splice(j,1);//remove
-				--j;//iterate from the gap
+				Object.defineProperty( this, "__levents", {value: {}, enumerable: false });
+				events = this.__levents;
 			}
 
-			if(array.length == 0)
-				delete obj[i];
-		}
-	}
+			if( events.hasOwnProperty( event_type ) )
+				events[event_type].push([callback,instance]);
+			else
+				events[event_type] = [[callback,instance]];
+		};
 
-	LEvent.isBind = function( instance, event_type, callback, target_instance )
-	{
-		var name = event_type;
-		var obj = map[instance];
-		if(!obj || !obj.hasOwnProperty(name)) 
-			return false;
-		for(var i = 0, l = obj[name].length; i < l; ++i)
-		{
-			var v = obj[name][i];
-			if(v[0] === callback && v[1] === target_instance)
+		object.trigger = function( event_type, params ){
+			var events = this.__levents;
+			if( !events || !events.hasOwnProperty(event_type) )
 				return true;
-		}
-		return false;
-	}
 
-	LEvent.trigger = function( instance, event_type, params, skip_jquery )
-	{
-		if(!instance) 
-			throw("cannot trigger event from null");
-		if(instance.constructor === String ) 
-			throw("cannot bind event to a string");
-
-		
-
-		//you can resend the events as jQuery events, but to avoid collisions with system events, we use ":" at the begining
-		if(LEvent.jQuery && !skip_jquery)
-			$(instance).trigger( ":" + event_type, params );
-
-		var name = event_type;
-
-		var obj = map[instance];
-
-		if(!obj.hasOwnProperty(name)) 
-			return;
-		var inst = obj[name];
-		for(var i = 0, l = inst.length; i < l; ++i)
-		{
-			var v = inst[i];
-			if( v[0].call(v[1], event_type, params) == false)// || event.stop)
-				break; //stopPropagation
-		}
-	}
-
-	LEvent.triggerArray = function( instances, event_type, params, skip_jquery )
-	{
-		for(var i = 0, l = instances.length; i < l; ++i)
-		{
-			var instance = instances[i];
-			if(!instance) 
-				throw("cannot trigger event from null");
-			if(instance.constructor === String ) 
-				throw("cannot bind event to a string");
-
-			var obj = map[instance];
-
-			//you can resend the events as jQuery events, but to avoid collisions with system events, we use ":" at the begining
-			if(LEvent.jQuery && !skip_jquery) 
-				$(instance).trigger( ":" + event_type, params );
-
-			var name = event_type;
-			if(!obj.hasOwnProperty(name)) 
-				continue;
-			for(var j = 0, l = obj[name].length; j < l; ++j)
+			var inst = events[event_type];
+			for(var i = 0, l = inst.length; i < l; ++i)
 			{
-				var v = obj[name][j];
-				if( v[0].call(v[1], event_type, params) == false)// || event.stop)
-					break; //stopPropagation
+				var v = inst[i];
+				if( v && v[0].call(v[1], event_type, params) == false)// || event.stop)
+					return false; //stopPropagation
 			}
+			return true;
+		};
+
+		object.unbind = function( event_type, callback, target_instance )
+		{
+			if(!callback) 
+				throw("cannot unbind from null callback");
+			var events = this.__levents;
+			if(!events)
+				return;
+
+			if(!events.hasOwnProperty( event_type ))
+				return;
+
+			for(var i = 0, l = events[event_type].length; i < l; ++i)
+			{
+				var v = events[event_type][i];
+				if(v[0] === callback && v[1] === target_instance)
+				{
+					events[event_type].splice( i, 1 );
+					break;
+				}
+			}
+
+			if (events[event_type].length == 0)
+				delete events[event_type];
 		}
+	},
+
+	extendClass: function( constructor )
+	{
+		this.extendObject( constructor.prototype );
 	}
 
-
-	})(); //local scope end
-}
-*/
+};
 /* geometric utilities */
 global.CLIP_INSIDE = GL.CLIP_INSIDE = 0;
 global.CLIP_OUTSIDE = GL.CLIP_OUTSIDE = 1;
 global.CLIP_OVERLAP = GL.CLIP_OVERLAP = 2;
+
+/**
+* @namespace
+*/
+
 
 /**
 * Computational geometry algorithms, is a static class
@@ -8154,12 +8733,33 @@ global.BBox = GL.BBox = {
 
 	merge: function( out, a, b )
 	{
-		out = out || BBox.create();
 		var min = out.subarray(6,9);
 		var max = out.subarray(9,12);
 		vec3.min( min, a.subarray(6,9), b.subarray(6,9) );
 		vec3.max( max, a.subarray(9,12), b.subarray(9,12) );
 		return BBox.setMinMax( out, min, max );
+	},
+
+	extendToPoint: function( out, p )
+	{
+		if( p[0] < out[6] )	out[6] = p[0];
+		else if( p[0] > out[9] ) out[9] = p[0];
+
+		if( p[1] < out[7] )	out[7] = p[1];
+		else if( p[1] > out[10] ) out[10] = p[1];
+
+
+		if( p[2] < out[8] )	out[8] = p[2];
+		else if( p[2] > out[11] ) out[11] = p[2];
+
+		//recompute 
+		var min = out.subarray(6,9);
+		var max = out.subarray(9,12);
+		var center = vec3.add( out.subarray(0,3), min, max );
+		vec3.scale( center, center, 0.5);
+		vec3.subtract( out.subarray(3,6), max, center );
+		out[12] = vec3.length( out.subarray(3,6) ); //radius		
+		return out;
 	},
 
 	getCenter: function(bb) { return bb.subarray(0,3); },
@@ -8195,6 +8795,10 @@ global.planeBoxOverlap = GL.planeBoxOverlap = function planeBoxOverlap(plane, bo
 	else if (distance <= radius) return CLIP_OVERLAP;
 	else return CLIP_INSIDE;
 }
+
+/**
+* @namespace GL
+*/
 
 /**
 *   Octree generator for fast ray triangle collision with meshes
@@ -8262,7 +8866,6 @@ Octree.prototype.buildFromMesh = function(mesh)
 						vertices[triangles[i+1]*3], vertices[triangles[i+1]*3+1],vertices[triangles[i+1]*3+2],
 						vertices[triangles[i+2]*3], vertices[triangles[i+2]*3+1],vertices[triangles[i+2]*3+2]]);
 			this.addToNode(face,root,0);
-			//if(i%3000 == 0) trace("Tris: " + i);
 		}
 	}
 	else
@@ -8271,7 +8874,6 @@ Octree.prototype.buildFromMesh = function(mesh)
 		{
 			var face = new Float32Array( vertices.subarray(i,i+9) );
 			this.addToNode(face,root,0);
-			//if(i%3000 == 0) trace("Tris: " + i);
 		}
 	}
 
@@ -8299,7 +8901,8 @@ Octree.prototype.addToNode = function(face,node, depth)
 		}
 		if(!added)
 		{
-			if(node.faces == null) node.faces = [];
+			if(node.faces == null)
+				node.faces = [];
 			node.faces.push(face);
 		}
 	}
@@ -8336,7 +8939,8 @@ Octree.prototype.addToNode = function(face,node, depth)
 				}
 				if (!added)
 				{
-					if(node.faces == null) node.faces = [];
+					if(node.faces == null)
+						node.faces = [];
 					node.faces.push(face);
 				}
 			}
@@ -8807,38 +9411,55 @@ HitTest.prototype = {
 //       tracer.eye, ray, new GL.Vector(0, 0, 0), 1);
 
 global.Raytracer = GL.Raytracer = function Raytracer( viewprojection_matrix, viewport ) {
+	this.viewport = vec4.create();
+	this.ray00 = vec3.create();
+	this.ray10 = vec3.create();
+	this.ray01 = vec3.create();
+	this.ray11 = vec3.create();
+	this.eye = vec3.create();
+	this.setup( viewprojection_matrix, viewport );
+}
 
-  viewport = viewport || gl.getViewport(); //gl.getParameter(gl.VIEWPORT);
-  this.viewport = viewport;
+Raytracer.prototype.setup = function( viewprojection_matrix, viewport )
+{
+	viewport = viewport || gl.viewport_data;
+	this.viewport.set( viewport );
 
-  var minX = viewport[0], maxX = minX + viewport[2];
-  var minY = viewport[1], maxY = minY + viewport[3];
-  this.ray00 = vec3.unproject( vec3.create(), vec3.fromValues(minX, minY, 1), viewprojection_matrix, viewport);
-  this.ray10 = vec3.unproject( vec3.create(), vec3.fromValues(maxX, minY, 1), viewprojection_matrix, viewport);
-  this.ray01 = vec3.unproject( vec3.create(), vec3.fromValues(minX, maxY, 1), viewprojection_matrix, viewport);
-  this.ray11 = vec3.unproject( vec3.create(), vec3.fromValues(maxX, maxY, 1), viewprojection_matrix, viewport);
+	var minX = viewport[0], maxX = minX + viewport[2];
+	var minY = viewport[1], maxY = minY + viewport[3];
 
-  this.eye = vec3.create();
-  var eye = this.eye;
-  vec3.unproject(eye, eye, viewprojection_matrix, viewport);
-
-  vec3.subtract(this.ray00, this.ray00, eye);
-  vec3.subtract(this.ray10, this.ray10, eye);
-  vec3.subtract(this.ray01, this.ray01, eye);
-  vec3.subtract(this.ray11, this.ray11, eye);
+	vec3.set( this.ray00, minX, minY, 1 );
+	vec3.set( this.ray10, maxX, minY, 1 );
+	vec3.set( this.ray01, minX, maxY, 1 );
+	vec3.set( this.ray11, maxX, maxY, 1 );
+	vec3.unproject( this.ray00, this.ray00, viewprojection_matrix, viewport);
+	vec3.unproject( this.ray10, this.ray10, viewprojection_matrix, viewport);
+	vec3.unproject( this.ray01, this.ray01, viewprojection_matrix, viewport);
+	vec3.unproject( this.ray11, this.ray11, viewprojection_matrix, viewport);
+	var eye = this.eye;
+	vec3.unproject(eye, eye, viewprojection_matrix, viewport);
+	vec3.subtract(this.ray00, this.ray00, eye);
+	vec3.subtract(this.ray10, this.ray10, eye);
+	vec3.subtract(this.ray01, this.ray01, eye);
+	vec3.subtract(this.ray11, this.ray11, eye);
 }
 
   // ### .getRayForPixel(x, y)
   // 
   // Returns the ray originating from the camera and traveling through the pixel `x, y`.
-Raytracer.prototype.getRayForPixel = function(x, y) {
-    x = (x - this.viewport[0]) / this.viewport[2];
-    y = 1 - (y - this.viewport[1]) / this.viewport[3];
-    var ray0 = vec3.lerp(vec3.create(), this.ray00, this.ray10, x);
-    var ray1 = vec3.lerp(vec3.create(), this.ray01, this.ray11, x);
-    return vec3.normalize( vec3.create(), vec3.lerp(vec3.create(), ray0, ray1, y) );
-}
-
+Raytracer.prototype.getRayForPixel = (function(){ 
+	var ray0 = vec3.create();
+	var ray1 = vec3.create();
+	return function(x, y, out) {
+		out = out || vec3.create();
+		x = (x - this.viewport[0]) / this.viewport[2];
+		y = 1 - (y - this.viewport[1]) / this.viewport[3];
+		vec3.lerp(ray0, this.ray00, this.ray10, x);
+		vec3.lerp(ray1, this.ray01, this.ray11, x);
+		vec3.lerp( out, ray0, ray1, y)
+		return vec3.normalize( out, out );
+	}
+})();
 
 // ### GL.Raytracer.hitTestBox(origin, ray, min, max)
 // 
