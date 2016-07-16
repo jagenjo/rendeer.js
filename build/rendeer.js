@@ -111,17 +111,6 @@ SceneNode.prototype._ctor = function()
 	this._global_matrix = mat4.create(); //in global space
 	this._must_update_matrix = false;
 
-	//observer to catch changes made directly to the values
-	/*
-	if(Object.observe)
-	{
-		var inner_transform_change = (function(c) { this._must_update_matrix = true; }).bind(this);
-		Object.observe( this._position, inner_transform_change );
-		Object.observe( this._rotation, inner_transform_change );
-		Object.observe( this._scale, inner_transform_change );
-	}
-	//*/
-
 	//rendering priority (order)
 	this.render_priority = RD.PRIORITY_OPAQUE;
 
@@ -130,6 +119,10 @@ SceneNode.prototype._ctor = function()
 	this.layers = 0xFF;
 	this._color = vec4.fromValues(1,1,1,1);
 	this._uniforms = { u_color: this._color, u_color_texture: 0 };
+
+	//overwrite callbacks
+	this.onRender = null;
+	this.onShaderUniforms = null;
 
 	//assets
 	this.shader = null;
@@ -288,13 +281,24 @@ Object.defineProperty(SceneNode.prototype, 'opacity', {
 });
 
 /**
+* This assigns the texture to the color channel ( the same as setTexture("color", tex) )
+* @property texture {String}
+* @default null
+*/
+Object.defineProperty( SceneNode.prototype, 'texture', {
+	get: function() { return this.textures["color"]; },
+	set: function(v) { this.textures["color"] = v; },
+	enumerable: false //it will be shown in textures anyway
+});
+
+/**
 * The scene where this node is attached
 * @property scene {Scene}
 */
 Object.defineProperty(SceneNode.prototype, 'scene', {
 	get: function() { return this._scene; },
 	set: function(v) { throw("cannot set scene, you must use addChild in its parent node"); },
-	enumerable: true //avoid problems
+	enumerable: false //this cannot be serialized
 });
 
 
@@ -531,16 +535,6 @@ SceneNode.prototype.setTexture = function(channel, texture)
 	else if( typeof(texture) == "string" )
 		this.textures[ channel ] = texture;
 }
-
-/**
-* name of texture to use in the color channel (the same as SetTexture("color", name ))
-* @property texture {string}
-*/
-Object.defineProperty(SceneNode.prototype, 'texture', {
-	get: function() { return this.textures["color"]; },
-	set: function(v) { this.textures["color"] = v; },
-	enumerable: true
-});
 
 /**
 * clears position, rotation and scale
@@ -1611,7 +1605,7 @@ Scene.prototype.getNodeById = function(id)
 Scene.prototype.update = function(dt)
 {
 	this.time += dt;
-	this.root.propagate("update",[dt]);
+	this._root.propagate("update",[dt]);
 
 	//destroy entities marked
 	if(this._to_destroy.length)
@@ -1670,7 +1664,8 @@ function Renderer( context, options )
 		u_view: this._view_matrix,
 		u_viewprojection: this._viewprojection_matrix,
 		u_model: this._model_matrix,
-		u_mvp: this._mvp_matrix
+		u_mvp: this._mvp_matrix,
+		u_global_alpha_clip: 0.0
 	};
 	
 	//set some default stuff
@@ -1795,7 +1790,7 @@ Renderer.prototype.render = function(scene, camera, nodes, layers )
 	//find which nodes should we render
 	this._nodes.length = 0;
 	if(!nodes)
-		scene.root.getVisibleChildren( this._nodes, layers );
+		scene._root.getVisibleChildren( this._nodes, layers );
 	nodes = nodes || this._nodes;
 
 	if(nodes.length)
@@ -1820,8 +1815,8 @@ Renderer.prototype.render = function(scene, camera, nodes, layers )
 			nodes.sort( RD.Renderer._sort_by_dist_func );
 		
 		//pre rendering
-		if(scene.root.preRender)
-			scene.root.preRender(this,camera);
+		if(scene._root.preRender)
+			scene._root.preRender(this,camera);
 		for (var i = 0; i < nodes.length; ++i)
 		{
 			var node = nodes[i];
@@ -1852,8 +1847,8 @@ Renderer.prototype.render = function(scene, camera, nodes, layers )
 		}
 		
 		//post rendering
-		if(scene.root.postRender)
-			scene.root.postRender(this,camera);
+		if(scene._root.postRender)
+			scene._root.postRender(this,camera);
 		for (var i = 0; i < nodes.length; ++i)
 		{
 			var node = nodes[i];
@@ -1940,25 +1935,7 @@ Renderer.prototype.renderNode = function(node, camera)
 			node.onRender(this, camera, shader);
 		return;
 	}
-	
-	//get texture
-	var slot = 0;
-	var texture = null;
-	for(var i in node.textures)
-	{
-		var texture_name = node.textures[i];
-		if(!texture_name)
-			continue;
-		texture = gl.textures[ texture_name ];
-		if(!texture)
-		{
-			if(this.autoload_assets && texture_name.indexOf(".") != -1)
-				this.loadTexture( texture_name, this.default_texture_settings );
-			texture = gl.textures[ "white" ];
-		}
-		node._uniforms["u_" + i + "_texture"] = texture.bind( slot++ );
-	}
-	
+
 	//get shader
 	var shader = null;
 	var shader_name = node.shader;
@@ -1969,8 +1946,31 @@ Renderer.prototype.renderNode = function(node, camera)
 	if(this.shader_overwrite)
 		shader = gl.shaders[this.shader_overwrite];
 	if (!shader)
-		shader = slot > 0 ? this._texture_shader : this._flat_shader;
-		
+		shader = node.textures.color ? this._texture_shader : this._flat_shader;
+	
+	//get texture
+	var slot = 0;
+	var texture = null;
+	for(var i in node.textures)
+	{
+		var texture_name = node.textures[i];
+		if(!texture_name)
+			continue;
+		var texture_uniform_name = "u_" + i + "_texture";
+
+		if(shader && !shader.samplers[texture_uniform_name]) //texture not used in shader
+			continue; //do not bind it
+
+		texture = gl.textures[ texture_name ];
+		if(!texture)
+		{
+			if(this.autoload_assets && texture_name.indexOf(".") != -1)
+				this.loadTexture( texture_name, this.default_texture_settings );
+			texture = gl.textures[ "white" ];
+		}
+		node._uniforms[texture_uniform_name] = texture.bind( slot++ );
+	}
+
 	//flags
 	if(!this.ignore_flags)
 	{
@@ -1986,17 +1986,17 @@ Renderer.prototype.renderNode = function(node, camera)
 			gl.enable( gl.BLEND );
 			gl.blendFunc( gl.SRC_ALPHA, node.blend_mode === RD.BLEND_ADD ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA );
 		}
+		else
+			gl.blendFunc( gl.SRC_ALPHA, node.blend_mode === RD.BLEND_ADD ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA );
 	}
-	else
-		gl.blendFunc( gl.SRC_ALPHA, node.blend_mode === RD.BLEND_ADD ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA );
 	
 	if(node.onRender)
 		node.onRender(this, camera, shader);
 	
-	shader.uniforms( this._uniforms );
-	shader.uniforms( node._uniforms );
+	shader.uniforms( this._uniforms ); //globals
+	shader.uniforms( node._uniforms ); //node specifics
 
-	if(node.onShaderUniforms)
+	if(node.onShaderUniforms) //in case the node wants to add extra shader uniforms that need to be computed at render time
 		node.onShaderUniforms(this, shader);
 	
 	if(node.draw_range)
@@ -3234,9 +3234,13 @@ Renderer.prototype.createShaders = function()
 		precision highp float;\
 		varying vec2 v_coord;\
 		uniform vec4 u_color;\
+		uniform float u_global_alpha_clip;\
 		uniform sampler2D u_color_texture;\
 		void main() {\
-			gl_FragColor = u_color * texture2D(u_color_texture, v_coord);\
+			vec4 color = u_color * texture2D(u_color_texture, v_coord);\
+			if(color.w < u_global_alpha_clip)\
+				discard;\
+			gl_FragColor = color;\
 		}\
 	');
 	gl.shaders["texture_transform"] = this._texture_transform_shader;
