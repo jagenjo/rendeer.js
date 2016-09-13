@@ -35,7 +35,7 @@ Rendeers requires that you pass an existing WebGL Context when creating the rend
 To create the GL context follow the LiteGL.js guide, but here is an example:
 
 ```javascript
-var context = GL.create({width:800,height:600});
+var gl = GL.create({width:800,height:600});
 document.body.appendChild( gl.canvas );
 ```
 
