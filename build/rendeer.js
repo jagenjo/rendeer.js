@@ -295,7 +295,7 @@ Object.defineProperty( SceneNode.prototype, 'texture', {
 * The scene where this node is attached
 * @property scene {Scene}
 */
-Object.defineProperty(SceneNode.prototype, 'scene', {
+Object.defineProperty( SceneNode.prototype, 'scene', {
 	get: function() { return this._scene; },
 	set: function(v) { throw("cannot set scene, you must use addChild in its parent node"); },
 	enumerable: false //this cannot be serialized

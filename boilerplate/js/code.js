@@ -17,7 +17,7 @@ function init()
 	renderer.setDataFolder("data");
 
 	//create mesh
-	renderer.meshes["sphere"] = GL.Mesh.sphere({subdivisions:64});
+	renderer.meshes["sphere"] = GL.Mesh.icosahedron({subdivisions:5});
 	
 	//create camera
 	var camera = new RD.Camera();
