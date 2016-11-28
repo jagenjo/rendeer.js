@@ -36,7 +36,7 @@ To create the GL context follow the LiteGL.js guide, but here is an example:
 
 ```javascript
 var context = GL.create({width:800,height:600});
-document.body.appendChild( renderer.canvas );
+document.body.appendChild( context.canvas );
 ```
 
 You can also pass an existing HTMLCanvas element instead of the size, or any parameter from WebGL like alpha or stencil flags.
@@ -74,9 +74,14 @@ scene.root.addChild( node );
 We use SceneNodes to render meshes on the screen, so the three main properties to keep in mind are ```node.mesh```, ```node.shader``` and ```node.textures```.
 All three store strings, although textures is an object where you can store different textures for different channels (color, specular, etc).
 
-The strings are the name of the assets that will be fetched when rendering, those assets must be stored in the Renderer's containers (meshes, shaders and textures), which are the sames in the gl context (you can use them indistinguishable).
+```javascript
+node.mesh = "mymesh.obj";
+node.texture = "mytexture.png";
+```
 
-But user is in charge of loading the assets manually, Rendeer does not perform loading automatically, so add your resources to those containers before using them.
+The strings are the name of the assets that will be fetched when rendering. These assets must be stored in the RD.Renderer's containers (```renderer.meshes(```, ```renderer.shaders``` and ```renderer.textures```), which are the sames in the gl context (you can use them indistinguishable).
+
+But user is in charge of loading the assets manually, Rendeer does not perform loading automatically unless you set the ```renderer.autoload_assets = true;```, so add your resources to those containers before using them.
 
 ### The SceneNode transformations
 
@@ -145,16 +150,18 @@ By default resources like textures and meshes will be loaded automatically (you 
 To add a texture you must use the LiteGL functions manually and store the result in renderer.textures or call the renderer method loadTexture;
 
 ```javascript
-renderer.loadTexture( "data/sky.jpg", {name: "sky"}, callback );
+renderer.loadTexture( "data/sky.png", {name: "sky"}, callback );
 ```
 
 The same with loadMesh:
 
 ```javascript
-renderer.loadMesh( "data/sky.obj", callback );
+renderer.loadMesh( "data/sky.obj", callback ); //callback in case we want to execute  a function when the mesh is loaded
 ```
 
 ### The shaders
+
+Rendeer only comes with a very basic flat shader, if you want to use more interesting shaders you must code them by yourself using the shaders system.
 
 When creating a shader here are some considerations:
 
