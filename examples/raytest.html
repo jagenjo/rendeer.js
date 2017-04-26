@@ -10,7 +10,7 @@
 	</style>
 	<script type="text/javascript" src="../external/gl-matrix-min.js"></script>
 	<script type="text/javascript" src="../external/litegl.js"></script>
-	<script type="text/javascript" src="../build/rendeer.js"></script>
+	<script type="text/javascript" src="../src/rendeer.js"></script>
 	<script type="text/javascript">
 	
 	function init()
@@ -19,31 +19,33 @@
 		var scene = new RD.Scene();
 
 		//create the rendering context
-		var context = GL.create({width: window.innerWidth, height:window.innerHeight});
+		var context = GL.create({ width: window.innerWidth, height:window.innerHeight });
 		var renderer = new RD.Renderer( context );
-		document.body.appendChild(renderer.canvas); //attach
+		document.body.appendChild( renderer.canvas ); //attach
 
 		//create camera
 		var camera = new RD.Camera();
 		camera.perspective( 45, gl.canvas.width / gl.canvas.height, 1, 1000 );
-		camera.lookAt( [0,200,300],[0,100,0],[0,1,0] );
+		camera.lookAt( [0,300,400],[0,100,0],[0,1,0] );
 
 		//create a node
-		var man = new RD.SceneNode();
-		man.color = [1,0,0,1];
-		man.mesh = "data/man.obj";
-		man.shader = "phong";
-
-		//inner update
-		man.update = function(dt) { 
-			this.rotate(dt * 0.1,RD.UP);
-			this.color[0] = 1.0;
-			this.color[1] = Math.sin( getTime() * 0.001 );
-			this.color[2] = 1.0 - this.color[1];
+		for(var i = 0 ; i < 100; ++i )
+		{
+			var man = new RD.SceneNode();
+			man.color = [1,1,1,1];
+			man.mesh = "data/man.obj";
+			man.shader = "phong";
+			man.x = Math.random() * 400 - 200;
+			man.z = Math.random() * 400 - 200;
+			scene.root.addChild(man);
 		}
 
-		scene.root.addChild(man);
-
+		var ball = new RD.SceneNode();
+		ball.color = [1,0,0,1];
+		ball.mesh = "sphere";
+		ball.layers = 0x4;
+		ball.flags.ignore_collisions = true;
+		scene.root.addChild(ball);
 
 		//global settings
 		var bg_color = vec4.fromValues(0.2,0.3,0.4,1);
@@ -60,18 +62,25 @@
 			renderer.clear(bg_color);
 			renderer.render(scene, camera);
 			scene.update(dt);
+
+			camera.lookAt( [Math.cos(getTime() * 0.0001 )*400,300,Math.sin(getTime()* 0.0001 )*400],[0,100,0],[0,1,0] );
 		}
 
 		//input
 		renderer.context.captureMouse();
 		renderer.context.onmousemove = function(e)
 		{
-			var node = scene.testRay( camera.getRay( e.canvasx, canvasy ), result );
+			var result = vec3.create();
+			var ray = camera.getRay( e.canvasx, e.canvasy );
+			var before = getTime();
+			var node = scene.testRay( ray, result, undefined, 0x1, true );
 			if(node)
 			{
-				//TODO
-				console.log(node);
+				ball.position = result;
+				node.color = [Math.random(),Math.random(),Math.random(),1];
 			}
+			var after = getTime();
+			console.log( "Test time:", ((after - before)).toFixed(0), "ms", RD.Scene._ray_tested_objects, "objects" );
 		}
 	}
 
