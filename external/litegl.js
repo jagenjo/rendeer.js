@@ -9088,13 +9088,13 @@ global.geo = {
 	var origin2 = vec3.create();
 	return function( origin, direction, box, model, result, max_dist, in_local )
 	{
-		if(!start || !direction || !box)
+		if(!origin || !direction || !box)
 			throw("parameters missing");
 		if(model)
 		{
 			mat4.invert( inv, model );
 			vec3.add( end, origin, direction );
-			start = vec3.transformMat4( origin2, origin, inv);
+			origin = vec3.transformMat4( origin2, origin, inv);
 			vec3.transformMat4( end, end, inv );
 			vec3.sub( end, end, origin );
 			direction = vec3.normalize( end, end );
