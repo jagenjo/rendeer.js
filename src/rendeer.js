@@ -122,6 +122,7 @@ SceneNode.prototype._ctor = function()
 	this._color = vec4.fromValues(1,1,1,1);
 	this._uniforms = { u_color: this._color, u_color_texture: 0 };
 	this.primitive = GL.TRIANGLES;
+	this.draw_range = null;
 
 	//overwrite callbacks
 	this.onRender = null;
@@ -1011,15 +1012,17 @@ SceneNode.prototype.loadTextConfig = function(url, callback)
 * calls to be removed from the scene
 * @method destroy
 */
-SceneNode.prototype.destroy = function()
+SceneNode.prototype.destroy = function( force )
 {
-	if(!this.scene)
+	//in case this node doesnt belong to a scene, we just remove it from its parent
+	if(!this.scene || force)
 	{
 		if(this._parent)
 			this._parent.removeChild(this);
 		return;
 	}
 
+	//deferred: otherwise we put it pending to destroy
 	this.scene._to_destroy.push(this);
 }
 
@@ -1151,14 +1154,20 @@ SceneNode.prototype.testRayWithMesh = (function(){
 SceneNode.prototype.setRangeFromSubmesh = function( submesh_id )
 {
 	if(submesh_id === undefined || !this.mesh)
-		return false;
+	{
+		this.draw_range = null;
+		return;
+	}
 		
 	var mesh = gl.meshes[ this.mesh ];
 	if(!mesh || !mesh.info || !mesh.info.groups)
-		return false;
+	{
+		console.warn("you cannot set the submesh_id while the mesh is not yet loaded");
+		return;
+	}
 
 	//allows to search by string or index
-	if(submesh_id.constructor === String)
+	if( submesh_id.constructor === String )
 	{
 		for(var i = 0; i < mesh.info.groups.length; ++i)
 		{
@@ -1176,7 +1185,7 @@ SceneNode.prototype.setRangeFromSubmesh = function( submesh_id )
 
 	var submesh = mesh.info.groups[ submesh_id ];
 	if(!submesh)
-		return false;
+		return;
 
 	this.draw_range[0] = submesh.start;
 	this.draw_range[1] = submesh.length;
@@ -1199,7 +1208,7 @@ Sprite.prototype._ctor = function()
 	SceneNode.prototype._ctor.call(this);
 
 	this.mesh = "plane";
-	this.size = vec2.fromValues(-1,-1);
+	this.size = vec2.fromValues(1,1);
 	this.blend_mode = RD.BLEND_ALPHA;
 	this.flags.two_sided = true;
 	this.flags.depth_test = false;
@@ -1398,16 +1407,20 @@ Scene.prototype.update = function(dt)
 {
 	this.time += dt;
 	this._root.propagate("update",[dt]);
+	this.destroyPendingNodes();
+}
 
+Scene.prototype.destroyPendingNodes = function(dt)
+{
 	//destroy entities marked
-	if(this._to_destroy.length)
+	if(!this._to_destroy.length)
+		return;
+
+	var n = null;
+	while( n = this._to_destroy.pop() )
 	{
-		var n = null;
-		while( n = this._to_destroy.pop() )
-		{
-			if(n._parent)
-				n._parent.removeChild(n);
-		}
+		if(n._parent)
+			n._parent.removeChild(n);
 	}
 }
 
@@ -1435,6 +1448,8 @@ Scene.prototype.testRay = function( ray, result, max_dist, layers, test_against_
 {
 	layers = layers === undefined ? 0xFF : layers;
 	Scene._ray_tested_objects = 0;
+	if(!result)
+		result = temp_vec3;
 
 	//TODO
 	//broad phase

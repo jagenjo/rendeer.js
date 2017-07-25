@@ -92,6 +92,8 @@ var temp_quat = quat.create();
 */
 function SceneNode( o )
 {
+	if(this.constructor !== RD.SceneNode)
+		throw("You must use new to create RD.SceneNode");
 	this._ctor();
 	if(o)
 		this.configure( o );
@@ -120,6 +122,8 @@ SceneNode.prototype._ctor = function()
 	this.layers = 0x3; //first two layers
 	this._color = vec4.fromValues(1,1,1,1);
 	this._uniforms = { u_color: this._color, u_color_texture: 0 };
+	this.primitive = GL.TRIANGLES;
+	this.draw_range = null;
 
 	//overwrite callbacks
 	this.onRender = null;
@@ -217,6 +221,37 @@ Object.defineProperty(SceneNode.prototype, 'position', {
 	set: function(v) { this._position.set(v); this._must_update_matrix = true; },
 	enumerable: true
 });
+
+/**
+* The x position component relative to its parent
+* @property x {number}
+*/
+Object.defineProperty(SceneNode.prototype, 'x', {
+	get: function() { return this._position[0]; },
+	set: function(v) { this._position[0] = v; this._must_update_matrix = true; },
+	enumerable: true
+});
+
+/**
+* The y position component relative to its parent
+* @property y {number}
+*/
+Object.defineProperty(SceneNode.prototype, 'y', {
+	get: function() { return this._position[1]; },
+	set: function(v) { this._position[1] = v; this._must_update_matrix = true; },
+	enumerable: true
+});
+
+/**
+* The z position component relative to its parent
+* @property z {number}
+*/
+Object.defineProperty(SceneNode.prototype, 'z', {
+	get: function() { return this._position[2]; },
+	set: function(v) { this._position[2] = v; this._must_update_matrix = true; },
+	enumerable: true
+});
+
 
 /**
 * The orientation relative to its parent in quaternion format
@@ -486,25 +521,33 @@ SceneNode.prototype.serialize = function()
 */
 SceneNode.prototype.configure = function(o)
 {
+	var parent = null;
+
 	//copy to attributes
 	for(var i in o)
 	{
-		if(i === "children") //special case
-			continue;
-		if(i === "uniforms") //special case
+		switch( i )
 		{
-			for(var j in o.uniforms)
-				this.uniforms[j] = o.uniforms[j];
-			continue;
-		}
-		if(i === "texture")
-		{
-			this[i] = o[i];
-			continue;
-		}
+			case "children": //special case
+				continue;
+			case "uniforms": //special case
+				for(var j in o.uniforms)
+					this.uniforms[j] = o.uniforms[j];
+				continue;
+			case "texture":
+				this[i] = o[i];
+				continue;
+			case "scale":
+			case "scaling":
+				this.scale(o[i]);
+				continue;
+			case "parent":
+				parent = o[i];
+				continue;
+		};
 
+		//default
 		var v = this[i];
-
 		if(v === undefined)
 			continue;
 
@@ -523,6 +566,14 @@ SceneNode.prototype.configure = function(o)
 	{
 		for(var i = 0; i < o.children.length; ++i)
 			console.warn("configure children: feature not implemented");		
+	}
+
+	if(parent)
+	{
+		if(this.parentNode)
+			console.error("This node already has a parent");
+		else
+			parent.addChild( this );
 	}
 }
 
@@ -626,6 +677,8 @@ SceneNode.prototype.setPivot = function(pivot)
 
 SceneNode.prototype.orbit = function(angle, axis, pivot)
 {
+	if(!axis)
+		throw("RD: orbit axis missing");
 	var R = quat.setAxisAngle( temp_quat, axis, angle );
 
 	//TODO
@@ -960,34 +1013,139 @@ SceneNode.prototype.loadTextConfig = function(url, callback)
 * calls to be removed from the scene
 * @method destroy
 */
-SceneNode.prototype.destroy = function()
+SceneNode.prototype.destroy = function( force )
 {
-	if(!this.scene)
+	//in case this node doesnt belong to a scene, we just remove it from its parent
+	if(!this.scene || force)
 	{
 		if(this._parent)
 			this._parent.removeChild(this);
 		return;
 	}
 
+	//deferred: otherwise we put it pending to destroy
 	this.scene._to_destroy.push(this);
 }
 
-SceneNode.prototype.testRayWithNode = function( ray, result )
-{
-	if(!this.mesh)
-		return false;
-		
-	var mesh = gl.meshes[ this.mesh ];
-	if(mesh)
+SceneNode.prototype.testRay = (function(){ 
+
+	var collision_point = vec3.create();
+	var collision_point2 = vec3.create();
+	var origin = vec3.create();
+	var direction = vec3.create();
+	var end = vec3.create();
+	var inv = mat4.create();
+	var local_collision = mat4.create();
+
+	return function( ray, result, max_dist, layers, test_against_mesh )
 	{
-		var bb = mesh.getBoundingBox();
-		var r = geo.testRayBBox( ray.origin, ray.direction, bb, this._global_matrix, result );
-		if(r)
-			return true;
+		max_dist = max_dist === undefined ? Number.MAX_VALUE : max_dist;
+
+		if(Scene._ray_tested_objects !== undefined)
+			Scene._ray_tested_objects++;
+		var node = null;
+
+		//test with this node mesh 
+		var collided = null;
+		if( (this.layers & layers) && this.mesh && !this.flags.ignore_collisions )
+			collided = this.testRayWithMesh( ray, collision_point, max_dist, layers, test_against_mesh );
+
+		//update closest point if there was a collision
+		if(collided)
+		{
+			var distance = vec3.distance( ray.origin, collision_point );
+			if( distance < max_dist)
+			{
+				max_dist = distance;
+				result.set( collision_point );
+				node = this;
+			}
+		}
+
+		//if no children, then return current collision
+		if( !this.children && !this.children.length )
+			return node;
+
+		//test against children
+		for(var i = 0 ; i < this.children.length; ++ i )
+		{
+			var child = this.children[i];
+			var child_collided = child.testRay( ray, collision_point2, max_dist, layers, test_against_mesh );
+			if(!child_collided)
+				continue;
+			var distance = vec3.distance( ray.origin, collision_point2 );
+			if( distance < max_dist )
+			{
+				max_dist = distance;
+				result.set( collision_point );
+				node = child;
+			}
+		}
+		
+		return node;
 	}
-	
-	return false;
-}
+})();
+
+//returns if there was a collision with the inner mesh
+SceneNode.prototype.testRayWithMesh = (function(){ 
+	var temp = vec3.create();
+	var origin = vec3.create();
+	var direction = vec3.create();
+	var end = vec3.create();
+	var inv = mat4.create();
+
+	return function( ray, result, max_dist, layers, test_against_mesh )
+	{
+		max_dist = max_dist === undefined ? Number.MAX_VALUE : max_dist;
+
+		if( !this.mesh )
+			return false;
+
+		var mesh = gl.meshes[ this.mesh ];
+		if( !mesh ) //mesh not loaded
+			return false;
+
+		var bb = mesh.getBoundingBox();
+		if(!bb) //mesh has no vertices
+			return false;
+
+		//to local
+		var model = this._global_matrix;
+		mat4.invert( inv, model );
+		vec3.transformMat4( origin, ray.origin, inv );
+		vec3.add( end, ray.origin, ray.direction );
+		vec3.transformMat4( end, end, inv );
+		vec3.sub( direction, end, origin );
+		vec3.normalize( direction, direction );
+
+		//test against box
+		var r = geo.testRayBBox( origin, direction, bb, null, temp );
+		if(!r) //collided with OOBB
+			return false;
+
+		vec3.transformMat4( result, temp, model );
+		var distance = vec3.distance( ray.origin, result );
+		if( distance > max_dist )
+			return false; //there was a collision but too far
+		
+		//test agains mesh
+		if( !test_against_mesh )
+			return true;
+
+		if(!mesh.octree)
+			mesh.octree = new GL.Octree( mesh );
+		var hit_test = mesh.octree.testRay( origin, direction, 0, max_dist );
+		if( !hit_test ) //collided the OOBB but not the mesh, so its a not
+			return false;
+
+		result.set( hit_test.hit );
+		vec3.transformMat4( result, result, model );
+		var distance = vec3.distance( ray.origin, result );
+		if( distance > max_dist )
+			return false; //there was a collision but too far
+		return true;
+	}
+})();
 
 /**
 * adjust the rendering range so it renders one specific submesh
@@ -997,14 +1155,20 @@ SceneNode.prototype.testRayWithNode = function( ray, result )
 SceneNode.prototype.setRangeFromSubmesh = function( submesh_id )
 {
 	if(submesh_id === undefined || !this.mesh)
-		return false;
+	{
+		this.draw_range = null;
+		return;
+	}
 		
 	var mesh = gl.meshes[ this.mesh ];
 	if(!mesh || !mesh.info || !mesh.info.groups)
-		return false;
+	{
+		console.warn("you cannot set the submesh_id while the mesh is not yet loaded");
+		return;
+	}
 
 	//allows to search by string or index
-	if(submesh_id.constructor === String)
+	if( submesh_id.constructor === String )
 	{
 		for(var i = 0; i < mesh.info.groups.length; ++i)
 		{
@@ -1022,7 +1186,7 @@ SceneNode.prototype.setRangeFromSubmesh = function( submesh_id )
 
 	var submesh = mesh.info.groups[ submesh_id ];
 	if(!submesh)
-		return false;
+		return;
 
 	this.draw_range[0] = submesh.start;
 	this.draw_range[1] = submesh.length;
@@ -1045,7 +1209,7 @@ Sprite.prototype._ctor = function()
 	SceneNode.prototype._ctor.call(this);
 
 	this.mesh = "plane";
-	this.size = vec2.fromValues(-1,-1);
+	this.size = vec2.fromValues(1,1);
 	this.blend_mode = RD.BLEND_ALPHA;
 	this.flags.two_sided = true;
 	this.flags.depth_test = false;
@@ -1192,10 +1356,7 @@ Sprite.prototype.render = function(renderer, camera)
 }
 
 extendClass( Sprite, SceneNode );
-global.Sprite = RD.Sprite = Sprite;
-
-
-
+RD.Sprite = Sprite;
 
 
 /**
@@ -1247,16 +1408,20 @@ Scene.prototype.update = function(dt)
 {
 	this.time += dt;
 	this._root.propagate("update",[dt]);
+	this.destroyPendingNodes();
+}
 
+Scene.prototype.destroyPendingNodes = function(dt)
+{
 	//destroy entities marked
-	if(this._to_destroy.length)
+	if(!this._to_destroy.length)
+		return;
+
+	var n = null;
+	while( n = this._to_destroy.pop() )
 	{
-		var n = null;
-		while( n = this._to_destroy.pop() )
-		{
-			if(n._parent)
-				n._parent.removeChild(n);
-		}
+		if(n._parent)
+			n._parent.removeChild(n);
 	}
 }
 
@@ -1274,30 +1439,25 @@ Object.defineProperty(Scene.prototype, 'root', {
 * test collision of this ray with nodes in the scene
 * @method testRay
 * @param {RD.Ray} ray
+* @param {vec3} result the collision point in case there was
+* @param {number} max_dist
 * @param {number} layers mask
-* @param {RD.SceneNode} node from where to start, if omited uses root
-* @param {boolean} only_visible only test against visible nodes
-* @return {RD.SceneNode} node collided
+* @param {boolean} test_against_mesh test against every mesh
+* @return {RD.SceneNode} node collided or null
 */
-Scene.prototype.testRay = function( ray, layers, node, result, only_visible )
+Scene.prototype.testRay = function( ray, result, max_dist, layers, test_against_mesh  )
 {
-	node = node || this.root;
 	layers = layers === undefined ? 0xFF : layers;
-	
-	if( layers & node.layers && (!only_visible || (only_visible && node.flags.visible)) && node.flags.collides )
-	{
-		if( node.testRayWithNode( ray, result ) )
-			return node;
-	}
-	
-	for(var i = 0; i < node.children.length; ++i)
-	{
-		var r = this.testRay( ray, layers, node.children[i], result, only_visible );	
-		if(r)
-			return r;
-	}
-	
-	return null;
+	Scene._ray_tested_objects = 0;
+	if(!result)
+		result = temp_vec3;
+
+	//TODO
+	//broad phase
+		//get all the AABBs of all objects
+		//store them in an octree
+
+	return this.root.testRay( ray, result, max_dist, layers, test_against_mesh );
 }
 
 
@@ -1366,7 +1526,7 @@ function Renderer( context, options )
 	this.createShaders();
 
 	if(options.shaders_file)
-		this.loadShaders( options.shaders_file );
+		this.loadShaders( options.shaders_file, null, options.shaders_macros );
 	
 }
 
@@ -1399,7 +1559,7 @@ Renderer.prototype.setDataFolder = function(path)
 Renderer.prototype.clear = function( color )
 {
 	if(color)	
-		this.gl.clearColor( color[0],color[1],color[2],color[3] );
+		this.gl.clearColor( color[0],color[1],color[2], color.length >= 3 ? color[3] : 1.0 );
 	else
 		this.gl.clearColor( 0,0,0,0 );
 	this.gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
@@ -1453,6 +1613,7 @@ Renderer.prototype.render = function(scene, camera, nodes, layers )
 	
 	//stack to store state
 	this._state = [];
+	this._meshes_missing = 0;
 	//this.draw_calls = 0;
 
 	//get matrices in the camera
@@ -1596,8 +1757,12 @@ Renderer.prototype.renderNode = function(node, camera)
 	else if (node.mesh) //shared mesh
 	{
 		mesh = gl.meshes[node.mesh];
-		if(!mesh && this.autoload_assets && node.mesh.indexOf(".") != -1)
-			this.loadMesh( node.mesh );
+		if(!mesh)
+		{
+			this._meshes_missing++;
+			if(this.autoload_assets && node.mesh.indexOf(".") != -1)
+				this.loadMesh( node.mesh );
+		}
 	}
 		
 	if(!mesh)
@@ -1867,10 +2032,13 @@ Renderer.prototype.loadShaders = function(url, on_complete, extra_macros)
 	
 	if(url.indexOf("://") == -1)
 		url = this.assets_folder + url;
+
+	this.loading_shaders = true;
 	
 	//load shaders code from a files atlas
 	GL.loadFileAtlas( url, function(files){
-		that.compileShadersFromAtlas(files, extra_macros);
+		that.compileShadersFromAtlas( files, extra_macros );
+		that.loading_shaders = false;
 		if(on_complete)
 			on_complete(files);
 	});
@@ -2468,6 +2636,9 @@ Camera.prototype.rotateLocal = function(angle, axis)
 */
 Camera.prototype.orbit = function(angle, axis, center, axis_in_local)
 {
+	if(!axis)
+		throw("RD: orbit axis missing");
+
 	center = center || this._target;
 	if(axis_in_local)
 		axis = mat4.rotateVec3(temp_vec3b, this._model_matrix, axis);
@@ -2771,7 +2942,25 @@ Camera.prototype.testSphere = function(center, radius)
 	return CLIP_INSIDE;
 }
 
+RD.Factory = function Factory( name, parent, extra_options )
+{
+	var tpl = RD.Factory.templates[name];
+	var node = new RD.SceneNode();
+	if(tpl)
+		node.configure( tpl );
+	if(parent)
+		( parent.cosntructor === RD.Scene ? parent.root : parent ).addChild( node );
+	if(extra_options)
+		node.configure(extra_options);
+	return node;
+}
 
+RD.Factory.templates = {
+	grid: { mesh:"grid", primitive: GL.LINES, color: [0.5,0.5,0.5,0.5], blend_mode: RD.BLEND_ALPHA },
+	mesh: { shader: "phong" },
+	sphere: { mesh:"sphere", shader: "phong" },
+	floor: { mesh:"planeXZ", scaling: 10, shader: "phong" }
+};
 
 /* used functions */
 
@@ -2964,7 +3153,7 @@ Renderer.prototype.createShaders = function()
 	
 	
 	//basic phong shader
-	var phong_uniforms = { u_ambient: vec3.create(), u_lightvector: vec3.fromValues(0.577, 0.577, 0.577), u_lightcolor: RD.WHITE };
+	var phong_uniforms = { u_ambient: vec3.create(), u_light_vector: vec3.fromValues(0.577, 0.577, 0.577), u_light_color: RD.WHITE };
 	
 	this._phong_shader = new GL.Shader('\
 			precision highp float;\
@@ -2981,15 +3170,16 @@ Renderer.prototype.createShaders = function()
 			precision highp float;\
 			varying vec3 v_normal;\
 			uniform vec3 u_ambient;\
-			uniform vec3 u_lightcolor;\
-			uniform vec3 u_lightvector;\
+			uniform vec3 u_light_color;\
+			uniform vec3 u_light_vector;\
 			uniform vec4 u_color;\
 			void main() {\
 			  vec3 N = normalize(v_normal);\
-			  gl_FragColor = u_color * (vec4(u_ambient,1.0) + max(0.0, dot(u_lightvector,N)) * vec4(u_lightcolor,1.0));\
+			  gl_FragColor = u_color * (vec4(u_ambient,1.0) + max(0.0, dot(u_light_vector,N)) * vec4(u_light_color,1.0));\
 			}\
 		');
 	gl.shaders["phong"] = this._phong_shader;
+	this._phong_shader._uniforms = phong_uniforms;
 	gl.shaders["phong"].uniforms( phong_uniforms );
 
 	//basic phong shader
