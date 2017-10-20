@@ -367,13 +367,16 @@ Object.defineProperty(SceneNode.prototype, 'parentNode', {
 * Attach node to its children list
 * @method addChild
 * @param {RD.SceneNode} node
+* @param {Bool} keep_transform if true the node position/rotation/scale will be modified to match the current global matrix (so it will stay at the same place)
 */
-SceneNode.prototype.addChild = function(node)
+SceneNode.prototype.addChild = function( node, keep_transform )
 {
 	if(node._parent)
 		throw("addChild: Cannot add a child with a parent, remove from parent first");
 
 	node._parent = this;
+	if( keep_transform )
+		node.fromMatrix( node._global_matrix );
 
 	this.children.push(node);
 	change_scene(node, this._scene);
@@ -394,7 +397,7 @@ SceneNode.prototype.addChild = function(node)
 * @method removeChild
 * @param {SceneNode} node
 */
-SceneNode.prototype.removeChild = function(node)
+SceneNode.prototype.removeChild = function( node, keep_transform )
 {
 	if(node._parent != this)
 		throw("removeChild: Not its children");
@@ -405,6 +408,9 @@ SceneNode.prototype.removeChild = function(node)
 
 	this.children.splice(pos,1);
 	node._parent = null;
+	if( keep_transform )
+		node.fromMatrix( node._global_matrix );
+
 	change_scene(node);
 
 	//recursive change all children
