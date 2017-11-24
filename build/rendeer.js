@@ -114,6 +114,12 @@ SceneNode.prototype._ctor = function()
 	this._global_matrix = mat4.create(); //in global space
 	this._must_update_matrix = false;
 
+	//watchers
+	//TO DO: use Proxy
+
+	//bounding
+	this._bounding_box = null; //use updateBoundingBox to update it
+
 	//rendering priority (order)
 	this.render_priority = RD.PRIORITY_OPAQUE;
 
@@ -362,13 +368,16 @@ Object.defineProperty(SceneNode.prototype, 'parentNode', {
 * Attach node to its children list
 * @method addChild
 * @param {RD.SceneNode} node
+* @param {Bool} keep_transform if true the node position/rotation/scale will be modified to match the current global matrix (so it will stay at the same place)
 */
-SceneNode.prototype.addChild = function(node)
+SceneNode.prototype.addChild = function( node, keep_transform )
 {
 	if(node._parent)
 		throw("addChild: Cannot add a child with a parent, remove from parent first");
 
 	node._parent = this;
+	if( keep_transform )
+		node.fromMatrix( node._global_matrix );
 
 	this.children.push(node);
 	change_scene(node, this._scene);
@@ -389,7 +398,7 @@ SceneNode.prototype.addChild = function(node)
 * @method removeChild
 * @param {SceneNode} node
 */
-SceneNode.prototype.removeChild = function(node)
+SceneNode.prototype.removeChild = function( node, keep_transform )
 {
 	if(node._parent != this)
 		throw("removeChild: Not its children");
@@ -400,6 +409,9 @@ SceneNode.prototype.removeChild = function(node)
 
 	this.children.splice(pos,1);
 	node._parent = null;
+	if( keep_transform )
+		node.fromMatrix( node._global_matrix );
+
 	change_scene(node);
 
 	//recursive change all children
@@ -1012,6 +1024,7 @@ SceneNode.prototype.loadTextConfig = function(url, callback)
 /**
 * calls to be removed from the scene
 * @method destroy
+* @param { Boolean } force [optional] force to destroy the resource now instead of deferring it till the update ends
 */
 SceneNode.prototype.destroy = function( force )
 {
@@ -1027,6 +1040,52 @@ SceneNode.prototype.destroy = function( force )
 	this.scene._to_destroy.push(this);
 }
 
+/**
+* Updates the bounding box in this node, taking into account the mesh bounding box and its children
+* @method updateBoundingBox
+* @param { Boolean } force [optional] force to destroy the resource now instead of deferring it till the update ends
+*/
+SceneNode.prototype.updateBoundingBox = function( ignore_children )
+{
+	var model = this._global_matrix;
+	var mesh = gl.meshes[ this.mesh ];
+
+	var bb = null;
+	if( mesh ) 
+	{
+		var mesh_bb = mesh.getBoundingBox();
+		if(!this.bounding_box)
+			this.bounding_box = BBox.create();
+		bb = BBox.transformMat4( this.bounding_box, mesh_bb, model );
+	}
+
+	if(ignore_children || !this.children || this.children.length == 0)
+		return bb;
+
+	for(var i = 0; i < this.children.length; ++i)
+	{
+		var child = this.children[i];
+		var child_bb = child.updateBoundingBox();
+		if(!child_bb)
+			continue;
+		if(!bb)
+			bb = this.bounding_box = BBox.create();
+		BBox.merge( bb, bb, child_bb );
+	}
+
+	return bb;
+}
+
+/**
+* Tests if the ray collides with this node mesh or the childrens
+* @method testRay
+* @param { GL.Ray } ray the object containing origin and direction of the ray
+* @param { vec3 } result where to store the collision point
+* @param { Number } max_dist the max distance of the ray
+* @param { Number } layers the layers where you want to test
+* @param { Boolean } test_against_mesh if true it will test collision with mesh, otherwise only boundings
+* @return { RD.SceneNode } the node where it collided
+*/
 SceneNode.prototype.testRay = (function(){ 
 
 	var collision_point = vec3.create();
@@ -1078,7 +1137,7 @@ SceneNode.prototype.testRay = (function(){
 			{
 				max_dist = distance;
 				result.set( collision_point );
-				node = child;
+				node = child_collided;
 			}
 		}
 		
@@ -1086,7 +1145,17 @@ SceneNode.prototype.testRay = (function(){
 	}
 })();
 
-//returns if there was a collision with the inner mesh
+
+/**
+* Tests if the ray collides with the mesh in this node
+* @method testRayWithMesh
+* @param { GL.Ray } ray the object containing origin and direction of the ray
+* @param { vec3 } result where to store the collision point
+* @param { Number } max_dist the max distance of the ray
+* @param { Number } layers the layers where you want to test
+* @param { Boolean } test_against_mesh if true it will test collision with mesh, otherwise only bounding
+* @return { Boolean } true if it collided
+*/
 SceneNode.prototype.testRayWithMesh = (function(){ 
 	var temp = vec3.create();
 	var origin = vec3.create();
@@ -1109,7 +1178,7 @@ SceneNode.prototype.testRayWithMesh = (function(){
 		if(!bb) //mesh has no vertices
 			return false;
 
-		//to local
+		//ray to local
 		var model = this._global_matrix;
 		mat4.invert( inv, model );
 		vec3.transformMat4( origin, ray.origin, inv );
@@ -1118,37 +1187,47 @@ SceneNode.prototype.testRayWithMesh = (function(){
 		vec3.sub( direction, end, origin );
 		vec3.normalize( direction, direction );
 
-		//test against box
+		//test against object oriented bounding box
 		var r = geo.testRayBBox( origin, direction, bb, null, temp );
 		if(!r) //collided with OOBB
 			return false;
 
 		vec3.transformMat4( result, temp, model );
 		var distance = vec3.distance( ray.origin, result );
+
+		//there was a collision but too far
 		if( distance > max_dist )
-			return false; //there was a collision but too far
+			return false; 
 		
 		//test agains mesh
 		if( !test_against_mesh )
 			return true;
 
+		//create mesh octree
 		if(!mesh.octree)
 			mesh.octree = new GL.Octree( mesh );
-		var hit_test = mesh.octree.testRay( origin, direction, 0, max_dist );
-		if( !hit_test ) //collided the OOBB but not the mesh, so its a not
+
+		//ray test agains octree
+		var hit_test = mesh.octree.testRay( origin, direction, 0, max_dist, this.flags.two_sided );
+
+		//collided the OOBB but not the mesh, so its a not
+		if( !hit_test ) 
 			return false;
 
+		//compute global hit point
 		result.set( hit_test.hit );
 		vec3.transformMat4( result, result, model );
 		var distance = vec3.distance( ray.origin, result );
+
+		//there was a collision but too far
 		if( distance > max_dist )
-			return false; //there was a collision but too far
+			return false; 
 		return true;
 	}
 })();
 
 /**
-* adjust the rendering range so it renders one specific submesh
+* adjust the rendering range so it renders one specific submesh of the mesh
 * @method setRangeFromSubmesh
 * @param {String} submesh_id could be the index or the string with the name
 */
@@ -2069,8 +2148,27 @@ Renderer.prototype.compileShadersFromAtlas = function(files, extra_macros)
 		var vs = files[ t[1] ];
 		var fs = files[ t[2] ];
 		var macros = null;
-		if(t.length > 2)
-			macros = t.slice(3).join(" ");
+		var flags = {};
+
+		//parse extras
+		if(t.length > 3)
+		{
+			for(var j = 3; j < t.length; ++j)
+			{
+				if(t[j][0] == "#")
+					flags[t[j].substr(1)] = true;
+				else
+				{
+					macros = t.slice(j).join(" ");
+					break;
+				}
+			}
+		}
+
+		if(flags.WEBGL1 && gl.webgl_version != 1)
+			continue;
+		if(flags.WEBGL2 && gl.webgl_version != 2)
+			continue;
 		
 		if(t[1] && t[1][0] == '@')
 		{
@@ -2108,6 +2206,8 @@ Renderer.prototype.compileShadersFromAtlas = function(files, extra_macros)
 		}
 		else if(extra_macros)
 			macros = extra_macros;
+
+		//console.log("compiling: ",name,macros);
 
 		try
 		{
@@ -2949,7 +3049,7 @@ RD.Factory = function Factory( name, parent, extra_options )
 	if(tpl)
 		node.configure( tpl );
 	if(parent)
-		( parent.cosntructor === RD.Scene ? parent.root : parent ).addChild( node );
+		( parent.constructor === RD.Scene ? parent.root : parent ).addChild( node );
 	if(extra_options)
 		node.configure(extra_options);
 	return node;

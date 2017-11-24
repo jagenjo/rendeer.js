@@ -1136,7 +1136,7 @@ SceneNode.prototype.testRay = (function(){
 			{
 				max_dist = distance;
 				result.set( collision_point );
-				node = child;
+				node = child_collided;
 			}
 		}
 		
