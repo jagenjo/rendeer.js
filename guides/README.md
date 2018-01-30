@@ -274,6 +274,43 @@ node.render = function( renderer, camera )
 }
 ```
 
+## Extending Rendeer
+
+Sometimes you want to create your own Rendeer Node class because maybe it generates several render passes or requires some special flags.
+
+You can create the class following the next steps. Keep in mind that you do not have to overwrite the ```render``` method, you can keep the render method but set up ```mesh```, ```shader```, ```uniforms``` and ```textures``` with the propper value for your special rendering algorithm. Whatever works for you.
+
+Here is an example:
+
+```js
+function MyNodeClass(o)
+{
+   this._ctor();
+   if(o)
+      this.configure(o);
+}
+
+MyNodeClass.prototype._ctor = function()
+{
+	RD.SceneNode.prototype._ctor.call(this);
+   
+   //init your vars here
+   //...
+}
+
+MyNodeClass.prototype.render = function( renderer, camera )
+{
+   //here do your render calls
+   //...
+
+   //or you can set up some mesh,texture,shader and uniforms and call
+   renderer.renderNode( this, camera );
+}
+
+extendClass( MyNodeClass, SceneNode );
+```
+
+
 ### Improving performance
 
 Rendeer does not generate any garbage for the Garbage Collector, this way we ensure that the application won't freeze when the GC kicks in. Try to keep it that way. You can use RD.UP, RD.LEFT, RD.FRONT, etc, when you need constant vectors.
