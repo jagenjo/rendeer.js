@@ -307,7 +307,7 @@ MyNodeClass.prototype.render = function( renderer, camera )
    renderer.renderNode( this, camera );
 }
 
-extendClass( MyNodeClass, SceneNode );
+extendClass( MyNodeClass, RD.SceneNode );
 ```
 
 
