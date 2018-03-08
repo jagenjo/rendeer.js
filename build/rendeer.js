@@ -107,9 +107,13 @@ SceneNode.prototype._ctor = function()
 	this._id = null;
 
 	//transform info
-	this._position = vec3.create();
-	this._rotation = quat.create();
-	this._scale = vec3.fromValues(1,1,1);
+	this._transform = new Float32Array(10);
+	this._position = this._transform.subarray(0,3);
+	this._rotation = this._transform.subarray(3,7);
+	this._scale = this._transform.subarray(7,10);
+	quat.identity( this._rotation );
+	this._scale.set( RD.ONE );
+	
 	this._local_matrix = mat4.create();
 	this._global_matrix = mat4.create(); //in global space
 	this._must_update_matrix = false;
@@ -130,10 +134,13 @@ SceneNode.prototype._ctor = function()
 	this._uniforms = { u_color: this._color, u_color_texture: 0 };
 	this.primitive = GL.TRIANGLES;
 	this.draw_range = null;
+	this._instances = null; //array of mat4 with the model for every instance
 
 	//overwrite callbacks
-	this.onRender = null;
-	this.onShaderUniforms = null;
+	if(!this.onRender)
+		this.onRender = null;
+	if(!this.onShaderUniforms)
+		this.onShaderUniforms = null;
 
 	//assets
 	this.shader = null;
@@ -148,6 +155,8 @@ SceneNode.prototype._ctor = function()
 	//object inside this object
 	this.children = [];
 }
+
+SceneNode.ctor = SceneNode.prototype._ctor; //helper
 
 /*
 SceneNode.prototype.super = function(class_name)
@@ -285,6 +294,17 @@ Object.defineProperty(SceneNode.prototype, 'scaling', {
 	enumerable: true
 });
 
+/**
+* An array containing [x,y,z, rotx,roty,rotz,rotw,  sx, sy, sz]
+* @property transform {vec3}
+*/
+Object.defineProperty(SceneNode.prototype, 'transform', {
+	get: function() { return this._transform; },
+	set: function(v) { 
+		this._transform.set(v);
+		this._must_update_matrix = true; },
+	enumerable: true
+});
 
 Object.defineProperty(SceneNode.prototype, 'pivot', {
 	get: function() { return this._pivot; },
@@ -379,6 +399,9 @@ SceneNode.prototype.addChild = function( node, keep_transform )
 	if( keep_transform )
 		node.fromMatrix( node._global_matrix );
 
+	if(!this.children)
+		this.children = [];
+
 	this.children.push(node);
 	change_scene(node, this._scene);
 
@@ -388,8 +411,9 @@ SceneNode.prototype.addChild = function( node, keep_transform )
 		node._scene = scene;
 		if(node.id && scene)
 			scene._nodes_by_id[node.id] = node;
-		for(var i = 0, l = node.children.length; i < l; i++)
-			change_scene( node.children[i], scene );
+		if(node.children)
+			for(var i = 0, l = node.children.length; i < l; i++)
+				change_scene( node.children[i], scene );
 	}
 }
 
@@ -402,6 +426,9 @@ SceneNode.prototype.removeChild = function( node, keep_transform )
 {
 	if(node._parent != this)
 		throw("removeChild: Not its children");
+
+	if(!this.children)
+		return;
 
 	var pos = this.children.indexOf(node);
 	if(pos == -1)
@@ -428,6 +455,9 @@ SceneNode.prototype.removeChild = function( node, keep_transform )
 
 SceneNode.prototype.removeAllChildren = function()
 {
+	if(!this.children)
+		return;
+
 	while(this.children.length)
 		this.removeChild( this.children[0] );
 }
@@ -438,6 +468,9 @@ SceneNode.prototype.removeAllChildren = function()
 */
 SceneNode.prototype.clear = function()
 {
+	if(!this.children)
+		return;
+
 	while(this.children.length)
 		this.removeChild( this.children[ this.children.length - 1 ] );
 }
@@ -450,11 +483,14 @@ SceneNode.prototype.clear = function()
 */
 SceneNode.prototype.setChildIndex = function(child, index)
 {
-		var old_index = this.children.indexOf(child);
-		if(old_index == -1)
-			return;
-		this.children.splice(old_index,1);
-		this.children.splice(index,0,child);
+	if(!this.children)
+		return;
+
+	var old_index = this.children.indexOf(child);
+	if(old_index == -1)
+		return;
+	this.children.splice(old_index,1);
+	this.children.splice(index,0,child);
 }
 
 /**
@@ -466,6 +502,9 @@ SceneNode.prototype.setChildIndex = function(child, index)
 SceneNode.prototype.getAllChildren = function(r)
 {
 	r = r || [];
+
+	if(!this.children)
+		return r;
 
 	for(var i = 0, l = this.children.length; i < l; i++)
 	{
@@ -488,6 +527,9 @@ SceneNode.prototype.getVisibleChildren = function( result, layers )
 	result = result || [];
 	if(layers === undefined)
 		layers = 0xFF;
+
+	if(!this.children)
+		return result;
 
 	if(this.flags.visible === false)
 		return result;
@@ -517,6 +559,7 @@ SceneNode.prototype.serialize = function()
 		children: []
 	};
 
+	if(this.children)
 	for(var i = 0, l = this.children.length; i < l; i++)
 	{
 		var node = this.children[i];
@@ -1099,10 +1142,17 @@ SceneNode.prototype.testRay = (function(){
 	return function( ray, result, max_dist, layers, test_against_mesh )
 	{
 		max_dist = max_dist === undefined ? Number.MAX_VALUE : max_dist;
+		if(layers === undefined)
+			layers = 0xFF;
+		result = result || vec3.create();
 
 		if(Scene._ray_tested_objects !== undefined)
 			Scene._ray_tested_objects++;
 		var node = null;
+
+		//how to optimize: (now it checks randomly based on order in scene graph)
+		//	sort nodes by BB center distance to camera
+		//	raytest starting from closer
 
 		//test with this node mesh 
 		var collided = null;
@@ -1270,6 +1320,112 @@ SceneNode.prototype.setRangeFromSubmesh = function( submesh_id )
 	this.draw_range[0] = submesh.start;
 	this.draw_range[1] = submesh.length;
 }
+
+//This node allows to render a mesh where vertices are changing constantly
+function DynamicMeshNode(o)
+{
+	this._ctor();
+	if(o)
+		this.configure(o);
+}
+
+DynamicMeshNode.prototype._ctor = function()
+{
+	SceneNode.prototype._ctor.call(this);
+
+	this.vertices = [];
+	this.normals = [];
+	this.coords = [];
+	this.indices = [];
+
+	var size = 1024;
+	this._vertices_data = new Float32Array( size * 3 );
+	this._normals_data = null;
+	this._coords_data = null;
+	this._indices_data = null;
+	this._total = 0;
+	this._total_indices = 0;
+	this._mesh = GL.Mesh.load({ vertices: this._vertices_data });
+}
+
+DynamicMeshNode.prototype.updateVertices = function( vertices )
+{
+	if(vertices)
+		this.vertices = vertices;
+	this._total = this.vertices.length;
+	if( this._vertices_data.length < this.vertices.length )
+	{
+		this._vertices_data = new Float32Array( this.vertices.length * 2 );
+		this._mesh.getBuffer("vertices").data = this._vertices_data;
+	}
+	this._vertices_data.set( this.vertices );
+	this._mesh.getBuffer("vertices").upload( GL.STREAM_DRAW );
+}
+
+DynamicMeshNode.prototype.updateNormals = function( normals )
+{
+	if(normals)
+		this.normals = normals;
+	if( !this._normals_data || this._normals_data.length < this.normals.length )
+	{
+		this._normals_data = new Float32Array( this.normals.length * 2 );
+		var buffer = this._mesh.getBuffer("normals");
+		if(!buffer)
+			this._mesh.createVertexBuffer("normals",null,3,this._normals_data, GL.STREAM_DRAW);
+	}
+	this._normals_data.set( this.normals );
+	this._mesh.getBuffer("normals").upload( GL.STREAM_DRAW );
+}
+
+DynamicMeshNode.prototype.updateCoords = function( coords )
+{
+	if(coords)
+		this.coords = coords;
+	if( !this._coords_data || this._coords_data.length < this.normals.length )
+	{
+		this._coords_data = new Float32Array( this.coords.length * 2 );
+		var buffer = this._mesh.getBuffer("coords");
+		if(!buffer)
+			this._mesh.createVertexBuffer("coords",null,2,this._coords_data, GL.STREAM_DRAW);
+	}
+	this._coords_data.set( this.coords );
+	this._mesh.getBuffer("coords").upload( GL.STREAM_DRAW );
+}
+
+DynamicMeshNode.prototype.updateIndices = function( indices )
+{
+	if(indices)
+		this.indices = indices;
+	if( !this._indices_data || this._indices_data.length < this.indices.length )
+	{
+		this._indices_data = new Float32Array( this.indices.length * 2 );
+		var buffer = this._mesh.getIndexBuffer("triangles");
+		if(!buffer)
+			this._mesh.createIndicesBuffer( "triangles",this._indices_data, GL.STREAM_DRAW );
+	}
+	this._indices_data.set( this.indices );
+	this._mesh.getIndexBuffer("triangles").upload( GL.STREAM_DRAW );
+	this._total_indices = indices.length;
+}
+
+DynamicMeshNode.prototype.render = function( renderer, camera )
+{
+	if(!this._total)
+		return;
+	var shader = renderer.shaders[ this.shader || "flat" ];
+	if(!shader)
+		return;
+	renderer.setModelMatrix( this._global_matrix );
+	var mesh = this._mesh;
+	var range = this._total_indices ? this._total_indices : this._total / 3;
+	renderer.enableNodeFlags( this );
+	shader.uniforms( renderer._uniforms ).uniforms( this._uniforms ).drawRange( mesh, this.primitive === undefined ? GL.TRIANGLES : this.primitive, 0, range, this._total_indices ? "triangles" : null );
+	renderer.disableNodeFlags( this );
+}
+
+extendClass( DynamicMeshNode, SceneNode );
+RD.DynamicMeshNode = DynamicMeshNode;
+
 
 /**
 * Sprite class , inherits from SceneNode but helps to render 2D planes (in 3D Space)
@@ -1827,6 +1983,12 @@ Renderer.prototype.setGlobalUniforms = function( uniforms )
 	}
 }
 
+//avoid garbage
+var instancing_uniforms = {
+	u_model: null
+};
+
+//used to render one node (ignoring its children) based on the shader, texture, mesh, flags, layers and uniforms 
 Renderer.prototype.renderNode = function(node, camera)
 {
 	//get mesh
@@ -1847,9 +2009,13 @@ Renderer.prototype.renderNode = function(node, camera)
 	if(!mesh)
 	{
 		if(node.onRender)
-			node.onRender(this, camera, shader);
+			node.onRender(this, camera);
 		return;
 	}
+
+	var instancing = false;
+	if( node._instances && (gl.webgl_version > 1 || gl.extensions.ANGLE_instanced_arrays) )
+		instancing = true;
 
 	//get shader
 	var shader = null;
@@ -1862,6 +2028,10 @@ Renderer.prototype.renderNode = function(node, camera)
 		shader = gl.shaders[this.shader_overwrite];
 	if (!shader)
 		shader = node.textures.color ? this._texture_shader : this._flat_shader;
+
+	//shader doesnt support instancing
+	if(instancing && !shader.attributes.u_model)
+		instancing = false;
 	
 	//get texture
 	var slot = 0;
@@ -1888,27 +2058,7 @@ Renderer.prototype.renderNode = function(node, camera)
 
 	//flags
 	if(!this.ignore_flags)
-	{
-		gl.frontFace( node.flags.flip_normals ? gl.CW : gl.CCW );
-		gl[ node.flags.depth_test === false ? "disable" : "enable"]( gl.DEPTH_TEST );
-		if( node.flags.depth_write === false )
-			gl.depthMask( false );
-		gl[ node.flags.two_sided === true ? "disable" : "enable"]( gl.CULL_FACE );
-		
-		//blend
-		if(	node.blend_mode !== RD.BLEND_NONE )
-		{
-			gl.enable( gl.BLEND );
-			switch( node.blend_mode )
-			{
-				case RD.BLEND_ALPHA: gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA ); break;
-				case RD.BLEND_ADD: gl.blendFunc( gl.SRC_ALPHA, gl.ONE ); break;
-				case RD.BLEND_MULTIPLY: gl.blendFunc( gl.DST_COLOR, gl.ONE_MINUS_SRC_ALPHA ); break;
-			}
-		}
-		else
-			gl.disable( gl.BLEND );
-	}
+		this.enableNodeFlags( node );
 	
 	if(node.onRender)
 		node.onRender(this, camera, shader);
@@ -1918,21 +2068,58 @@ Renderer.prototype.renderNode = function(node, camera)
 
 	if(node.onShaderUniforms) //in case the node wants to add extra shader uniforms that need to be computed at render time
 		node.onShaderUniforms(this, shader);
-	
-	if(node.draw_range)
-		shader.drawRange( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.draw_range[0], node.draw_range[1] , node.indices );
+
+	if(instancing)
+	{
+		instancing_uniforms.u_model = node._instances;
+		if(node.draw_range)
+			shader.drawInstanced( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.indices, instancing_uniforms, node.draw_range[0], node.draw_range[1] );
+		else
+			shader.drawInstanced( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.indices, instancing_uniforms );
+	}
 	else
-		shader.draw( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.indices );
+	{
+		if(node.draw_range)
+			shader.drawRange( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.draw_range[0], node.draw_range[1] , node.indices );
+		else
+			shader.draw( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.indices );
+	}
 
 	if(!this.ignore_flags)
+		this.disableNodeFlags( node );
+}
+
+Renderer.prototype.enableNodeFlags = function(node)
+{
+	gl.frontFace( node.flags.flip_normals ? gl.CW : gl.CCW );
+	gl[ node.flags.depth_test === false ? "disable" : "enable"]( gl.DEPTH_TEST );
+	if( node.flags.depth_write === false )
+		gl.depthMask( false );
+	gl[ node.flags.two_sided === true ? "disable" : "enable"]( gl.CULL_FACE );
+	
+	//blend
+	if(	node.blend_mode !== RD.BLEND_NONE )
 	{
-		if( node.flags.flip_normals ) gl.frontFace( gl.CCW );
-		if( node.flags.depth_test === false ) gl.enable( gl.DEPTH_TEST );
-		if( node.blend_mode !== RD.BLEND_NONE ) gl.disable( gl.BLEND );
-		if( node.flags.two_sided ) gl.disable( gl.CULL_FACE );
-		if( node.flags.depth_write === false )
-			gl.depthMask( true );
+		gl.enable( gl.BLEND );
+		switch( node.blend_mode )
+		{
+			case RD.BLEND_ALPHA: gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA ); break;
+			case RD.BLEND_ADD: gl.blendFunc( gl.SRC_ALPHA, gl.ONE ); break;
+			case RD.BLEND_MULTIPLY: gl.blendFunc( gl.DST_COLOR, gl.ONE_MINUS_SRC_ALPHA ); break;
+		}
 	}
+	else
+		gl.disable( gl.BLEND );
+}
+
+Renderer.prototype.disableNodeFlags = function(node)
+{
+	if( node.flags.flip_normals ) gl.frontFace( gl.CCW );
+	if( node.flags.depth_test === false ) gl.enable( gl.DEPTH_TEST );
+	if( node.blend_mode !== RD.BLEND_NONE ) gl.disable( gl.BLEND );
+	if( node.flags.two_sided ) gl.disable( gl.CULL_FACE );
+	if( node.flags.depth_write === false )
+		gl.depthMask( true );
 }
 
 Renderer.prototype.setPointSize = function(v)
@@ -2392,18 +2579,7 @@ RD.Renderer = Renderer;
 * @class Ray
 * @constructor
 */
-function Ray( origin, direction )
-{
-	this.origin = vec3.create();
-	this.direction = vec3.create();
-	
-	if(origin)
-		this.origin.set( origin );
-	if(direction)
-		this.direction.set( direction );
-}
-
-RD.Ray = Ray;
+RD.Ray = GL.Ray;
 
 /**
 * Camera wraps all the info about the camera (properties and view and projection matrices)
@@ -2428,31 +2604,31 @@ function Camera( options )
 	* @property near {number} 
 	* @default 0.1
 	*/
-	this.near = 0.1;
+	this._near = 0.1;
 	/**
 	* far distance 
 	* @property far {number} 
 	* @default 10000
 	*/
-	this.far = 10000;
+	this._far = 10000;
 	/**
 	* aspect (width / height)
 	* @property aspect {number} 
 	* @default 1
 	*/
-	this.aspect = 1.0;
+	this._aspect = 1.0;
 	/**
 	* fov angle in degrees
 	* @property fov {number}
 	* @default 45
 	*/
-	this.fov = 45; //persp
+	this._fov = 45; //persp
 	/**
 	* size of frustrum when working in orthographic
 	* @property frustum_size {number} 
 	* @default 50
 	*/
-	this.frustum_size = 50; //ortho
+	this._frustum_size = 50; //ortho
 	this.flip_y = false;
 
 	this._view_matrix = mat4.create();
@@ -2466,9 +2642,18 @@ function Camera( options )
 	this._top = vec3.create();
 	this._right = vec3.create();
 	this._front = vec3.create();
-	
+
+	this.uniforms = {
+		u_view_matrix: this._view_matrix,
+		u_projection_matrix: this._projection_matrix,
+		u_viewprojection_matrix: this._viewprojection_matrix,
+		u_camera_front: this._front,
+		u_camera_position: this._position
+	};
+
 	if(options)
 	{
+		if(options.type != null) this.type = options.type;
 		if(options.position) this._position.set(options.position);
 		if(options.target) this._target.set(options.target);
 		if(options.up) this._up.set(options.up);
@@ -2518,6 +2703,54 @@ Object.defineProperty(Camera.prototype, 'up', {
 	enumerable: false //avoid problems
 });
 
+Object.defineProperty(Camera.prototype, 'fov', {
+	get: function() { return this._fov; },
+	set: function(v) { this._fov = v; this._must_update_matrix = true; },
+	enumerable: false //avoid problems
+});
+
+Object.defineProperty(Camera.prototype, 'aspect', {
+	get: function() { return this._aspect; },
+	set: function(v) { this._aspect = v; this._must_update_matrix = true; },
+	enumerable: false //avoid problems
+});
+
+Object.defineProperty(Camera.prototype, 'frustum_size', {
+	get: function() { return this._frustum_size; },
+	set: function(v) { this._frustum_size = v; this._must_update_matrix = true; },
+	enumerable: false //avoid problems
+});
+
+Object.defineProperty(Camera.prototype, 'near', {
+	get: function() { return this._near; },
+	set: function(v) { this._near = v; this._must_update_matrix = true; },
+	enumerable: false //avoid problems
+});
+
+Object.defineProperty(Camera.prototype, 'far', {
+	get: function() { return this._far; },
+	set: function(v) { this._far = v; this._must_update_matrix = true; },
+	enumerable: false //avoid problems
+});
+
+Object.defineProperty(Camera.prototype, 'view_matrix', {
+	get: function() { return this._view_matrix; },
+	set: function(v) { this._view_matrix.set(v); mat4.multiply(this._viewprojection_matrix, this._projection_matrix, this._view_matrix ); },
+	enumerable: false 
+});
+
+Object.defineProperty(Camera.prototype, 'projection_matrix', {
+	get: function() { return this._projection_matrix; },
+	set: function(v) { this._projection_matrix.set(v); mat4.multiply(this._viewprojection_matrix, this._projection_matrix, this._view_matrix ); },
+	enumerable: false 
+});
+
+Object.defineProperty(Camera.prototype, 'viewprojection_matrix', {
+	get: function() { return this._viewprojection_matrix; },
+	set: function(v) { this._viewprojection_matrix.set(v); },
+	enumerable: false 
+});
+
 /**
 * changes the camera to perspective mode
 * @method perspective
@@ -2529,10 +2762,10 @@ Object.defineProperty(Camera.prototype, 'up', {
 Camera.prototype.perspective = function(fov, aspect, near, far)
 {
 	this.type = Camera.PERSPECTIVE;
-	this.fov = fov;
-	this.aspect = aspect;
-	this.near = near;
-	this.far = far;
+	this._fov = fov;
+	this._aspect = aspect;
+	this._near = near;
+	this._far = far;
 	
 	this._must_update_matrix = true;
 }
@@ -2547,11 +2780,11 @@ Camera.prototype.perspective = function(fov, aspect, near, far)
 */
 Camera.prototype.orthographic = function(frustum_size, near, far, aspect)
 {
-	this.aspect = aspect || 1;
 	this.type = Camera.ORTHOGRAPHIC;
-	this.frustum_size = frustum_size;
-	this.near = near;
-	this.far = far;
+	this._frustum_size = frustum_size;
+	this._near = near;
+	this._far = far;
+	this._aspect = aspect || 1;
 
 	this._must_update_matrix = true;
 }
@@ -2582,9 +2815,9 @@ Camera.prototype.updateMatrices = function( force )
 	{
 		//proj
 		if(this.type == Camera.ORTHOGRAPHIC)
-			mat4.ortho(this._projection_matrix, -this.frustum_size*this.aspect, this.frustum_size*this.aspect, -this.frustum_size, this.frustum_size, this.near, this.far);
+			mat4.ortho(this._projection_matrix, -this.frustum_size*this._aspect, this.frustum_size*this._aspect, -this._frustum_size, this._frustum_size, this._near, this._far);
 		else
-			mat4.perspective(this._projection_matrix, this.fov * DEG2RAD, this.aspect, this.near, this.far);
+			mat4.perspective(this._projection_matrix, this._fov * DEG2RAD, this._aspect, this._near, this._far);
 
 		if(this.flip_y)
 			mat4.scale( this._projection_matrix, this._projection_matrix, [1,-1,1] );
@@ -2672,12 +2905,19 @@ Camera.prototype.getFront = function(dest)
 }
 
 /**
-* move the position and the target
+* move the position and the target that amount
 * @method move
 * @param {vec3} v
+* @param {Number} scalar [optional] it will be multiplied by the vector
 */
-Camera.prototype.move = function(v)
+Camera.prototype.move = function(v, scalar)
 {
+	if(scalar !== undefined)
+	{
+		vec3.scale( temp_vec3, v, scalar );
+		v = temp_vec3;
+	}
+
 	vec3.add(this._target, this._target, v);
 	vec3.add(this._position, this._position, v);
 	this._must_update_matrix = true;
@@ -2687,10 +2927,13 @@ Camera.prototype.move = function(v)
 * move the position and the target using the local coordinates system of the camera
 * @method moveLocal
 * @param {vec3} v
+* @param {Number} scalar [optional] it will be multiplied by the vector
 */
-Camera.prototype.moveLocal = function(v)
+Camera.prototype.moveLocal = function(v, scalar)
 {
 	var delta = mat4.rotateVec3(temp_vec3, this._model_matrix, v);
+	if(scalar !== undefined)
+		vec3.scale( delta, delta, scalar );
 	vec3.add(this._target, this._target, delta);
 	vec3.add(this._position, this._position, delta);
 	this._must_update_matrix = true;
@@ -3141,22 +3384,38 @@ RD.parseTextConfig = function(text)
 
 Renderer.prototype.createShaders = function()
 {
-	this._flat_shader = new GL.Shader('\
-				precision highp float;\
-				attribute vec3 a_vertex;\
-				uniform mat4 u_mvp;\
-				void main() {\
-					gl_Position = u_mvp * vec4(a_vertex,1.0);\
-					gl_PointSize = 2.0;\
+	var vertex_shader = '\
+				precision highp float;\n\
+				attribute vec3 a_vertex;\n\
+				attribute vec3 a_normal;\n\
+				attribute vec2 a_coord;\n\
+				varying vec3 v_pos;\n\
+				varying vec3 v_normal;\n\
+				varying vec2 v_coord;\n\
+				#ifdef INSTANCING\n\
+					attribute mat4 u_model;\n\
+				#else\n\
+					uniform mat4 u_model;\n\
+				#endif\n\
+				uniform mat4 u_viewprojection;\n\
+				void main() {\n\
+					v_pos = (u_model * vec4(a_vertex,1.0)).xyz;\n\
+					v_normal = (u_model * vec4(a_normal,0.0)).xyz;\n\
+					v_coord = a_coord;\n\
+					gl_Position = u_viewprojection * vec4( v_pos , 1.0 );\n\
+					gl_PointSize = 2.0;\n\
 				}\
-				', '\
+				';
+	var fragment_shader = '\
 				precision highp float;\
 				uniform vec4 u_color;\
 				void main() {\
 				  gl_FragColor = u_color;\
 				}\
-			');
-	gl.shaders["flat"] = this._flat_shader;
+	';
+
+	gl.shaders["flat"] = this._flat_shader = new GL.Shader( vertex_shader, fragment_shader );
+	gl.shaders["flat_instancing"] = this._flat_instancing_shader = new GL.Shader(vertex_shader, fragment_shader, { INSTANCING:"" });
 	
 	this._point_shader = new GL.Shader('\
 				precision highp float;\
@@ -3185,7 +3444,6 @@ Renderer.prototype.createShaders = function()
 		varying vec4 v_color;\
 		uniform vec4 u_color;\
 		uniform mat4 u_mvp;\
-		uniform mat4 u_modelt;\
 		void main() {\
 			v_color = a_color * u_color;\
 			gl_Position = u_mvp * vec4(a_vertex,1.0);\
@@ -3199,20 +3457,8 @@ Renderer.prototype.createShaders = function()
 		}\
 	');
 	gl.shaders["color"] = this._color_shader;
-	
-	this._texture_shader = new GL.Shader('\
-		precision highp float;\
-		attribute vec3 a_vertex;\
-		attribute vec2 a_coord;\
-		varying vec2 v_coord;\
-		uniform mat4 u_mvp;\
-		uniform mat4 u_modelt;\
-		void main() {\
-			v_coord = a_coord;\
-			gl_Position = u_mvp * vec4(a_vertex,1.0);\
-			gl_PointSize = 5.0;\
-		}\
-		', '\
+
+	var fragment_shader = '\
 		precision highp float;\
 		varying vec2 v_coord;\
 		uniform vec4 u_color;\
@@ -3220,191 +3466,213 @@ Renderer.prototype.createShaders = function()
 		void main() {\
 			gl_FragColor = u_color * texture2D(u_color_texture, v_coord);\
 		}\
-	');
-	gl.shaders["texture"] = this._texture_shader;
+	';
+	
+	gl.shaders["texture"] = this._texture_shader = new GL.Shader( vertex_shader, fragment_shader );
+	gl.shaders["texture_instancing"] = this._texture_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { INSTANCING:"" } );
 	
 	this._texture_transform_shader = new GL.Shader('\
-		precision highp float;\
-		attribute vec3 a_vertex;\
-		attribute vec2 a_coord;\
-		varying vec2 v_coord;\
-		uniform mat4 u_mvp;\
-		uniform mat3 u_texture_matrix;\
-		void main() {\
-			v_coord = (u_texture_matrix * vec3(a_coord,1.0)).xy;\
-			gl_Position = u_mvp * vec4(a_vertex,1.0);\
-			gl_PointSize = 5.0;\
-		}\
-		', '\
-		precision highp float;\
-		varying vec2 v_coord;\
-		uniform vec4 u_color;\
-		uniform float u_global_alpha_clip;\
-		uniform sampler2D u_color_texture;\
-		void main() {\
-			vec4 color = u_color * texture2D(u_color_texture, v_coord);\
-			if(color.w < u_global_alpha_clip)\
-				discard;\
-			gl_FragColor = color;\
+		precision highp float;\n\
+		attribute vec3 a_vertex;\n\
+		attribute vec2 a_coord;\n\
+		varying vec2 v_coord;\n\
+		uniform mat4 u_mvp;\n\
+		uniform mat3 u_texture_matrix;\n\
+		void main() {\n\
+			v_coord = (u_texture_matrix * vec3(a_coord,1.0)).xy;\n\
+			gl_Position = u_mvp * vec4(a_vertex,1.0);\n\
+			gl_PointSize = 5.0;\n\
+		}\n\
+		', '\n\
+		precision highp float;\n\
+		varying vec2 v_coord;\n\
+		uniform vec4 u_color;\n\
+		uniform float u_global_alpha_clip;\n\
+		uniform sampler2D u_color_texture;\n\
+		void main() {\n\
+			vec4 color = u_color * texture2D(u_color_texture, v_coord);\n\
+			if(color.w < u_global_alpha_clip)\n\
+				discard;\n\
+			gl_FragColor = color;\n\
 		}\
 	');
 	gl.shaders["texture_transform"] = this._texture_transform_shader;
 	
-	
-	
 	//basic phong shader
 	var phong_uniforms = { u_ambient: vec3.create(), u_light_vector: vec3.fromValues(0.577, 0.577, 0.577), u_light_color: RD.WHITE };
-	
-	this._phong_shader = new GL.Shader('\
-			precision highp float;\
-			attribute vec3 a_vertex;\
-			attribute vec3 a_normal;\
-			varying vec3 v_normal;\
-			uniform mat4 u_mvp;\
-			uniform mat4 u_model;\
-			void main() {\
-				v_normal = (u_model * vec4(a_normal,0.0)).xyz;\
-				gl_Position = u_mvp * vec4(a_vertex,1.0);\
-			}\
-			', '\
-			precision highp float;\
-			varying vec3 v_normal;\
-			uniform vec3 u_ambient;\
-			uniform vec3 u_light_color;\
-			uniform vec3 u_light_vector;\
-			uniform vec4 u_color;\
-			void main() {\
-			  vec3 N = normalize(v_normal);\
-			  gl_FragColor = u_color * (vec4(u_ambient,1.0) + max(0.0, dot(u_light_vector,N)) * vec4(u_light_color,1.0));\
-			}\
-		');
-	gl.shaders["phong"] = this._phong_shader;
-	this._phong_shader._uniforms = phong_uniforms;
-	gl.shaders["phong"].uniforms( phong_uniforms );
 
-	//basic phong shader
-	this._textured_phong_shader = new GL.Shader('\
-			precision highp float;\
-			attribute vec3 a_vertex;\
-			attribute vec3 a_normal;\
-			attribute vec2 a_coord;\
-			varying vec2 v_coord;\
-			varying vec3 v_normal;\
-			uniform mat4 u_mvp;\
-			uniform mat4 u_model;\
+	var fragment_shader = '\
+			precision highp float;\n\
+			varying vec3 v_normal;\n\
+			varying vec2 v_coord;\n\
+			uniform vec3 u_ambient;\n\
+			uniform vec3 u_light_color;\n\
+			uniform vec3 u_light_vector;\n\
+			uniform vec4 u_color;\n\
+			#ifdef TEXTURED\n\
+				uniform sampler2D u_color_texture;\n\
+			#endif\n\
 			void main() {\n\
-				v_coord = a_coord;\n\
-				v_normal = (u_model * vec4(a_normal,0.0)).xyz;\n\
-				gl_Position = u_mvp * vec4(a_vertex,1.0);\n\
+				vec4 color = u_color;\n\
+				#ifdef TEXTURED\n\
+					color *= texture2D( u_color_texture, v_coord );\n\
+				#endif\n\
+				vec3 N = normalize(v_normal);\n\
+				gl_FragColor = color * (vec4(u_ambient,1.0) + max(0.0, dot(u_light_vector,N)) * vec4(u_light_color,1.0));\n\
 			}\
-			', '\
-			precision highp float;\
-			varying vec3 v_normal;\
-			varying vec2 v_coord;\
-			uniform vec3 u_lightcolor;\
-			uniform vec3 u_lightvector;\
-			uniform vec4 u_color;\
-			uniform sampler2D u_color_texture;\
-			void main() {\
-			  vec3 N = normalize(v_normal);\
-			  gl_FragColor = u_color * texture2D(u_color_texture, v_coord) * max(0.0, dot(u_lightvector,N)) * vec4(u_lightcolor,1.0);\
-			}\
-		');
-	gl.shaders["textured_phong"] = this._textured_phong_shader;
-	gl.shaders["textured_phong"].uniforms( phong_uniforms );
+	'
+	
+	gl.shaders["phong"] = this._phong_shader = new GL.Shader( vertex_shader, fragment_shader );
+	this._phong_shader._uniforms = phong_uniforms;
+	this._phong_shader.uniforms( phong_uniforms );
+
+	gl.shaders["phong_instancing"] = this._phong_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { INSTANCING: "" } );
+	this._phong_instancing_shader._uniforms = phong_uniforms;
+	this._phong_instancing_shader.uniforms( phong_uniforms );
+
+	gl.shaders["textured_phong"] = this._textured_phong_shader = new GL.Shader( vertex_shader, fragment_shader, { TEXTURED: "" } );
+	this._textured_phong_shader.uniforms( phong_uniforms );
+	
+	gl.shaders["textured_phong_instancing"] = this._textured_phong_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { INSTANCING: "", TEXTURED: "" } );
+	this._textured_phong_instancing_shader.uniforms( phong_uniforms );
 }
 
-
-/**
-* Billboard class to hold an scene item, used for camera aligned objects
-* @class Billboard
-* @constructor
-*/
-function Billboard()  
+RD.readPixels = function( url, on_complete )
 {
-	this._ctor();
-}
+	var image = new Image();
+	image.src = url;
+	image.onload = function(){
+		var canvas = document.createElement("canvas");
+		canvas.width = this.width;
+		canvas.height = this.height;
+		var ctx = canvas.getContext("2d");
+		ctx.drawImage( this, 0 ,0 );
+		var data = ctx.getImageData(0,0,canvas.width,canvas.height);
+		on_complete(data,this);
+	}
+};
 
-extendClass(Billboard, SceneNode);
-RD.Billboard = Billboard;
-
-Billboard.SPHERIC = 1;
-Billboard.PARALLEL_SPHERIC = 2;
-Billboard.CYLINDRIC = 3;
-Billboard.PARALLEL_CYLINDRIC = 4;
-
-Billboard.prototype._ctor = function()
+//Helper method to render points very fast
+//positions and extra must be a Float32Array with all the positions, extra must have 4
+RD.renderPoints = function( positions, extra, camera, num_points, shader )
 {
-	this.billboard_mode = Billboard.SPHERIC;
-	this.auto_orient = true;
-	SceneNode.prototype._ctor.call(this);
-}
-
-Billboard.orientNode = function( node, camera, renderer )
-{
-	if( node.billboard_mode == Billboard.CYLINDRIC || node.billboard_mode == Billboard.PARALLEL_CYLINDRIC )
+	if(!positions || positions.constructor !== Float32Array)
+		throw("RD.renderPoints only accepts Float32Array");
+	if(!shader)
 	{
-		var global_pos = null;
-		if(node.billboard_mode == Billboard.CYLINDRIC)
+		shader = gl.shaders["_points"];
+		if(!shader)
 		{
-			global_pos = node.getGlobalPosition( temp_vec3b );
-			vec3.sub(temp_vec3, camera._position, global_pos);
-			temp_vec2[0] = temp_vec3[0];
-			temp_vec2[1] = temp_vec3[2];
+			shader = gl.shaders["_points"] = new GL.Shader( RD.renderPoints.vs_shader, RD.renderPoints.fs_shader );
+			shader.uniforms({u_texture:0, u_atlas: 1, u_pointSize: 1});
 		}
-		else //Billboard.PARALLEL_CYLINDRIC
-		{
-			temp_vec2[0] = camera._front[0];
-			temp_vec2[1] = camera._front[2];
-		}
+	}
 
-		var angle = vec2.computeSignedAngle( temp_vec2, RD.FRONT2D );
-		if( !isNaN(angle) )
-		{
-			mat4.rotateY( temp_mat4, identity_mat4, -angle );
-			node._global_matrix.set( temp_mat4 );
-			mat4.setTranslation( node._global_matrix, node._position );
-			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
-		}
+	var max_points = 1024;
+	num_points = num_points || positions.length / 3;
+	var positions_data = null;
+	var extra_data = null;
+	var mesh = this._points_mesh;
+
+	if( num_points > positions.length / 3)
+		num_points = positions.length / 3;
+
+	if( !mesh || positions.length > (max_points*3) )
+	{
+		if( num_points > max_points )
+			max_points = GL.Texture.nextPOT( num_points );
+		positions_data = new Float32Array( max_points * 3 );
+		extra_data = new Float32Array( max_points * 4 );
+		mesh = this._points_mesh = GL.Mesh.load({ vertices: positions_data, extra4: extra_data });
 	}
 	else
 	{
-		if(node.billboard_mode == Billboard.PARALLEL_SPHERIC)
-		{
-			node._global_matrix.set( camera._model_matrix );
-			mat4.setTranslation( node._global_matrix, node._position );
-			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
-		}
-		else //Billboard.SPHERIC
-		{
-			mat4.lookAt( node._global_matrix, node._position, camera.position, RD.UP );
-			mat4.invert( node._global_matrix, node._global_matrix );
-			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
-		}
+		positions_data = this._points_mesh.getBuffer("vertices").data;
+		extra_data = this._points_mesh.getBuffer("extra4").data;
 	}
-	
-	renderer.setModelMatrix( node._global_matrix );
+
+	positions_data.set( positions_data.length > positions.length ? positions : positions.subarray(0, positions_data.length) );
+	if(extra)
+		extra_data.set( extra_data.length > extra.length ? extra : extra.subarray(0, extra_data.length) );
+	else if( extra_data.fill ) //fill with zeros
+		extra_data.fill(0);
+	mesh.upload( GL.DYNAMIC_STREAM );
+
+	shader.setUniform( "u_camera_perspective", camera._projection_matrix[5] );
+	shader.setUniform( "u_viewport", gl.viewport_data );
+	shader.setUniform( "u_model", RD.IDENTITY );
+	shader.setUniform( "u_mvp", camera._viewprojection_matrix );
+	shader.drawRange( mesh, GL.POINTS, 0, num_points );
 }
 
-Billboard.prototype.render = function(renderer, camera )
-{
-	//avoid orienting if it is not visible
-	if(this.flags.visible === false)
-		return;
+RD.renderPoints.vs_shader = "\n\
+precision highp float;\n\
+attribute vec3 a_vertex;\n\
+attribute vec4 a_extra4;\n\
+varying vec3 v_pos;\n\
+varying vec3 v_wPos;\n\
+varying vec4 v_extra4;\n\
+uniform mat4 u_model;\n\
+uniform mat4 u_mvp;\n\
+uniform vec4 u_viewport;\n\
+uniform float u_camera_perspective;\n\
+uniform float u_pointSize;\n\
+\n\
+float computePointSize( float radius, float w )\n\
+{\n\
+	if(radius < 0.0)\n\
+		return -radius;\n\
+	return u_viewport.w * u_camera_perspective * radius / w;\n\
+}\n\
+\n\
+void main() {\n\
+	vec3 vertex = a_vertex;	\n\
+	\n\
+	v_pos = vertex;\n\
+	v_wPos = (u_model * vec4(vertex,1.0)).xyz;\n\
+	v_extra4 = a_extra4;\n\
+	gl_Position = u_mvp * vec4(vertex,1.0);\n\
+	gl_Position.x = floor(gl_Position.x * u_viewport.z) / u_viewport.z;\n\
+	gl_Position.y = floor(gl_Position.y * u_viewport.w) / u_viewport.w;\n\
+	gl_PointSize = computePointSize( u_pointSize, gl_Position.w );\n\
+}\n\
+";
 
-	if(this.auto_orient)
-		Billboard.orientNode( this, camera, renderer );
-	
-	renderer.renderNode( this, renderer, camera );
-}
+RD.renderPoints.fs_shader = "\n\
+precision highp float;\n\
+varying vec3 v_pos;\n\
+varying vec3 v_wPos;\n\
+varying vec4 v_extra4; //id,flip \n\
+uniform float u_atlas;\n\
+\n\
+uniform sampler2D u_texture;\n\
+\n\
+void main() {\n\
+	float i_atlas = 1.0 / u_atlas;\n\
+	float frame = v_extra4.x;\n\
+	float x = frame * i_atlas;\n\
+	float y = floor(x);\n\
+	x = (x - y);\n\
+	y = y / u_atlas;\n\
+	if( v_extra4.y > 0.0 ) //must flip in x\n\
+		x -= gl_PointCoord.x * i_atlas - i_atlas;\n\
+	else\n\
+		x += gl_PointCoord.x * i_atlas;\n\
+	\n\
+	vec2 uv = vec2( x, 1.0 - (y + gl_PointCoord.y / u_atlas) );\n\
+	vec4 color = texture2D( u_texture, uv );\n\
+	if(color.a < 0.1)\n\
+		discard;\n\
+	gl_FragColor = color;\n\
+}\n\
+";
 
-/*
-Billboard.prototype.faceTo = function( position )
-{
-	
-}
-*/
+//footer
 
+})( typeof(window) != "undefined" ? window : (typeof(self) != "undefined" ? self : global ) );
+
+//main namespace
+(function(global){
 
 
 /**
@@ -3445,7 +3713,7 @@ function PointCloud()
 	this._last_point_id = 0;
 }
 
-extendClass(PointCloud, SceneNode);
+extendClass( PointCloud, RD.SceneNode );
 RD.PointCloud = PointCloud;
 
 PointCloud.prototype.render = function(renderer, camera )
@@ -3608,7 +3876,7 @@ function ParticlesEmissor()
 	this._last_particle_id = 0;
 }
 
-extendClass(ParticlesEmissor, SceneNode);
+extendClass( ParticlesEmissor, RD.SceneNode );
 RD.ParticlesEmissor = ParticlesEmissor;
 
 ParticlesEmissor.prototype.update = function(dt)
@@ -3768,11 +4036,95 @@ ParticlesEmissor._pixel_shader = '\
 			}\
 		';
 
+/**
+* Billboard class to hold an scene item, used for camera aligned objects
+* @class Billboard
+* @constructor
+*/
+function Billboard()  
+{
+	this._ctor();
+}
 
+extendClass( Billboard, RD.SceneNode );
+RD.Billboard = Billboard;
 
+Billboard.SPHERIC = 1;
+Billboard.PARALLEL_SPHERIC = 2;
+Billboard.CYLINDRIC = 3;
+Billboard.PARALLEL_CYLINDRIC = 4;
 
+Billboard.prototype._ctor = function()
+{
+	this.billboard_mode = Billboard.SPHERIC;
+	this.auto_orient = true;
+	SceneNode.prototype._ctor.call(this);
+}
 
+Billboard.orientNode = function( node, camera, renderer )
+{
+	if( node.billboard_mode == Billboard.CYLINDRIC || node.billboard_mode == Billboard.PARALLEL_CYLINDRIC )
+	{
+		var global_pos = null;
+		if(node.billboard_mode == Billboard.CYLINDRIC)
+		{
+			global_pos = node.getGlobalPosition( temp_vec3b );
+			vec3.sub(temp_vec3, camera._position, global_pos);
+			temp_vec2[0] = temp_vec3[0];
+			temp_vec2[1] = temp_vec3[2];
+		}
+		else //Billboard.PARALLEL_CYLINDRIC
+		{
+			temp_vec2[0] = camera._front[0];
+			temp_vec2[1] = camera._front[2];
+		}
 
+		var angle = vec2.computeSignedAngle( temp_vec2, RD.FRONT2D );
+		if( !isNaN(angle) )
+		{
+			mat4.rotateY( temp_mat4, identity_mat4, -angle );
+			node._global_matrix.set( temp_mat4 );
+			mat4.setTranslation( node._global_matrix, node._position );
+			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
+		}
+	}
+	else
+	{
+		if(node.billboard_mode == Billboard.PARALLEL_SPHERIC)
+		{
+			node._global_matrix.set( camera._model_matrix );
+			mat4.setTranslation( node._global_matrix, node._position );
+			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
+		}
+		else //Billboard.SPHERIC
+		{
+			mat4.lookAt( node._global_matrix, node._position, camera.position, RD.UP );
+			mat4.invert( node._global_matrix, node._global_matrix );
+			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
+		}
+	}
+	
+	renderer.setModelMatrix( node._global_matrix );
+}
+
+Billboard.prototype.render = function(renderer, camera )
+{
+	//avoid orienting if it is not visible
+	if(this.flags.visible === false)
+		return;
+
+	if(this.auto_orient)
+		Billboard.orientNode( this, camera, renderer );
+	
+	renderer.renderNode( this, renderer, camera );
+}
+
+/*
+Billboard.prototype.faceTo = function( position )
+{
+	
+}
+*/
 
 //footer
 

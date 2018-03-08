@@ -1,1 +1,2 @@
 ../src/rendeer.js
+../src/rendeer-extended.js
