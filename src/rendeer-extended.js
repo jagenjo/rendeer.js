@@ -2,6 +2,14 @@
 (function(global){
 
 
+/* This file includes
+ * PointCloud: to render points
+ * ParticleEmissor: to render basic particles
+ * Billboard: to render screen aligned plane
+ * SKybox: to render the skybox
+
+*/
+
 /**
 * PointCloud renders an array of points
 * @class PointCloud
@@ -385,53 +393,7 @@ Billboard.prototype._ctor = function()
 {
 	this.billboard_mode = Billboard.SPHERIC;
 	this.auto_orient = true;
-	SceneNode.prototype._ctor.call(this);
-}
-
-Billboard.orientNode = function( node, camera, renderer )
-{
-	if( node.billboard_mode == Billboard.CYLINDRIC || node.billboard_mode == Billboard.PARALLEL_CYLINDRIC )
-	{
-		var global_pos = null;
-		if(node.billboard_mode == Billboard.CYLINDRIC)
-		{
-			global_pos = node.getGlobalPosition( temp_vec3b );
-			vec3.sub(temp_vec3, camera._position, global_pos);
-			temp_vec2[0] = temp_vec3[0];
-			temp_vec2[1] = temp_vec3[2];
-		}
-		else //Billboard.PARALLEL_CYLINDRIC
-		{
-			temp_vec2[0] = camera._front[0];
-			temp_vec2[1] = camera._front[2];
-		}
-
-		var angle = vec2.computeSignedAngle( temp_vec2, RD.FRONT2D );
-		if( !isNaN(angle) )
-		{
-			mat4.rotateY( temp_mat4, identity_mat4, -angle );
-			node._global_matrix.set( temp_mat4 );
-			mat4.setTranslation( node._global_matrix, node._position );
-			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
-		}
-	}
-	else
-	{
-		if(node.billboard_mode == Billboard.PARALLEL_SPHERIC)
-		{
-			node._global_matrix.set( camera._model_matrix );
-			mat4.setTranslation( node._global_matrix, node._position );
-			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
-		}
-		else //Billboard.SPHERIC
-		{
-			mat4.lookAt( node._global_matrix, node._position, camera.position, RD.UP );
-			mat4.invert( node._global_matrix, node._global_matrix );
-			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
-		}
-	}
-	
-	renderer.setModelMatrix( node._global_matrix );
+	RD.SceneNode.prototype._ctor.call(this);
 }
 
 Billboard.prototype.render = function(renderer, camera )
@@ -439,20 +401,175 @@ Billboard.prototype.render = function(renderer, camera )
 	//avoid orienting if it is not visible
 	if(this.flags.visible === false)
 		return;
-
 	if(this.auto_orient)
-		Billboard.orientNode( this, camera, renderer );
-	
+		RD.orientNodeToCamera( this.billboard_mode, this, camera, renderer );
 	renderer.renderNode( this, renderer, camera );
 }
 
-/*
-Billboard.prototype.faceTo = function( position )
-{
-	
-}
+/**
+* To render several sprites from a texture atlas
+* This is not a node, its a helper class
+* @class SpritesBatch
+* @constructor
 */
+function SpritesBatch( max, use_points )
+{
+	max = max || 1024;
+	this.max_sprites = max;
+	this.positions = new Float32Array(max*3); //positions
+	this.sprite_info = new Float32Array(max*4); //sprite info []
+	this.index = 0;
+	this.shader = use_points ? "point_sprites" : "quad_sprites";
+	this.use_points = use_points;
+	this.must_update_buffers = true;
+}
+
+RD.SpritesBatch = SpritesBatch;
+
+SpritesBatch.XY = 0;
+SpritesBatch.XZ = 1;
+SpritesBatch.CYLINDRICAL = 2;
+SpritesBatch.SPHERICAL = 3;
+SpritesBatch.FLAT = 4;
+
+//SpritesBatch.u_colors = new Float32Array([1,1,1, 1,1,0, 1,0,1, 1,0,0, 0,1,1, 0,1,0, 0,0,1, 0,1,1, 0,0,0]);
+SpritesBatch.u_colors = new Float32Array([1,1,1, 0.75,0.75,0.75, 0.5,0.5,0.5, 0.25,0.25,0.25, 0.1,0.1,0.1 ]);
+
+SpritesBatch.prototype.reset = function()
+{
+	this.index = 0;
+}
+
+SpritesBatch.prototype.add = function( pos, extra )
+{
+	if( this.max_sprites <= this.index )
+	{
+		console.warn("too many sprites in batch, increase size");
+		return;
+	}
+	var index = this.index;
+	this.index += 1;
+	this.positions.set( pos, index*3 );
+	this.sprite_info.set( extra, index*4 );
+	this.must_update_buffers = true;
+}
+
+//mode allows to orient them
+SpritesBatch.prototype.render = function( texture, camera, size, atlas_size, color, mode )
+{
+	if(!this.index)
+		return;
+
+	var shader = gl.shaders[ this.shader ];
+	if(!shader)
+		return;
+
+	mode = mode || 0;
+
+	if( this.use_points )
+	{
+		shader.uniforms( GFX.scene_renderer._uniforms );
+		shader.setUniform( "u_pointSize", size );
+		shader.setUniform( "u_atlas", atlas_size );
+		shader.setUniform( "u_texture", texture.bind(0) );
+		RD.renderPoints( this.positions, this.sprite_info, camera, this.index, shader );
+		return;
+	}
+
+	//using quads
+	if(!this.vertex_buffer_data)
+	{
+		this.vertex_buffer_data = new Float32Array( this.max_sprites * 3 * 4 ); //4 vertex per quad
+		this.extra4_buffer_data = new Float32Array( this.max_sprites * 4 * 4 ); //4 vertex per quad
+		var extra2_data = new Int8Array( this.max_sprites * 2 * 4 ); //for inflation direction
+		var quad_data = new Int8Array([-1,1, 1,1, -1,-1, 1,-1]);
+		for(var i = 0; i < extra2_data.length; i += 8 )
+			extra2_data.set( quad_data, i );
+		var indices_data = new Int16Array([0,1,2, 1,3,2]);
+		var indices_buffer_data = new Uint16Array( this.max_sprites * 3 * 2); //3 indices, 2 triangles
+		for(var i = 0; i < indices_buffer_data.length; ++i )
+			indices_buffer_data[i] = indices_data[i%6] + Math.floor(i/6)*4;
+		this.vertex_buffer = new GL.Buffer( gl.ARRAY_BUFFER, this.vertex_buffer_data, 3, gl.DYNAMIC_DRAW );
+		this.extra4_buffer = new GL.Buffer( gl.ARRAY_BUFFER, this.extra4_buffer_data, 4, gl.DYNAMIC_DRAW );
+		this.extra2_buffer = new GL.Buffer( gl.ARRAY_BUFFER, extra2_data, 2, gl.STATIC_DRAW );
+		this.indices_buffer = new GL.Buffer( gl.ELEMENT_ARRAY_BUFFER, indices_buffer_data, 1, gl.STATIC_DRAW );
+	}
+
+	if( this.must_update_buffers )
+	{
+		var vertices = this.vertex_buffer_data;
+		var extra4 = this.extra4_buffer_data;
+		var end = Math.min( this.index, this.positions.length / 3);
+		for(var i = 0, l = end; i < l; ++i )
+		{
+			var index = i*3;
+			var pos = this.positions.subarray( index, index + 3 );
+			vertices.set( pos, index*4 );
+			vertices.set( pos, index*4 + 3 );
+			vertices.set( pos, index*4 + 6 );
+			vertices.set( pos, index*4 + 9 );
+			var index = i*4;
+			var info = this.sprite_info.subarray( index, index + 4 );
+			extra4.set( info, index*4 );
+			extra4.set( info, index*4 + 4 );
+			extra4.set( info, index*4 + 8 );
+			extra4.set( info, index*4 + 12 );
+		}
+
+		//upload subarray
+		this.vertex_buffer.uploadRange(0, this.index * 3 * 4 * 4 );
+		this.extra4_buffer.uploadRange(0, this.index * 4 * 4 * 4 );
+		//this.vertex_buffer.upload();
+		//this.extra4_buffer.upload();
+		this.must_update_buffers = false;
+	}
+
+	var frame_width = (texture.width / atlas_size[0]);
+	var frame_height = (texture.height / atlas_size[1]);
+	var aspect = frame_width / frame_height;
+
+	var top = RD.UP;
+	var right = RD.RIGHT;
+
+	switch( mode )
+	{
+		case SpritesBatch.SPHERICAL: top = camera.getLocalVector( RD.UP ); //break not missing
+		case SpritesBatch.CYLINDRICAL: right = camera.getLocalVector( RD.RIGHT ); break;
+		case SpritesBatch.FLAT: top = camera.getLocalVector( RD.FRONT ); right = camera.getLocalVector( RD.RIGHT ); break;
+		case SpritesBatch.XZ: top = RD.FRONT; break;
+	};
+
+	//render
+	shader.bind();
+	shader.uniforms( GFX.scene_renderer._uniforms );
+	shader.setUniform("u_color", color || [1,1,1,1] );
+	shader.setUniform("u_size", [size, size / aspect] );
+	shader.setUniform("u_colors", SpritesBatch.u_colors );
+	shader.setUniform("u_top", top );
+	shader.setUniform("u_right", right );
+	shader.setUniform( "u_atlas", atlas_size );
+	shader.setUniform( "u_texture", texture.bind(0) );
+	shader.setUniform( "u_itexsize", [1 / texture.width, 1 / texture.height] );
+	shader.setUniform( "u_viewport", gl.viewport_data );
+
+	var loc1 = shader.attributes["a_vertex"];
+	var loc2 = shader.attributes["a_extra4"];
+	var loc3 = shader.attributes["a_extra2"];
+	this.vertex_buffer.bind( loc1 );
+	this.extra4_buffer.bind( loc2 );
+	this.extra2_buffer.bind( loc3 );
+	gl.bindBuffer( gl.ELEMENT_ARRAY_BUFFER, this.indices_buffer.buffer );
+	gl.drawElements( gl.TRIANGLES, this.index * 6, gl.UNSIGNED_SHORT, 0);
+	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+	this.vertex_buffer.unbind( loc1 );
+	this.extra4_buffer.unbind( loc2 );
+	this.extra2_buffer.unbind( loc3 );
+}
+
+
+
+
+
 
 //footer
-
 })( typeof(window) != "undefined" ? window : (typeof(self) != "undefined" ? self : global ) );

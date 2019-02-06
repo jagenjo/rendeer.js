@@ -51,6 +51,14 @@ RD.WHITE = vec3.fromValues(1,1,1);
 RD.BLACK = vec3.fromValues(0,0,0);
 RD.IDENTITY = mat4.create();
 
+RD.CENTER = 0;
+RD.TOP_LEFT = 1;
+RD.TOP_RIGHT = 2;
+RD.BOTTOM_LEFT = 3;
+RD.BOTTOM_RIGHT = 4;
+RD.TOP_CENTER = 5;
+RD.BOTTOM_CENTER = 6;
+
 //higher means render before
 RD.PRIORITY_BACKGROUND = 30;
 RD.PRIORITY_OPAQUE = 20;
@@ -61,6 +69,12 @@ RD.BLEND_NONE = 0;
 RD.BLEND_ALPHA = 1; //src_alpha, one_minus_src_alpha
 RD.BLEND_ADD = 2; //src_alpha, one
 RD.BLEND_MULTIPLY = 3; //GL.DST_COLOR, GL.ONE_MINUS_SRC_ALPHA
+
+RD.NO_BILLBOARD = 0;
+RD.BILLBOARD_SPHERIC = 1;
+RD.BILLBOARD_PARALLEL_SPHERIC = 2;
+RD.BILLBOARD_CYLINDRIC = 3;
+RD.BILLBOARD_PARALLEL_CYLINDRIC = 4;
 
 RD.setup = function(o)
 {
@@ -120,8 +134,8 @@ SceneNode.prototype._ctor = function()
 	//watchers
 	//TO DO: use Proxy
 
-	//bounding
-	this._bounding_box = null; //use updateBoundingBox to update it
+	//bounding box in world space
+	this.bounding_box = null; //use updateBoundingBox to update it
 
 	//rendering priority (order)
 	this.render_priority = RD.PRIORITY_OPAQUE;
@@ -402,17 +416,35 @@ SceneNode.prototype.addChild = function( node, keep_transform )
 		this.children = [];
 
 	this.children.push(node);
-	change_scene(node, this._scene);
 
-	//recursive change all children
+	if( this._scene != node._scene )
+		change_scene(node, this._scene);
+
+	//recursive change all children scene pointer
 	function change_scene(node, scene)
 	{
+		if(node._scene && node._scene != scene)
+		{
+			var index = node._scene._nodes.indexOf(node);
+			if(index != -1)
+				node._scene._nodes.splice(index,1);
+			if(node.id && node._scene._nodes_by_id[node.id] == node)
+				delete node._scene._nodes_by_id[node.id];
+		}
 		node._scene = scene;
-		if(node.id && scene)
-			scene._nodes_by_id[node.id] = node;
+		if(scene)
+		{
+			scene._nodes.push(node);
+			if(node.id && scene)
+				scene._nodes_by_id[node.id] = node;
+		}
 		if(node.children)
 			for(var i = 0, l = node.children.length; i < l; i++)
-				change_scene( node.children[i], scene );
+			{
+				var child = node.children[i];
+				if( child._scene != scene )
+					change_scene( child, scene );
+			}
 	}
 }
 
@@ -438,14 +470,19 @@ SceneNode.prototype.removeChild = function( node, keep_transform )
 	if( keep_transform )
 		node.fromMatrix( node._global_matrix );
 
-	change_scene(node);
+	change_scene( node );
 
 	//recursive change all children
-	function change_scene(node)
+	function change_scene( node )
 	{
-		if(node.id && node._scene && node._scene._nodes_by_id[node.id])
-			delete node._scene._nodes_by_id[ node.id ];
-		
+		if( node._scene )
+		{
+			if( node.id && node._scene._nodes_by_id[node.id] == node )
+				delete node._scene._nodes_by_id[ node.id ];
+			var index = node._scene._nodes.indexOf(node);
+			if(index != -1)
+				node._scene._nodes.splice(index,1);
+		}
 		node._scene = null;
 		for(var i = 0, l = node.children.length; i < l; i++)
 			change_scene( node.children[i] );
@@ -591,9 +628,19 @@ SceneNode.prototype.configure = function(o)
 			case "texture":
 				this[i] = o[i];
 				continue;
+			case "flags":
+				for(var j in o.flags)
+					this.flags[j] = o.flags[j];
+				continue;
 			case "scale":
 			case "scaling":
 				this.scale(o[i]);
+				continue;
+			case "tiling":
+				if( isNumber( o[i] ) )
+					this.setTextureTiling(o[i],o[i]);
+				else
+					this.setTextureTiling(o[i][0],o[i][1],o[i][2],o[i][3]);
 				continue;
 			case "parent":
 				parent = o[i];
@@ -691,7 +738,7 @@ SceneNode.prototype.translate = function(delta)
 * @param {vec3} axis
 * @param {boolean} in_local specify if the axis is in local space or global space
 */
-SceneNode.prototype.rotate = function(angle_in_rad, axis, in_local)
+SceneNode.prototype.rotate = function( angle_in_rad, axis, in_local )
 {
 	quat.setAxisAngle( temp_quat, axis, angle_in_rad );
 	
@@ -699,6 +746,20 @@ SceneNode.prototype.rotate = function(angle_in_rad, axis, in_local)
 		quat.multiply( this._rotation, this._rotation, temp_quat );
 	else
 		quat.multiply( this._rotation, temp_quat, this._rotation );
+	this._must_update_matrix = true;
+}
+
+/**
+* Rotate object passing a quaternion containing a rotation
+* @method rotateQuat
+* @param {quat} q
+*/
+SceneNode.prototype.rotateQuat = function(q, in_local)
+{
+	if(!in_local)
+		quat.multiply( this._rotation, this._rotation, q );
+	else
+		quat.multiply( this._rotation, q, this._rotation );
 	this._must_update_matrix = true;
 }
 
@@ -729,14 +790,23 @@ SceneNode.prototype.setPivot = function(pivot)
 	this.pivot = pivot;
 }
 
-SceneNode.prototype.orbit = function(angle, axis, pivot)
+SceneNode.prototype.setTextureTiling = function( tiling_x, tiling_y, offset_x, offset_y )
 {
-	if(!axis)
-		throw("RD: orbit axis missing");
-	var R = quat.setAxisAngle( temp_quat, axis, angle );
+	if(!this.texture_matrix)
+	{
+		this.texture_matrix = mat3.create();
+		this._uniforms["u_texture_matrix"] = this.texture_matrix;
+	}
 
-	//TODO
-	this._must_update_matrix = true;
+	offset_x = offset_x || 0;
+	offset_y = offset_y || 0;
+
+	if(!this.shader)
+		this.shader = "texture_transform";
+
+	mat3.identity( this.texture_matrix );
+	mat3.translate( this.texture_matrix, this.texture_matrix, [offset_x,offset_y] );
+	mat3.scale( this.texture_matrix, this.texture_matrix, [tiling_x,tiling_y] );
 }
 
 /**
@@ -1031,6 +1101,34 @@ SceneNode.prototype.findNode = function(id)
 }
 
 /**
+* Searchs which nodes pass the filter function
+* @method findNodesByFilter
+* @param {Function} filter_func a function that receives the node and must return true if it passes
+* @param {Number} layers [optional] to filter by layers too
+* @param {Array} result [optional] where to store the output
+* @return {Array} array with all the nodes that passed the function
+*/
+SceneNode.prototype.findNodesByFilter = function( filter_func, layers, result )
+{
+	if(layers === undefined)
+		layers = 0xFF;
+	result = result || [];
+
+	for(var i = 0, l = this.children.length; i < l; i++)
+	{
+		var node = this.children[i];
+		if( !(node.layer & layers) )
+			continue;
+
+		if( !filter_func || filter_func( node ) )
+			result.push( node );
+
+		node.findNodesByFilter( filter_func, layers, result );
+	}
+	return result;
+}
+
+/**
 * calls a function in child nodes
 * @method propagate
 * @param {String} method name
@@ -1320,6 +1418,33 @@ SceneNode.prototype.setRangeFromSubmesh = function( submesh_id )
 	this.draw_range[1] = submesh.length;
 }
 
+/**
+* returns an array of nodes which center is inside the sphere
+* @method findNodesInSphere
+* @param {number} layers [optional]
+*/
+SceneNode.prototype.findNodesInSphere = function( center, radius, layers, out )
+{
+	if(layers === undefined)
+		layers = 0xFF;
+	out = out || [];
+	for(var i = 0; i < this.children.length; ++i)
+	{
+		var node = this.children[i];
+		if( node.layers & layers )
+		{
+			node.getGlobalPosition( temp_vec3, true );
+			var dist = vec3.distance( temp_vec3, center );
+			if( dist <= radius ) 
+				out.push( node );
+		}
+		if(node.children.length)
+			node.findNodesInSphere( center, radius, layers, out );
+	}
+	return out;
+}
+
+
 //This node allows to render a mesh where vertices are changing constantly
 function DynamicMeshNode(o)
 {
@@ -1443,10 +1568,11 @@ Sprite.prototype._ctor = function()
 	SceneNode.prototype._ctor.call(this);
 
 	this.mesh = "plane";
-	this.size = vec2.fromValues(1,1);
+	this.size = vec2.fromValues(0,0);
+	this.sprite_pivot = RD.TOP_LEFT;
 	this.blend_mode = RD.BLEND_ALPHA;
 	this.flags.two_sided = true;
-	this.flags.depth_test = false;
+	//this.flags.depth_test = false;
 	this.flags.flipX = false;
 	this.flags.flipY = false;
 	this.shader = "texture_transform";
@@ -1472,20 +1598,41 @@ Sprite.prototype.setSize = function(w,h)
 }
 
 //static version
-Sprite.createFrames = function(num_rows, names, frames)
+//num is the number of elements per row and column, if array then [columns,rows]
+Sprite.createFrames = function( num, names, frames )
 {
 	frames = frames || {};
+	var num_rows;
+	var num_colums;
+	if(num.constructor != Number)
+	{
+		num_columns = num[0];
+		num_rows = num[1];
+	}
+	else
+		num_rows = num_columns = num;
+
 	var x = 0;
 	var y = 0;
-	var offset = 1/num_rows;
-	for(var i in names)
+	var offsetx = 1/num_columns;
+	var offsety = 1/num_rows;
+	var total = num_columns * num_rows;
+
+	if(!names)
 	{
-		frames[ names[i] ] = { pos:[x,y], size:[offset,offset], normalized: true };
-		x += offset;
+		names = [];
+		for(var i = 0; i < total; ++i)
+			names.push( String(i) );
+	}
+
+	for( var i = 0; i < names.length; ++i )
+	{
+		frames[ names[i] ] = { pos:[x,y], size:[offsetx,offsety], normalized: true };
+		x += offsetx;
 		if(x >= 1)
 		{
 			x = 0;
-			y += offset;
+			y += offsety;
 		}
 		if(y >= 1)
 			return frames;
@@ -1493,9 +1640,9 @@ Sprite.createFrames = function(num_rows, names, frames)
 	return frames;
 }
 
-Sprite.prototype.createFrames = function(num_rows, names)
+Sprite.prototype.createFrames = function(num, names)
 {
-	Sprite.createFrames(num_rows, names, this.frames );
+	Sprite.createFrames(num, names, this.frames );
 }
 
 Sprite.prototype.addFrame = function(name, x,y, w,h, normalized )
@@ -1516,7 +1663,7 @@ Sprite.prototype.updateTextureMatrix = function( renderer )
 		var that = this;
 		if(this.texture.indexOf(".") != -1)
 			renderer.loadTexture( this.texture, renderer.default_texture_settings, function(tex){
-				if(tex)
+				if(tex && that.size[0] == 0 && that.size[0] == 0 )
 					that.setSize( tex.width, tex.height );	
 			});
 		texture = gl.textures[ "white" ];
@@ -1576,21 +1723,69 @@ Sprite.prototype.render = function(renderer, camera)
 	if(!this.texture)
 		return;	
 		
-	if(this.updateTextureMatrix(renderer))
+	if(!this.updateTextureMatrix(renderer)) //texture or frame not found
+		return;
+
+	if(this.billboard_mode)
+		RD.orientNodeToCamera( node.billboard_mode, this, camera, renderer );
+	else
 	{
-		if(this.billboard_mode)
-			RD.Billboard.orientNode( this, camera, renderer );
-		else
+		var offsetx = 0;
+		var offsety = 0;
+		temp_mat4.set( this._global_matrix );
+		if (this.sprite_pivot)
 		{
-			mat4.scale( this._global_matrix, this._global_matrix, [this.size[0], this.size[1], 1 ] );
-			renderer.setModelMatrix( this._global_matrix );
+			switch( this.sprite_pivot )
+			{
+				//case RD.CENTER: break;
+				case RD.TOP_LEFT: offsetx = 0.5; offsety = -0.5; break;
+				case RD.TOP_CENTER: offsety = -0.5; break;
+				case RD.TOP_RIGHT: offsetx = -0.5; break;
+				case RD.BOTTOM_LEFT: offsetx = 0.5; offsety = 0.5; break;
+				case RD.BOTTOM_CENTER: offsety = 0.5; break;
+				case RD.BOTTOM_RIGHT: offsetx = -0.5; offsety = 0.5; break;
+			}
+			mat4.translate( temp_mat4, temp_mat4, [offsetx * this.size[0], offsety * this.size[1], 0 ] );
 		}
-		renderer.renderNode( this, renderer, camera );
+		mat4.scale( temp_mat4, temp_mat4, [this.size[0], this.size[1], 1 ] );
+		renderer.setModelMatrix( temp_mat4 );
 	}
+	renderer.renderNode( this, renderer, camera );
 }
 
 extendClass( Sprite, SceneNode );
 RD.Sprite = Sprite;
+
+
+
+function Skybox(o)
+{
+	SceneNode.prototype._ctor.call(this,o);
+	this._ctor();
+	if(o)
+		this.configure(o);
+}
+
+Skybox.prototype._ctor = function()
+{
+	this.mesh = "cube";
+	this.shader = "skybox";
+	this.scaling = [10,10,10];
+	this.flags.depth_test = false;
+	this.flags.two_sided = true;
+}
+
+Skybox.prototype.render = function( renderer, camera )
+{
+	this.position = camera.position;
+	this.updateGlobalMatrix(true);
+	renderer.setModelMatrix( this._global_matrix );
+	renderer.renderNode( this, camera );
+}
+
+extendClass( Skybox, SceneNode );
+RD.Skybox = Skybox;
+
 
 
 /**
@@ -1604,6 +1799,7 @@ function Scene()
 	this._root.flags.no_transform = true; //avoid extra matrix multiplication
 	this._root._scene = this;
 	this._nodes_by_id = {};
+	this._nodes = [];
 	this._to_destroy = [];
 
 	this.time = 0;
@@ -1620,6 +1816,8 @@ Scene.prototype.clear = function()
 {
 	this._root = new RD.SceneNode();
 	this._root._scene = this;
+	this._nodes.length = 0;
+	this._nodes_by_id = {};
 	this.time = 0;
 }
 
@@ -1631,6 +1829,32 @@ Scene.prototype.getNodeById = function(id)
 {
 	return this._nodes_by_id[id];
 	//return this._root.findNode(id);
+}
+
+//
+/**
+* Returns an array of nodes which bounding overlaps with a given bounding box
+* You must call Scene.root.updateBoundingBox() to update the boundings
+* 
+* @method findNodesInBBox
+* @param {BBox} box  use BBox.fromCenterHalfsize(center,halfsize) to define it
+* @param {number} layers [optional]
+*/
+Scene.prototype.findNodesInBBox = function( box, layers, out )
+{
+	if(layers === undefined)
+		layers = 0xFF;
+	out = out || [];
+	for(var i = 0; i < this.nodes.length; ++i)
+	{
+		var node = this.nodes[i];
+		if(!node.bounding_box || !(node.layers & layers))
+			continue;
+		if( !geo.testBBoxBBox( node.bounding_box, box ) )
+			continue;
+		out.push( node );
+	}
+	return out;
 }
 
 /**
@@ -1715,6 +1939,7 @@ function Renderer( context, options )
 	this.point_size = 5;
 	this.sort_by_priority = true;
 	this.sort_by_distance = false;
+	this.reverse_normals = false; //used for reflections
 	
 	this.assets_folder = "";
 	
@@ -1723,6 +1948,7 @@ function Renderer( context, options )
 	this._viewprojection_matrix = mat4.create();
 	this._mvp_matrix = mat4.create();
 	this._model_matrix = mat4.create();
+	this._texture_matrix = mat3.create();
 	
 	this._nodes = [];
 	this._uniforms = {
@@ -1730,7 +1956,8 @@ function Renderer( context, options )
 		u_viewprojection: this._viewprojection_matrix,
 		u_model: this._model_matrix,
 		u_mvp: this._mvp_matrix,
-		u_global_alpha_clip: 0.0
+		u_global_alpha_clip: 0.0,
+		u_texture_matrix: this._texture_matrix
 	};
 	
 	//set some default stuff
@@ -1740,6 +1967,8 @@ function Renderer( context, options )
 	this.assets_folder = options.assets_folder || "";
 	this.autoload_assets = options.autoload_assets !== undefined ? options.autoload_assets : true;
 	this.default_texture_settings = { wrap: gl.REPEAT, minFilter: gl.LINEAR_MIPMAP_LINEAR, magFilter: gl.LINEAR };
+	this.default_cubemap_settings = { minFilter: gl.LINEAR_MIPMAP_LINEAR, magFilter: gl.LINEAR, is_cross: 1 };
+	
 	
 	//global containers and basic data
 	this.meshes["plane"] = GL.Mesh.plane({size:1});
@@ -1867,8 +2096,8 @@ Renderer.prototype.render = function(scene, camera, nodes, layers )
 		//precompute distances
 		if(this.sort_by_distance)
 			nodes.forEach( function(a) { a._distance = a.getDistanceTo( camera._position ); } );
-		
-		//filter by mustRender
+
+		//filter by mustRender (you can do your frustum culling here)
 		var that = this;
 		nodes = nodes.filter( function(n) { return !n.mustRender || n.mustRender(that,camera) != false; }); //GC
 		
@@ -1963,7 +2192,7 @@ Renderer.prototype.restoreState = function()
 	this._nodes = state.nodes;
 }
 
-
+//assign and updated viewprojection matrix
 Renderer.prototype.setModelMatrix = function(matrix)
 {
 	this._model_matrix.set( matrix );
@@ -1996,7 +2225,7 @@ Renderer.prototype.renderNode = function(node, camera)
 		mesh = node._mesh;
 	else if (node.mesh) //shared mesh
 	{
-		mesh = gl.meshes[node.mesh];
+		mesh = gl.meshes[ node.mesh ];
 		if(!mesh)
 		{
 			this._meshes_missing++;
@@ -2088,9 +2317,29 @@ Renderer.prototype.renderNode = function(node, camera)
 		this.disableNodeFlags( node );
 }
 
+Renderer.prototype.renderMesh = function( model, mesh, texture, color, shader )
+{
+	if(!mesh)
+		return;
+	if( color )
+		this._uniforms.u_color.set( color );
+	if(!model)
+		model = RD.IDENTITY;
+	this._uniforms.u_model.set( model );
+	if(!shader)
+		shader = texture ? gl.shaders["texture"] : gl.shaders["flat"];
+	if( texture )
+		this._uniforms.u_texture = texture.bind(0);
+	shader.uniforms(this._uniforms);
+	shader.draw( mesh );
+}
+
 Renderer.prototype.enableNodeFlags = function(node)
 {
-	gl.frontFace( node.flags.flip_normals ? gl.CW : gl.CCW );
+	var ff = node.flags.flip_normals;
+	if(this.reverse_normals)
+		ff = !ff;
+	gl.frontFace( ff ? gl.CW : gl.CCW );
 	gl[ node.flags.depth_test === false ? "disable" : "enable"]( gl.DEPTH_TEST );
 	if( node.flags.depth_write === false )
 		gl.depthMask( false );
@@ -2229,7 +2478,14 @@ Renderer.prototype.loadTexture = function( url, options, on_complete )
 	if(full_url.indexOf("://") == -1)
 		full_url = this.assets_folder + url;
 
-	var new_tex = GL.Texture.fromURL( full_url, options, function(t){
+	var new_tex = null;
+
+	if( url.indexOf("CUBEMAP") != -1 )
+		new_tex = GL.Texture.cubemapFromURL( full_url, this.default_cubemap_settings, inner_callback );
+	else
+		new_tex = GL.Texture.fromURL( full_url, options, inner_callback );
+
+	function inner_callback(t){
 		if(!t)
 			that.assets_not_found[ url ] = true;
 		else
@@ -2240,7 +2496,7 @@ Renderer.prototype.loadTexture = function( url, options, on_complete )
 		delete that.assets_loading[ url ];
 		if(that.on_texture_load)
 			that.on_texture_load(t, name);
-	});
+	}
 
 	if(options && options.preview)
 		new_tex.is_preview = true;
@@ -2324,7 +2580,7 @@ Renderer.prototype.compileShadersFromAtlas = function(files, extra_macros)
 	 
 	//compile shaders
 	var lines = info.split("\n");
-	for(var i in lines)
+	for(var i = 0; i < lines.length; ++i)
 	{
 		var line = lines[i];
 		var t = line.trim().split(" ");
@@ -2568,6 +2824,7 @@ Renderer.prototype.addMesh = function(name, mesh)
 		mesh = mesh.cloneShared( this.gl );
 	this.gl.meshes[name] = mesh;
 }
+
 
 
 RD.Renderer = Renderer;
@@ -2825,6 +3082,9 @@ Camera.prototype.updateMatrices = function( force )
 		mat4.lookAt(this._view_matrix, this._position, this._target, this._up);
 	}
 
+	if( this.is_reflection )
+		mat4.scale( this._view_matrix, this._view_matrix, [1,-1,1] );
+
 	mat4.multiply(this._viewprojection_matrix, this._projection_matrix, this._view_matrix );
 	mat4.invert(this._model_matrix, this._view_matrix );
 	
@@ -3046,8 +3306,8 @@ Camera.prototype.unproject = function( vec, viewport, result )
 * @param {number} x
 * @param {number} y
 * @param {Array} [viewport=gl.viewport]
-* @param {Object} [out] { origin: vec3, direction: vec3 }
-* @return {Object} ray object { origin: vec3, direction:vec3 }
+* @param {RD.Ray} [out] { origin: vec3, direction: vec3 }
+* @return {RD.Ray} ray object { origin: vec3, direction:vec3 }
 */
 Camera.prototype.getRay = function( x, y, viewport, out )
 {
@@ -3142,10 +3402,13 @@ Camera.prototype.applyController = function(dt, event, speed)
 
 Camera.prototype.lerp = function(camera, f)
 {
-	vec3.lerp( this._position, camera._position, f );
-	vec3.lerp( this._target, camera._target, f );
-	vec3.lerp( this._up, camera._up, f );
+	vec3.lerp( this._position, this._position, camera._position, f );
+	vec3.lerp( this._target, this._target, camera._target, f );
+	vec3.lerp( this._up, this._up, camera._up, f );
 	this._fov = this._fov * (1.0 - f) + camera._fov * f;
+	this._near = this._near * (1.0 - f) + camera._near * f;
+	this._far = this._far * (1.0 - f) + camera._far * f;
+	this._frustum_size = this._frustum_size * (1.0 - f) + camera._frustum_sizer * f;
 	this._must_update_matrix = true;
 }
 
@@ -3303,6 +3566,9 @@ RD.Factory.templates = {
 	sphere: { mesh:"sphere", shader: "phong" },
 	floor: { mesh:"planeXZ", scaling: 10, shader: "phong" }
 };
+
+
+
 
 /* used functions */
 
@@ -3462,8 +3728,12 @@ Renderer.prototype.createShaders = function()
 		varying vec2 v_coord;\
 		uniform vec4 u_color;\
 		uniform sampler2D u_color_texture;\
+		uniform float u_global_alpha_clip;\
 		void main() {\
-			gl_FragColor = u_color * texture2D(u_color_texture, v_coord);\
+			vec4 color = u_color * texture2D(u_color_texture, v_coord);\n\
+			if(color.w < u_global_alpha_clip)\n\
+				discard;\n\
+			gl_FragColor = color;\
 		}\
 	';
 	
@@ -3535,6 +3805,56 @@ Renderer.prototype.createShaders = function()
 	gl.shaders["textured_phong_instancing"] = this._textured_phong_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { INSTANCING: "", TEXTURED: "" } );
 	this._textured_phong_instancing_shader.uniforms( phong_uniforms );
 }
+
+RD.orientNodeToCamera = function( mode, node, camera, renderer )
+{
+	if(!mode)
+		return;
+
+	if( mode == RD.BILLBOARD_CYLINDRIC || mode == RD.BILLBOARD_PARALLEL_CYLINDRIC )
+	{
+		var global_pos = null;
+		if(mode == RD.BILLBOARD_CYLINDRIC)
+		{
+			global_pos = node.getGlobalPosition( temp_vec3b );
+			vec3.sub(temp_vec3, camera._position, global_pos);
+			temp_vec2[0] = temp_vec3[0];
+			temp_vec2[1] = temp_vec3[2];
+		}
+		else //BILLBOARD_PARALLEL_CYLINDRIC
+		{
+			temp_vec2[0] = camera._front[0];
+			temp_vec2[1] = camera._front[2];
+		}
+
+		var angle = vec2.computeSignedAngle( temp_vec2, RD.FRONT2D );
+		if( !isNaN(angle) )
+		{
+			mat4.rotateY( temp_mat4, identity_mat4, -angle );
+			node._global_matrix.set( temp_mat4 );
+			mat4.setTranslation( node._global_matrix, node._position );
+			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
+		}
+	}
+	else
+	{
+		if( mode == RD.BILLBOARD_PARALLEL_SPHERIC )
+		{
+			node._global_matrix.set( camera._model_matrix );
+			mat4.setTranslation( node._global_matrix, node._position );
+			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
+		}
+		else //BILLBOARD_SPHERIC
+		{
+			mat4.lookAt( node._global_matrix, node._position, camera.position, RD.UP );
+			mat4.invert( node._global_matrix, node._global_matrix );
+			mat4.scale( node._global_matrix, node._global_matrix, node._scale );
+		}
+	}
+	
+	renderer.setModelMatrix( node._global_matrix );
+}
+
 
 RD.readPixels = function( url, on_complete )
 {
