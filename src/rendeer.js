@@ -76,6 +76,9 @@ RD.BILLBOARD_PARALLEL_SPHERIC = 2;
 RD.BILLBOARD_CYLINDRIC = 3;
 RD.BILLBOARD_PARALLEL_CYLINDRIC = 4;
 
+var DEG2RAD = RD.DEG2RAD = 0.0174532925;
+var RAD2DEG = RD.RAD2DEG = 57.295779578552306;
+
 RD.setup = function(o)
 {
 	o = o || {};
@@ -85,6 +88,48 @@ RD.setup = function(o)
 }
 
 var last_object_id = 0;
+
+if( typeof(extendClass) == "undefined" )
+{
+	global.extendClass = function extendClass( target, origin ) {
+		for(var i in origin) //copy class properties
+		{
+			if(target.hasOwnProperty(i))
+				continue;
+			target[i] = origin[i];
+		}
+
+		if(origin.prototype) //copy prototype properties
+		{
+			var prop_names = Object.getOwnPropertyNames( origin.prototype );
+			for(var i = 0; i < prop_names.length; ++i) //only enumerables
+			{
+				var name = prop_names[i];
+				//if(!origin.prototype.hasOwnProperty(name)) 
+				//	continue;
+
+				if(target.prototype.hasOwnProperty(name)) //avoid overwritting existing ones
+					continue;
+
+				//copy getters 
+				if(origin.prototype.__lookupGetter__(name))
+					target.prototype.__defineGetter__(name, origin.prototype.__lookupGetter__(name));
+				else 
+					target.prototype[name] = origin.prototype[name];
+
+				//and setters
+				if(origin.prototype.__lookupSetter__(name))
+					target.prototype.__defineSetter__(name, origin.prototype.__lookupSetter__(name));
+			}
+		}
+
+		if(!target.hasOwnProperty("superclass")) 
+			Object.defineProperty(target, "superclass", {
+				get: function() { return origin },
+				enumerable: false
+			});	
+	}
+}
 
 
 /* Temporary containers ************/
@@ -1575,6 +1620,7 @@ Sprite.prototype._ctor = function()
 	//this.flags.depth_test = false;
 	this.flags.flipX = false;
 	this.flags.flipY = false;
+	this.flags.pixelated = false;
 	this.shader = "texture_transform";
 	this._angle = 0;
 
@@ -1722,6 +1768,14 @@ Sprite.prototype.render = function(renderer, camera)
 {
 	if(!this.texture)
 		return;	
+
+	var tex = renderer.textures[ this.texture ];
+	if(tex && this.flags.pixelated != null )
+	{
+		tex.bind(0);
+		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, this.flags.pixelated ? gl.NEAREST : gl.LINEAR );
+		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, this.flags.pixelated ? gl.NEAREST_MIPMAP_NEAREST : gl.LINEAR_MIPMAP_LINEAR );
+	}
 		
 	if(!this.updateTextureMatrix(renderer)) //texture or frame not found
 		return;
@@ -2829,13 +2883,35 @@ Renderer.prototype.addMesh = function(name, mesh)
 
 RD.Renderer = Renderer;
 
-
 /**
 * for ray collision
 * @class Ray
 * @constructor
 */
-RD.Ray = GL.Ray;
+function Ray( origin, direction )
+{
+	this.origin = vec3.create();
+	this.direction = vec3.create();
+	this.collision_point = vec3.create();
+
+	if(origin)
+		this.origin.set( origin );
+	if(direction)
+		this.direction.set( direction );
+}
+
+RD.Ray = Ray;
+
+Ray.prototype.testPlane = function( P, N )
+{
+	return geo.testRayPlane( this.origin, this.direction, P, N, this.collision_point );
+}
+
+Ray.prototype.testSphere = function( center, radius, max_dist )
+{
+	return geo.testRaySphere( this.origin, this.direction, center, radius, this.collision_point, max_dist );
+}
+
 
 /**
 * Camera wraps all the info about the camera (properties and view and projection matrices)
@@ -3561,7 +3637,7 @@ RD.Factory = function Factory( name, parent, extra_options )
 }
 
 RD.Factory.templates = {
-	grid: { mesh:"grid", primitive: GL.LINES, color: [0.5,0.5,0.5,0.5], blend_mode: RD.BLEND_ALPHA },
+	grid: { mesh:"grid", primitive: 1, color: [0.5,0.5,0.5,0.5], blend_mode: RD.BLEND_ALPHA },
 	mesh: { shader: "phong" },
 	sphere: { mesh:"sphere", shader: "phong" },
 	floor: { mesh:"planeXZ", scaling: 10, shader: "phong" }
@@ -3985,6 +4061,35 @@ void main() {\n\
 	gl_FragColor = color;\n\
 }\n\
 ";
+
+//in case litegl is not installed, Rendeer could still be useful
+if(typeof(GL) == "undefined")
+{
+	mat4.rotateVec3 = function(out, m, a) {
+		var x = a[0], y = a[1], z = a[2];
+		out[0] = m[0] * x + m[4] * y + m[8] * z;
+		out[1] = m[1] * x + m[5] * y + m[9] * z;
+		out[2] = m[2] * x + m[6] * y + m[10] * z;
+		return out;
+	};
+
+	mat4.projectVec3 = function(out, m, a)
+	{
+		var ix = a[0];
+		var iy = a[1];
+		var iz = a[2];
+
+		var ox = m[0] * ix + m[4] * iy + m[8] * iz + m[12];
+		var oy = m[1] * ix + m[5] * iy + m[9] * iz + m[13];
+		var oz = m[2] * ix + m[6] * iy + m[10] * iz + m[14];
+		var ow = m[3] * ix + m[7] * iy + m[11] * iz + m[15];
+
+		out[0] = (ox / ow + 1) / 2;
+		out[1] = (oy / ow + 1) / 2;
+		out[2] = (oz / ow + 1) / 2;
+		return out;
+	};
+}
 
 //footer
 

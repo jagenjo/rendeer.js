@@ -19,7 +19,7 @@ function init()
 	//create camera
 	var camera = new RD.Camera();
 	camera.perspective( 45, gl.canvas.width / gl.canvas.height, 1, 1000 );
-	camera.lookAt( [100,100,100],[0,0,0],[0,1,0] );
+	camera.lookAt( [0,100,100],[0,0,0],[0,1,0] );
 	
 	//global settings
 	var bg_color = vec4.fromValues(0.1,0.1,0.1,1);
@@ -49,6 +49,18 @@ function init()
 	});
 	scene.root.addChild( floor );
 
+	var sprite = new RD.Sprite({
+		position: [0,0,0],
+		size: [16,32],
+		sprite_pivot: RD.BOTTOM_CENTER,
+		texture: "javi-spritesheet.png",
+		frame: 0
+	});
+	sprite.flags.pixelated = true;
+	sprite.createFrames([16,4]);
+	scene.root.addChild( sprite );
+
+
 	// main loop ***********************
 	
 	//main draw function
@@ -66,11 +78,28 @@ function init()
 	{
 		scene.update(dt);
 
-		//move to target
-		if(target)
+		var now = getTime() * 0.001;
+		var frames = [2,3,4,5,6,7,8,9];
+		var dist = 0;
+		if( target )
+			dist = vec3.distance(sprite.position,target);
+
+		if(dist > 1)
+			sprite.frame = frames[ Math.floor(now*15) % frames.length ];
+		else
 		{
-			vec3.lerp( knight.position, knight.position, target, 0.1);
-			knight.updateMatrices();
+			dist = 0;
+			sprite.frame = 0;
+		}
+
+		//move to target
+		if(dist)
+		{
+			var delta = vec3.sub( vec3.create(), target, sprite.position );
+			vec3.normalize(delta,delta);
+			vec3.scaleAndAdd( sprite.position, sprite.position, delta, dt * 10 );
+			sprite.updateMatrices();
+			sprite.flags.flipX = delta[0] < 0;
 		}
 	}
 
