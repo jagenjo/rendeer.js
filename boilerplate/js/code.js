@@ -90,6 +90,7 @@ function init()
 		{
 			dist = 0;
 			sprite.frame = 0;
+			target = null;
 		}
 
 		//move to target
@@ -101,6 +102,9 @@ function init()
 			sprite.updateMatrices();
 			sprite.flags.flipX = delta[0] < 0;
 		}
+
+		if(target == null && Math.floor(now)%10 == 0)
+			target = [Math.random()*50-25,0,Math.random()*50-25];
 	}
 
 	//user input ***********************
