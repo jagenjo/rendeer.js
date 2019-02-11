@@ -1618,10 +1618,10 @@ Sprite.prototype._ctor = function()
 	this.sprite_pivot = RD.TOP_LEFT;
 	this.blend_mode = RD.BLEND_ALPHA;
 	this.flags.two_sided = true;
-	//this.flags.depth_test = false;
 	this.flags.flipX = false;
 	this.flags.flipY = false;
 	this.flags.pixelated = false;
+	//this.flags.depth_test = false;
 	this.shader = "texture_transform";
 	this._angle = 0;
 
@@ -1771,7 +1771,7 @@ Sprite.prototype.render = function(renderer, camera)
 		return;	
 
 	var tex = renderer.textures[ this.texture ];
-	if(tex && this.flags.pixelated != null )
+	if(tex && this.flags.pixelated )
 	{
 		tex.bind(0);
 		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, this.flags.pixelated ? gl.NEAREST : gl.LINEAR );
@@ -1782,29 +1782,27 @@ Sprite.prototype.render = function(renderer, camera)
 		return;
 
 	if(this.billboard_mode)
-		RD.orientNodeToCamera( node.billboard_mode, this, camera, renderer );
-	else
+		RD.orientNodeToCamera( this.billboard_mode, this, camera, renderer );
+	var offsetx = 0;
+	var offsety = 0;
+	temp_mat4.set( this._global_matrix );
+	if (this.sprite_pivot)
 	{
-		var offsetx = 0;
-		var offsety = 0;
-		temp_mat4.set( this._global_matrix );
-		if (this.sprite_pivot)
+		switch( this.sprite_pivot )
 		{
-			switch( this.sprite_pivot )
-			{
-				//case RD.CENTER: break;
-				case RD.TOP_LEFT: offsetx = 0.5; offsety = -0.5; break;
-				case RD.TOP_CENTER: offsety = -0.5; break;
-				case RD.TOP_RIGHT: offsetx = -0.5; break;
-				case RD.BOTTOM_LEFT: offsetx = 0.5; offsety = 0.5; break;
-				case RD.BOTTOM_CENTER: offsety = 0.5; break;
-				case RD.BOTTOM_RIGHT: offsetx = -0.5; offsety = 0.5; break;
-			}
-			mat4.translate( temp_mat4, temp_mat4, [offsetx * this.size[0], offsety * this.size[1], 0 ] );
+			//case RD.CENTER: break;
+			case RD.TOP_LEFT: offsetx = 0.5; offsety = -0.5; break;
+			case RD.TOP_CENTER: offsety = -0.5; break;
+			case RD.TOP_RIGHT: offsetx = -0.5; break;
+			case RD.BOTTOM_LEFT: offsetx = 0.5; offsety = 0.5; break;
+			case RD.BOTTOM_CENTER: offsety = 0.5; break;
+			case RD.BOTTOM_RIGHT: offsetx = -0.5; offsety = 0.5; break;
 		}
-		mat4.scale( temp_mat4, temp_mat4, [this.size[0], this.size[1], 1 ] );
-		renderer.setModelMatrix( temp_mat4 );
+		mat4.translate( temp_mat4, temp_mat4, [offsetx * this.size[0], offsety * this.size[1], 0 ] );
 	}
+	mat4.scale( temp_mat4, temp_mat4, [this.size[0], this.size[1], 1 ] );
+	renderer.setModelMatrix( temp_mat4 );
+
 	renderer.renderNode( this, renderer, camera );
 }
 

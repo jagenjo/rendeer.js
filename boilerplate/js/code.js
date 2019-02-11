@@ -98,7 +98,7 @@ function init()
 		{
 			var delta = vec3.sub( vec3.create(), target, sprite.position );
 			vec3.normalize(delta,delta);
-			vec3.scaleAndAdd( sprite.position, sprite.position, delta, dt * 10 );
+			vec3.scaleAndAdd( sprite.position, sprite.position, delta, dt * 50 );
 			sprite.updateMatrices();
 			sprite.flags.flipX = delta[0] < 0;
 		}
