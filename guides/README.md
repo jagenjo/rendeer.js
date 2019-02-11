@@ -76,7 +76,7 @@ All three store strings, although textures is an object where you can store diff
 
 ```javascript
 node.mesh = "mymesh.obj";
-node.texture = "mytexture.png";
+node.texture = "mytexture.png"; //is the same as node.textures.color = "..."
 ```
 
 The strings are the name of the assets that will be fetched when rendering. These assets must be stored in the RD.Renderer's containers (```renderer.meshes(```, ```renderer.shaders``` and ```renderer.textures```), which are the sames in the gl context (you can use them indistinguishable).
