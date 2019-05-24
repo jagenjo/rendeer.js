@@ -15,6 +15,7 @@
 	<script type="text/javascript">
 	
 	var anim = null;
+	var anim2 = null;
 
 	function init()
 	{
@@ -61,8 +62,10 @@
 		var fragment_shader = '\
 					precision highp float;\
 					uniform vec4 u_color;\
+					uniform sampler2D u_color_texture;\
+					varying vec2 v_coord;\n\
 					void main() {\
-					  gl_FragColor = u_color;\
+					  gl_FragColor = u_color * texture2D(u_color_texture,v_coord);\
 					}\
 		';
 
@@ -75,14 +78,13 @@
 
 		//create a node
 		var people = [];
-		for(var i = 0 ; i < 10; ++i )
+		for(var i = 0 ; i < 1; ++i )
 		{
 			var man = new RD.SceneNode();
 			man.color = [1,1,1,1];
 			man.mesh = "data/male.mesh";
+			man.texture = "data/male.png";
 			man.shader = "skinning";
-			man.x = Math.random() * 400 - 200;
-			man.z = Math.random() * 400 - 200;
 			scene.root.addChild(man);
 			people.push(man);
 		}
@@ -91,9 +93,14 @@
 		HttpRequest("data/idle.skanim", null, function(data) {
 			anim.fromData(data);
 		});
+		anim2 = new SkeletalAnimation();
+		HttpRequest("data/walking.skanim", null, function(data) {
+			anim2.fromData(data);
+		});
 
 		//global settings
 		var bg_color = vec4.fromValues(0.2,0.3,0.4,1);
+		var bones = [];
 
 		//main render loop
 		var last = now = getTime();
@@ -101,21 +108,25 @@
 		function animate() {
 			requestAnimationFrame( animate );
 
+			var time = getTime()*0.001;
 			last = now;
 			now = getTime();
 			var dt = (now - last) * 0.001;
 			renderer.clear(bg_color);
 			renderer.render(scene, camera);
 			if(anim.duration)
-				renderer.renderPoints(anim.skeleton.getVertices(),null,camera);
+				anim.assignTime( time );
+			if(anim2.duration)
+				anim2.assignTime( time );
+			if(anim.duration && anim2.duration )
+				Skeleton.blend( anim.skeleton, anim2.skeleton, Math.sin(time)*0.5+0.5, anim.skeleton );
 
 			scene.update(dt);
 
 			var player = people[0];
-			anim.assignTime( now * 0.001 );
-			var bones = anim.skeleton.computeFinalBoneMatrices([],gl.meshes[ player.mesh ]);
+			bones = anim.skeleton.computeFinalBoneMatrices(bones,gl.meshes[ player.mesh ]);
 			if(bones && bones.length)
-				player.uniforms.u_bones = GL.linearizeArray(bones);
+				player.uniforms.u_bones = bones;
 
 			camera.lookAt( [Math.cos(getTime() * 0.0001 )*60,50,Math.sin(getTime()* 0.0001 )*60],[0,10,0],[0,1,0] );
 		}

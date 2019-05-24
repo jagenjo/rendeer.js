@@ -2103,6 +2103,14 @@ function Renderer( context, options )
 
 RD.Renderer = Renderer;
 
+Object.defineProperty( Renderer.prototype, "color", {
+	set: function(v){
+		this._color.set(v);
+	},
+	get: function() { return v; },
+	enumerable: true
+});
+
 /**
 * whats the data folder where all data should be fetch
 * @method setDataFolder
@@ -2521,7 +2529,7 @@ Renderer.prototype.setPointSize = function(v)
 * @param {GL.Shader} shader
 * @param {Number} point_size
 */
-RD.Renderer.prototype.renderPoints = function( positions, extra, camera, num_points, shader, point_size )
+RD.Renderer.prototype.renderPoints = function( positions, extra, camera, num_points, shader, point_size, primitive )
 {
 	if(!positions || positions.constructor !== Float32Array)
 		throw("RD.renderPoints only accepts Float32Array");
@@ -2572,7 +2580,9 @@ RD.Renderer.prototype.renderPoints = function( positions, extra, camera, num_poi
 	shader.setUniform( "u_camera_perspective", camera._projection_matrix[5] );
 	shader.setUniform( "u_viewport", gl.viewport_data );
 	shader.setUniform( "u_viewprojection", camera._viewprojection_matrix );
-	shader.drawRange( mesh, GL.POINTS, 0, num_points );
+	shader.drawRange( mesh, primitive !== undefined ? primitive : GL.POINTS, 0, num_points );
+
+	return mesh;
 }
 
 RD.points_vs_shader = "\n\
