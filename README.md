@@ -93,7 +93,7 @@ node.texture = "mytexture.jpg";
 node.shader = "phong";
 node.position = [0,0,0];
 node.scale([10,10,10]);
-scene.addChild(node);
+scene.root.addChild(node);
 ```
 
 Create main loop
