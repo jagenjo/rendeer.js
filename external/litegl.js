@@ -15,6 +15,8 @@ global.requestAnimationFrame = global.requestAnimationFrame || global.mozRequest
 
 GL.blockable_keys = {"Up":true,"Down":true,"Left":true,"Right":true};
 
+GL.reverse = null;
+
 //some consts
 GL.LEFT_MOUSE_BUTTON = 1;
 GL.MIDDLE_MOUSE_BUTTON = 2;
@@ -743,7 +745,7 @@ global.hexColorToRGBA = (function() {
 	var pos = hex.indexOf("rgba(");
 	if(pos != -1)
 	{
-		var str = hex.substr(5);
+		var str = hex.substr(5,hex.length-2);
 		str = str.split(",");
 		color[0] = parseInt( str[0] ) / 255;
 		color[1] = parseInt( str[1] ) / 255;
@@ -755,7 +757,7 @@ global.hexColorToRGBA = (function() {
 	var pos = hex.indexOf("hsla(");
 	if(pos != -1)
 	{
-		var str = hex.substr(5);
+		var str = hex.substr(5,hex.length-2);
 		str = str.split(",");
 		HSLToRGB( parseInt( str[0] ) / 360, parseInt( str[1] ) / 100, parseInt( str[2] ) / 100, color );
 		color[3] = parseFloat( str[3] ) * alpha;
@@ -768,7 +770,7 @@ global.hexColorToRGBA = (function() {
 	var pos = hex.indexOf("rgb(");
 	if(pos != -1)
 	{
-		var str = hex.substr(3);
+		var str = hex.substr(4,hex.length-2);
 		str = str.split(",");
 		color[0] = parseInt( str[0] ) / 255;
 		color[1] = parseInt( str[1] ) / 255;
@@ -779,7 +781,7 @@ global.hexColorToRGBA = (function() {
 	var pos = hex.indexOf("hsl(");
 	if(pos != -1)
 	{
-		var str = hex.substr(5);
+		var str = hex.substr(4,hex.length-2);
 		str = str.split(",");
 		HSLToRGB( parseInt( str[0] ) / 360, parseInt( str[1] ) / 100, parseInt( str[2] ) / 100, color );
 		return color;
@@ -1950,7 +1952,97 @@ quat.fromMat4 = function(out,m)
 	quat.normalize(out,out);
 }
 
-quat.fromMat4.lookAt = (function(){ 
+//col according to common matrix notation, here are stored as rows
+vec3.getMat3Column = function(out, m, index )
+{
+	out[0] = m[index*3];
+	out[1] = m[index*3 + 1];
+	out[2] = m[index*3 + 2];
+	return out;
+}
+
+mat3.setColumn = function(out, v, index )
+{
+	out[index*3] = v[0];
+	out[index*3+1] = v[1];
+	out[index*3+2] = v[2];
+	return out;
+}
+
+
+//http://matthias-mueller-fischer.ch/publications/stablePolarDecomp.pdf
+//reusing the previous quaternion as an indicator to keep perpendicularity
+quat.fromMat3AndQuat = (function(){
+	var temp_mat3 = mat3.create();
+	var temp_quat = quat.create();
+	var Rcol0 = vec3.create();
+	var Rcol1 = vec3.create();
+	var Rcol2 = vec3.create();
+	var Acol0 = vec3.create();
+	var Acol1 = vec3.create();
+	var Acol2 = vec3.create();
+	var RAcross0 = vec3.create();
+	var RAcross1 = vec3.create();
+	var RAcross2 = vec3.create();
+	var omega = vec3.create();
+	var axis = mat3.create();
+
+	return function( q, A, max_iter )
+	{
+		max_iter = max_iter || 25;
+		for (var iter = 0; iter < max_iter; ++iter)
+		{
+			var R = mat3.fromQuat( temp_mat3, q );
+			vec3.getMat3Column(Rcol0,R,0);
+			vec3.getMat3Column(Rcol1,R,1);
+			vec3.getMat3Column(Rcol2,R,2);
+			vec3.getMat3Column(Acol0,A,0);
+			vec3.getMat3Column(Acol1,A,1);
+			vec3.getMat3Column(Acol2,A,2);
+			vec3.cross( RAcross0, Rcol0, Acol0 );
+			vec3.cross( RAcross1, Rcol1, Acol1 );
+			vec3.cross( RAcross2, Rcol2, Acol2 );
+			vec3.add( omega, RAcross0, RAcross1 );
+			vec3.add( omega, omega, RAcross2 );
+			var d = 1.0 / Math.abs( vec3.dot(Rcol0,Acol0) + vec3.dot(Rcol1,Acol1) + vec3.dot(Rcol2,Acol2) ) + 1.0e-9;
+			vec3.scale( omega, omega, d );
+			var w = vec3.length(omega);
+			if (w < 1.0e-9)
+				break;
+			vec3.scale(omega,omega,1/w); //normalize
+			quat.setAxisAngle( temp_quat, omega, w );
+			quat.mul( q, temp_quat, q );
+			quat.normalize(q,q);
+		}
+		return q;
+	};
+})();
+
+//http://number-none.com/product/IK%20with%20Quaternion%20Joint%20Limits/
+quat.rotateToFrom = (function(){ 
+	var tmp = vec3.create();
+	return function(out, v1, v2)
+	{
+		out = out || quat.create();
+		var axis = vec3.cross(tmp, v1, v2);
+		var dot = vec3.dot(v1, v2);
+		if( dot < -1 + 0.01){
+			out[0] = 0;
+			out[1] = 1; 
+			out[2] = 0; 
+			out[3] = 0; 
+			return out;
+		}
+		out[0] = axis[0] * 0.5;
+		out[1] = axis[1] * 0.5; 
+		out[2] = axis[2] * 0.5; 
+		out[3] = (1 + dot) * 0.5; 
+		quat.normalize(out, out); 
+		return out;    
+	}
+})();
+
+quat.lookAt = (function(){ 
 	var axis = vec3.create();
 	
 	return function( out, forwardVector, up )
@@ -3088,6 +3180,27 @@ Mesh.prototype.explodeIndices = function( buffer_name ) {
 
 	var indices = indices_buffer.data;
 
+	var new_buffers = {};
+	for(var i in this.vertexBuffers)
+	{
+		var info = GL.Mesh.common_buffers[i];
+		new_buffers[i] = new (info.type || Float32Array)( info.spacing * indices.length );
+	}
+
+	for(var i = 0, l = indices.length; i < l; ++i)
+	{
+		var index = indices[i];
+		for(var j in this.vertexBuffers)
+		{
+			var buffer = this.vertexBuffers[j];
+			var info = GL.Mesh.common_buffers[j];
+			var spacing = buffer.spacing || info.spacing;
+			var new_buffer = new_buffers[j];
+			new_buffer.set( buffer.data.subarray( index*spacing, index*spacing + spacing ), i*spacing );
+		}
+	}
+
+	/*
 	//cluster by distance
 	var new_vertices = new Float32Array(indices.length * 3);
 	var new_normals = null;
@@ -3131,6 +3244,13 @@ Mesh.prototype.explodeIndices = function( buffer_name ) {
 		this.createVertexBuffer( 'normals', GL.Mesh.common_buffers["normals"].attribute, 3, new_normals );	
 	if(new_coords)
 		this.createVertexBuffer( 'coords', GL.Mesh.common_buffers["coords"].attribute, 2, new_coords );	
+	*/
+
+	for(var i in new_buffers)
+	{
+		var old = this.vertexBuffers[i];
+		this.createVertexBuffer( i, old.attribute, old.spacing, new_buffers[i] );	
+	}
 
 	delete this.indexBuffers[ buffer_name ];
 }
@@ -4919,17 +5039,35 @@ global.Texture = GL.Texture = function Texture( width, height, options, gl ) {
 	if(options.anisotropic && gl.extensions["EXT_texture_filter_anisotropic"])
 		gl.texParameterf( GL.TEXTURE_2D, gl.extensions["EXT_texture_filter_anisotropic"].TEXTURE_MAX_ANISOTROPY_EXT, options.anisotropic);
 
+	var type = this.type;
 	var pixel_data = options.pixel_data;
 	if(pixel_data && !pixel_data.buffer)
 	{
 		if( this.texture_type == GL.TEXTURE_CUBE_MAP )
 		{
-			for(var i = 0; i < pixel_data.length; ++i)
-				pixel_data[i] = new (this.type == gl.FLOAT ? Float32Array : Uint8Array)( pixel_data[i] );
+			if(pixel_data[0].constructor === Number) //special case, specify just one face and copy it
+			{
+				pixel_data = toTypedArray( pixel_data );
+				pixel_data = [pixel_data,pixel_data,pixel_data,pixel_data,pixel_data,pixel_data]; 
+			}
+			else
+				for(var i = 0; i < pixel_data.length; ++i)
+					pixel_data[i] = toTypedArray( pixel_data[i] );
 		}
 		else
-			pixel_data = new (this.type == gl.FLOAT ? Float32Array : Uint8Array)( pixel_data );
+			pixel_data = toTypedArray( pixel_data );
 		this.data = pixel_data;
+	}
+
+	function toTypedArray( data )
+	{
+		if(data.constructor !== Array)
+			return data;
+		if( type == GL.FLOAT)
+			return new Float32Array( data );
+		if( type == GL.HALF_FLOAT_OES)
+			return new Uint16Array( data );
+		return new Uint8Array( data );
 	}
 
 	//gl.TEXTURE_1D is not supported by WebGL...
@@ -4959,7 +5097,7 @@ global.Texture = GL.Texture = function Texture( width, height, options, gl ) {
 	else if(this.texture_type == GL.TEXTURE_3D)
 	{
 		if(this.gl.webgl_version == 1)
-			throw("TEXTURE_3D not supported in WebGL 1. Enable WebGL 2 in the context by pasing webgl2:true");
+			throw("TEXTURE_3D not supported in WebGL 1. Enable WebGL 2 in the context by passing webgl2:true to the context");
 		if(!options.depth)
 			throw("3d texture depth must be set in the options.depth");
 		gl.texImage3D( GL.TEXTURE_3D, 0, this.internalFormat, width, height, options.depth, 0, this.format, this.type, pixel_data || null );
@@ -5242,10 +5380,20 @@ Texture.prototype.uploadData = function( data, options, skip_mipmaps )
 
 	if( this.texture_type == GL.TEXTURE_2D )
 	{
-		if(data.buffer && data.buffer.constructor == ArrayBuffer)
-			gl.texImage2D(this.texture_type, mipmap_level, this.format, width, height, 0, this.format, this.type, data);
-		else
-			gl.texImage2D(this.texture_type, mipmap_level, this.format, this.format, this.type, data);
+		if(gl.webgl_version == 1)
+		{
+			if(data.buffer && data.buffer.constructor == ArrayBuffer)
+				gl.texImage2D(this.texture_type, mipmap_level, this.format, width, height, 0, this.format, this.type, data);
+			else
+				gl.texImage2D(this.texture_type, mipmap_level, this.format, this.format, this.type, data);
+		}
+		else if(gl.webgl_version == 2) //webgl forces to use width and height
+		{
+			if(data.buffer && data.buffer.constructor == ArrayBuffer)
+				gl.texImage2D(this.texture_type, mipmap_level, this.format, width, height, 0, this.format, this.type, data);
+			else
+				gl.texImage2D(this.texture_type, mipmap_level, this.format, width, height, 0, this.format, this.type, data);
+		}
 	}
 	else if( this.texture_type == GL.TEXTURE_3D )
 		gl.texImage3D( this.texture_type, mipmap_level, this.format, width, height, this.depth >> mipmap_level, 0, this.format, this.type, data);
@@ -6173,19 +6321,20 @@ Texture.fromMemory = function( width, height, pixels, options) //format in optio
 	Texture.setUploadOptions(options);
 	texture.bind();
 
-	try {
-		gl.texImage2D( gl.TEXTURE_2D, 0, texture.format, width, height, 0, texture.format, texture.type, pixels );
-		texture.width = width;
-		texture.height = height;
-		texture.data = pixels;
-	} catch (e) {
-		if (location.protocol == 'file:') {
-		  throw 'image not loaded for security reasons (serve this page over "http://" instead)';
-		} else {
-		  throw 'image not loaded for security reasons (image must originate from the same ' +
-			'domain as this page or use Cross-Origin Resource Sharing)';
-		}
+	if(pixels.constructor === Array)
+	{
+		if(options.type == gl.FLOAT)
+			pixels = new Float32Array( pixels );
+		else if(options.type == GL.HALF_FLOAT || options.type == GL.HALF_FLOAT_OES) 
+			pixels = new Uint16Array( pixels ); //gl.UNSIGNED_SHORT_4_4_4_4 is only for texture that are SHORT per pixel, not per channel!
+		else 
+			pixels = new Uint8Array( pixels );
 	}
+
+	gl.texImage2D( gl.TEXTURE_2D, 0, texture.format, width, height, 0, texture.format, texture.type, pixels );
+	texture.width = width;
+	texture.height = height;
+	texture.data = pixels;
 	if (options.minFilter && options.minFilter != gl.NEAREST && options.minFilter != gl.LINEAR) {
 		gl.generateMipmap(gl.TEXTURE_2D);
 		texture.has_mipmaps = true;
@@ -6545,6 +6694,7 @@ Texture.prototype.toCanvas = function( canvas, flip_y, max_size )
 			temp_ctx.translate(0,temp.height);
 			temp_ctx.scale(1,-1);
 			temp_ctx.drawImage( canvas, 0, 0, temp.width, temp.height );
+			ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);
 			ctx.drawImage( temp, 0, 0 );
 		}
 	}
@@ -7029,6 +7179,7 @@ FBO.prototype.update = function( skip_disable )
 
 	var target = gl.webgl_version == 1 ? gl.FRAMEBUFFER : gl.DRAW_FRAMEBUFFER;
 
+	//detach anything bindede
 	gl.framebufferRenderbuffer( target, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, null );
 	gl.framebufferRenderbuffer( target, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, null );
 	//detach color too?
@@ -7135,7 +7286,7 @@ FBO.prototype.update = function( skip_disable )
 
 	//check completion
 	var complete = gl.checkFramebufferStatus( target );
-	if(complete !== gl.FRAMEBUFFER_COMPLETE)
+	if(complete !== gl.FRAMEBUFFER_COMPLETE) //36054: GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT
 		throw("FBO not complete: " + complete);
 
 	//restore state
@@ -7218,6 +7369,28 @@ FBO.prototype.delete = function()
 {
 	gl.deleteFramebuffer( this.handler );
 	this.handler = null;
+}
+
+//WebGL 1.0 support for certaing FBOs is not very clear and can crash sometimes
+FBO.supported = {};
+//type: gl.FLOAT, format: gl.RGBA
+FBO.testSupport = function( type, format ) {
+	var name = type +":" + format;
+	if( FBO.supported[ name ] != null )
+		return FBO.supported[ name ];
+
+	var tex = new GL.Texture(1,1,{ format: format, type: type });
+	try
+	{
+		var fbo = new GL.FBO([tex]);
+	}
+	catch (err)
+	{
+		console.warn("This browser WEBGL implementation doesn't support this FBO format: " + GL.reverse[type] + " " + GL.reverse[format] );
+		return FBO.supported[ name ] = false;
+	}
+	FBO.supported[ name ] = true;
+	return true;
 }
 
 
@@ -7411,7 +7584,7 @@ Shader.prototype.extractShaderInfo = function()
 		}
 
 		//store texture samplers
-		if(data.type == gl.SAMPLER_2D || data.type == gl.SAMPLER_CUBE)
+		if(data.type == gl.SAMPLER_2D || data.type == gl.SAMPLER_CUBE || data.type == GL.SAMPLER_3D)
 			this.samplers[ uniformName ] = data.type;
 		
 		//get which function to call when uploading this uniform
@@ -7827,9 +8000,9 @@ Shader.prototype.drawBuffers = function( vertexBuffers, indexBuffer, mode, range
 
 Shader._instancing_arrays = [];
 
-Shader.prototype.drawInstanced = function( mesh, primitive, indices, instanced_uniforms, range_start, range_length )
+Shader.prototype.drawInstanced = function( mesh, primitive, indices, instanced_uniforms, range_start, range_length, num_intances )
 {
-	if(range_length == 0)
+	if(range_length === 0)
 		return;
 
 	//bind buffers
@@ -7872,7 +8045,7 @@ Shader.prototype.drawInstanced = function( mesh, primitive, indices, instanced_u
 	//range rendering
 	var offset = 0; //in bytes
 	if(range_start > 0) //render a polygon range
-		offset = range_start; //in bytes (Uint16 == 2 bytes)
+		offset = range_start; 
 
 	if (indexBuffer)
 		length = indexBuffer.buffer.length - offset;
@@ -7954,6 +8127,9 @@ Shader.prototype.drawInstanced = function( mesh, primitive, indices, instanced_u
 		}
 		index+=1;
 	}
+
+	if( num_intances )
+		batch_length = num_intances;
 
 	if( ext ) //webgl 1.0
 	{
@@ -8780,6 +8956,7 @@ GL.create = function(options) {
 	gl.extensions["EXT_frag_depth"] = gl.getExtension("EXT_frag_depth") || gl.getExtension("WEBKIT_EXT_frag_depth") || gl.getExtension("MOZ_EXT_frag_depth");
 	gl.extensions["WEBGL_lose_context"] = gl.getExtension("WEBGL_lose_context") || gl.getExtension("WEBKIT_WEBGL_lose_context") || gl.getExtension("MOZ_WEBGL_lose_context");
 	gl.extensions["ANGLE_instanced_arrays"] = gl.getExtension("ANGLE_instanced_arrays");
+	gl.extensions["disjoint_timer_query"] = gl.getExtension("EXT_disjoint_timer_query");
 
 	//for float textures
 	gl.extensions["OES_texture_float_linear"] = gl.getExtension("OES_texture_float_linear");
@@ -8818,6 +8995,15 @@ GL.create = function(options) {
 	}
 	else
 		console.warn("Creating LiteGL context over the same canvas twice");
+
+	//reverse names helper (assuming no names repeated)
+	if(!GL.reverse)
+	{
+		GL.reverse = {}; 
+		for(var i in gl)
+			if( gl[i] && gl[i].constructor === Number )
+				GL.reverse[ gl[i] ] = i;
+	}
 	
 	//just some checks
 	if(typeof(glMatrix) == "undefined")
@@ -11126,7 +11312,8 @@ global.BBox = GL.BBox = {
 	getHalfsize: function(bb) { return bb.subarray(3,6); },
 	getMin: function(bb) { return bb.subarray(6,9); },
 	getMax: function(bb) { return bb.subarray(9,12); },
-	getRadius: function(bb) { return bb[12]; }	
+	getRadius: function(bb) { return bb[12]; }
+	//setCenter,setHalfsize not coded, too much work to update all
 }
 
 global.distanceToPlane = GL.distanceToPlane = function distanceToPlane(plane, point)
@@ -11220,15 +11407,17 @@ Octree.prototype.buildFromMesh = function( mesh )
 		{
 			var face = new Float32Array([vertices[triangles[i]*3], vertices[triangles[i]*3+1],vertices[triangles[i]*3+2],
 						vertices[triangles[i+1]*3], vertices[triangles[i+1]*3+1],vertices[triangles[i+1]*3+2],
-						vertices[triangles[i+2]*3], vertices[triangles[i+2]*3+1],vertices[triangles[i+2]*3+2]]);
-			this.addToNode(face,root,0);
+						vertices[triangles[i+2]*3], vertices[triangles[i+2]*3+1],vertices[triangles[i+2]*3+2],i/3]);
+			this.addToNode( face,root,0);
 		}
 	}
 	else
 	{
 		for(var i = 0; i < vertices.length; i+=9)
 		{
-			var face = new Float32Array( vertices.subarray(i,i+9) );
+			var face = new Float32Array( 10 );
+			face.set( vertices.subarray(i,i+9) );
+			face[9] = i/9;
 			this.addToNode(face,root,0);
 		}
 	}
@@ -11236,7 +11425,7 @@ Octree.prototype.buildFromMesh = function( mesh )
 	return root;
 }
 
-Octree.prototype.addToNode = function(face,node, depth)
+Octree.prototype.addToNode = function( face, node, depth )
 {
 	node.inside += 1;
 
@@ -11264,7 +11453,8 @@ Octree.prototype.addToNode = function(face,node, depth)
 	}
 	else //add till full, then split
 	{
-		if(node.faces == null) node.faces = [];
+		if(node.faces == null)
+			node.faces = [];
 		node.faces.push(face);
 
 		//split
@@ -12171,7 +12361,7 @@ Mesh.parseOBJ = function( text, options )
 				}
 			}
 		}
-		else if (code == G_CODE || tokens[0] == "usemtl") {
+		else if (code == G_CODE) { //tokens[0] == "usemtl"
 			negative_offset = positions.length / 3 - 1;
 
 			if(tokens.length > 1)
@@ -12195,15 +12385,6 @@ Mesh.parseOBJ = function( text, options )
 			if(group)
 				group.material = tokens[1];
 		}
-		/*
-		else if (tokens[0] == "o" || tokens[0] == "s") {
-			//ignore
-		}
-		else
-		{
-			//console.log("unknown code: " + line);
-		}
-		*/
 	}
 
 	if(!positions.length)
@@ -12278,52 +12459,179 @@ Mesh.encoders["obj"] = function( mesh, options )
 	if(!verticesBuffer)
 		return null;
 
-	var result = "# Generated with liteGL.js by Javi Agenjo\n\n";
+	var lines = [];
+	lines.push("# Generated with liteGL.js by Javi Agenjo\n");
 
 	var vertices = verticesBuffer.data;
 	for (var i = 0; i < vertices.length; i+=3)
-		result += "v " + vertices[i].toFixed(4) + " " + vertices[i+1].toFixed(4) + " " + vertices[i+2].toFixed(4) + "\n";
+		lines.push("v " + vertices[i].toFixed(4) + " " + vertices[i+1].toFixed(4) + " " + vertices[i+2].toFixed(4));
 
 	//store normals
 	var normalsBuffer = mesh.getBuffer("normals");
 	if(normalsBuffer)
 	{
-		result += "\n";
+		lines.push("");
 		var normals = normalsBuffer.data;
 		for (var i = 0; i < normals.length; i+=3)
-			result += "vn " + normals[i].toFixed(4) + " " + normals[i+1].toFixed(4) + " " + normals[i+2].toFixed(4) + "\n";
+			lines.push("vn " + normals[i].toFixed(4) + " " + normals[i+1].toFixed(4) + " " + normals[i+2].toFixed(4) );
 	}
 	
 	//store uvs
 	var coordsBuffer = mesh.getBuffer("coords");
 	if(coordsBuffer)
 	{
-		result += "\n";
+		lines.push("");
 		var coords = coordsBuffer.data;
 		for (var i = 0; i < coords.length; i+=2)
-			result += "vt " + coords[i].toFixed(4) + " " + coords[i+1].toFixed(4) + " " + " 0.0000\n";
+			lines.push("vt " + coords[i].toFixed(4) + " " + coords[i+1].toFixed(4) + " " + " 0.0000");
 	}
 
-	result += "\ng mesh\n";
+	var groups = mesh.info.groups;
+
 
 	//store faces
 	var indicesBuffer = mesh.getIndexBuffer("triangles");
 	if(indicesBuffer)
 	{
 		var indices = indicesBuffer.data;
-		for (var i = 0; i < indices.length; i+=3)
-			result += "f " + (indices[i]+1) + "/" + (indices[i]+1) + "/" + (indices[i]+1) + " " + (indices[i+1]+1) + "/" + (indices[i+1]+1) + "/" + (indices[i+1]+1) + " " + (indices[i+2]+1) + "/" + (indices[i+2]+1) + "/" + (indices[i+2]+1) + "\n";
+		if(!groups || !groups.length)
+			groups = [{start:0, length: indices.length, name:"mesh"}];
+		for(var j = 0; j < groups.length; ++j)
+		{
+			var group = groups[j];
+			lines.push("g " + group.name );
+			lines.push("usemtl " + (group.material || ("mat_"+j)));
+			var start = group.start;
+			var end = start + group.length;
+			for (var i = start; i < end; i+=3)
+				lines.push("f " + (indices[i]+1) + "/" + (indices[i]+1) + "/" + (indices[i]+1) + " " + (indices[i+1]+1) + "/" + (indices[i+1]+1) + "/" + (indices[i+1]+1) + " " + (indices[i+2]+1) + "/" + (indices[i+2]+1) + "/" + (indices[i+2]+1) );
+		}
 	}
 	else //no indices
 	{
-		for (var i = 0; i < (vertices.length / 3); i+=3)
-			result += "f " + (i+1) + "/" + (i+1) + "/" + (i+1) + " " + (i+2) + "/" + (i+2) + "/" + (i+2) + " " + (i+3) + "/" + (i+3) + "/" + (i+3) + "\n";
+		if(!groups || !groups.length)
+			groups = [{start:0, length: (vertices.length / 3), name:"mesh"}];
+		for(var j = 0; j < groups.length; ++j)
+		{
+			var group = groups[j];
+			lines.push("g " + group.name);
+			lines.push("usemtl " + (group.material || ("mat_"+j)));
+			var start = group.start;
+			var end = start + group.length;
+			for (var i = start; i < end; i+=3)
+				lines.push( "f " + (i+1) + "/" + (i+1) + "/" + (i+1) + " " + (i+2) + "/" + (i+2) + "/" + (i+2) + " " + (i+3) + "/" + (i+3) + "/" + (i+3) );
+		}
 	}
 	
-	return result;
+	return lines.join("\n");
 }
 
-/* BINARYU FORMAT ************************************/
+//simple format to output meshes in ASCII
+Mesh.parsers["mesh"] = function( text, options )
+{
+	var mesh = {};
+
+	var lines = text.split("\n");
+	for(var i = 0; i < lines.length; ++i)
+	{
+		var line = lines[i];
+		var type = line[0];
+		var t = line.substr(1).split(",");
+		var name = t[0];
+
+		if(type == "-") //buffer
+		{
+			var data = new Float32Array( Number(t[1]) );
+			for(var j = 0; j < data.length; ++j)
+				data[j] = Number(t[j+2]);
+			mesh[name] = data;
+		}
+		else if(type == "*") //index
+		{
+			var data = new Uint16Array( Number(t[1]) );
+			for(var j = 0; j < data.length; ++j)
+				data[j] = Number(t[j+2]);
+			mesh[name] = data;
+		}
+		else if(type == "@") //info
+		{
+			if(name == "bones")
+			{
+				var bones = [];
+				var num_bones = Number(t[1]);
+				for(var j = 0; j < num_bones; ++j)
+				{
+					var m = (t.slice(3 + j*17, 3 + (j+1)*17 - 1)).map(Number);
+					bones.push( [ t[2 + j*17], m ] );
+				}
+				mesh.bones = bones;
+			}
+			else if(name == "bind_matrix")
+				mesh.bind_matrix = t.slice(1,17).map(Number);
+			else if(name == "groups")
+			{
+				mesh.info = { groups: [] };
+				var num_groups = Number(t[1]);
+				for(var j = 0; j < num_groups; ++j)
+				{
+					var group = { name: t[2+j*4], material: t[2+j*4+1], start: Number(t[2+j*4+2]), length: Number(t[2+j*4+3]) };
+					mesh.info.groups.push(group);
+				}
+			}
+		}
+		else
+			console.warn("type unknown: " + t[0] );
+	}
+
+	if(options.only_data)
+		return mesh;
+
+	//creates and returns a GL.Mesh
+	var final_mesh = null;
+	final_mesh = Mesh.load( mesh, null, options.mesh );
+	final_mesh.updateBoundingBox();
+	return final_mesh;
+}
+
+Mesh.encoders["mesh"] = function( mesh, options )
+{
+	var lines = [];
+	for(var i in mesh.vertexBuffers )
+	{
+		var buffer = mesh.vertexBuffers[i];
+		var line = ["-"+i, buffer.data.length, buffer.data, typedArrayToArray( buffer.data ) ];
+		lines.push(line.join(","));
+	}
+
+	for(var i in mesh.indexBuffers )
+	{
+		var buffer = mesh.indexBuffers[i];
+		var line = [ "*" + i, buffer.data.length, buffer.data, typedArrayToArray( buffer.data ) ];
+		lines.push(line.join(","));
+	}
+
+	if(mesh.bounding)
+		lines.push( ["@bounding", typedArrayToArray(mesh.bounding.subarray(0,6))].join(",") );
+	if(mesh.info && mesh.info.groups)
+	{
+		var groups_info = [];
+		for(var j = 0; j < mesh.info.groups.length; ++j)
+		{
+			var group = mesh.info.groups[j];
+			groups_info.push( group.name, group.material, group.start, group.length );
+		}
+		lines.push( ["@groups", mesh.info.groups.length ].concat( groups_info ).join(",")  );
+	}
+
+	if(mesh.bones)
+		lines.push( ["@bones", mesh.bones.length, mesh.bones.flat()].join(",") );
+	if(mesh.bind_matrix)
+		lines.push( ["@bind_matrix", typedArrayToArray(mesh.bind_matrix) ].join(",") );
+
+	return lines.join("\n");
+}
+
+/* BINARY FORMAT ************************************/
 
 if(global.WBin)
 	global.WBin.classes["Mesh"] = Mesh;

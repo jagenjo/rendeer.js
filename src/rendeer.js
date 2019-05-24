@@ -50,6 +50,7 @@ RD.FRONT2D = vec2.fromValues(0,1);
 RD.WHITE = vec3.fromValues(1,1,1);
 RD.BLACK = vec3.fromValues(0,0,0);
 RD.IDENTITY = mat4.create();
+RD.ONES4 = vec4.fromValues(1,1,1,1);
 
 RD.CENTER = 0;
 RD.TOP_LEFT = 1;
@@ -1720,7 +1721,7 @@ Sprite.prototype.updateTextureMatrix = function( renderer )
 	//adapt texture matrix
 	var matrix = this.texture_matrix;
 		
-	var frame = this.frames[ this.frame ];
+	var frame = this.current_frame = this.frames[ this.frame ];
 	
 	//frame not found
 	if(this.frame !== null && !frame)
@@ -1769,22 +1770,39 @@ Sprite.prototype.render = function(renderer, camera)
 	if(!this.texture)
 		return;	
 
+	//this autoloads
+	if(!this.updateTextureMatrix(renderer)) //texture or frame not found
+		return;
+
 	var tex = renderer.textures[ this.texture ];
-	if(tex && this.flags.pixelated )
+	if(!tex)
+		return;
+	
+	if( this.flags.pixelated )
 	{
 		tex.bind(0);
 		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, this.flags.pixelated ? gl.NEAREST : gl.LINEAR );
 		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, this.flags.pixelated ? gl.NEAREST_MIPMAP_NEAREST : gl.LINEAR_MIPMAP_LINEAR );
 	}
-		
-	if(!this.updateTextureMatrix(renderer)) //texture or frame not found
-		return;
 
 	if(this.billboard_mode)
 		RD.orientNodeToCamera( this.billboard_mode, this, camera, renderer );
+	if(this.size[0] == 0 && tex.ready !== false)
+		this.size[0] = tex.width;
+	if(this.size[1] == 0 && tex.ready !== false)
+		this.size[1] = tex.height;
+	var size = this.size;
 	var offsetx = 0;
 	var offsety = 0;
 	temp_mat4.set( this._global_matrix );
+
+	var normalized_size = false;
+	if(this.current_frame && this.current_frame.size)
+	{
+		size = this.current_frame.size;
+		normalized_size = this.current_frame.normalized;
+	}
+
 	if (this.sprite_pivot)
 	{
 		switch( this.sprite_pivot )
@@ -1797,13 +1815,49 @@ Sprite.prototype.render = function(renderer, camera)
 			case RD.BOTTOM_CENTER: offsety = 0.5; break;
 			case RD.BOTTOM_RIGHT: offsetx = -0.5; offsety = 0.5; break;
 		}
-		mat4.translate( temp_mat4, temp_mat4, [offsetx * this.size[0], offsety * this.size[1], 0 ] );
+		mat4.translate( temp_mat4, temp_mat4, [offsetx * size[0], offsety * size[1], 0 ] );
 	}
-	mat4.scale( temp_mat4, temp_mat4, [this.size[0], this.size[1], 1 ] );
+	mat4.scale( temp_mat4, temp_mat4, [size[0] * (normalized_size ? this.size[0] : 1), size[1] * (normalized_size ? this.size[1] : 1), 1 ] );
 	renderer.setModelMatrix( temp_mat4 );
 
 	renderer.renderNode( this, renderer, camera );
 }
+
+/*
+Sprite.renderSprite = function( renderer, camera, position, texture, frame_index, atlas_size, scale, billboard_mode, pivot )
+{
+	if(!texture)
+		return;	
+
+	//this autoloads
+	if(!this.updateTextureMatrix(renderer)) //texture or frame not found
+		return;
+
+	if(billboard_mode)
+		RD.orientNodeToCamera( billboard_mode, this, camera, renderer );
+
+	var offsetx = 0;
+	var offsety = 0;
+	temp_mat4.set( this._global_matrix );
+
+	if (pivot)
+	{
+		switch( pivot )
+		{
+			//case RD.CENTER: break;
+			case RD.TOP_LEFT: offsetx = 0.5; offsety = -0.5; break;
+			case RD.TOP_CENTER: offsety = -0.5; break;
+			case RD.TOP_RIGHT: offsetx = -0.5; break;
+			case RD.BOTTOM_LEFT: offsetx = 0.5; offsety = 0.5; break;
+			case RD.BOTTOM_CENTER: offsety = 0.5; break;
+			case RD.BOTTOM_RIGHT: offsetx = -0.5; offsety = 0.5; break;
+		}
+		mat4.translate( temp_mat4, temp_mat4, [offsetx * w, offsety * h, 0 ] );
+	}
+	renderer.setModelMatrix( temp_mat4 );
+	renderer.renderNode( this, renderer, camera );
+}
+*/
 
 extendClass( Sprite, SceneNode );
 RD.Sprite = Sprite;
@@ -2001,6 +2055,7 @@ function Renderer( context, options )
 	this._mvp_matrix = mat4.create();
 	this._model_matrix = mat4.create();
 	this._texture_matrix = mat3.create();
+	this._color = vec4.fromValues(1,1,1,1); //in case we need to set a color
 	
 	this._nodes = [];
 	this._uniforms = {
@@ -2009,6 +2064,7 @@ function Renderer( context, options )
 		u_model: this._model_matrix,
 		u_mvp: this._mvp_matrix,
 		u_global_alpha_clip: 0.0,
+		u_color: this._color,
 		u_texture_matrix: this._texture_matrix
 	};
 	
@@ -2251,6 +2307,19 @@ Renderer.prototype.setModelMatrix = function(matrix)
 	mat4.multiply(this._mvp_matrix, this._viewprojection_matrix, matrix );
 }
 
+/*
+Renderer.prototype.setTextureMatrixForSpriteAtlas = function( matrix, frame, num_cols, num_rows )
+{
+	mat3.identity( matrix );
+	var x = (frame % num_cols) / num_cols;
+	var y = Math.floor(frame / num_cols) / num_rows;
+	mat3.translate( matrix, matrix, [x,y,0] );
+	mat3.scale( matrix, matrix, [ 1/num_cols, 1/num_rows,0] );
+}
+*/
+
+
+
 //allows to add some global uniforms without overwritting the existing ones
 Renderer.prototype.setGlobalUniforms = function( uniforms )
 {
@@ -2369,7 +2438,7 @@ Renderer.prototype.renderNode = function(node, camera)
 		this.disableNodeFlags( node );
 }
 
-Renderer.prototype.renderMesh = function( model, mesh, texture, color, shader )
+Renderer.prototype.renderMesh = function( model, mesh, texture, color, shader, mode, index_buffer_name )
 {
 	if(!mesh)
 		return;
@@ -2383,7 +2452,19 @@ Renderer.prototype.renderMesh = function( model, mesh, texture, color, shader )
 	if( texture )
 		this._uniforms.u_texture = texture.bind(0);
 	shader.uniforms(this._uniforms);
-	shader.draw( mesh );
+	shader.draw( mesh, mode === undefined ? gl.TRIANGLES : mode, index_buffer_name );
+}
+
+Renderer.prototype.renderBounding = function(mesh, matrix)
+{
+	if(!mesh)
+		return;
+	var m = this._uniforms.u_model;
+	var bb = mesh._bounding;
+	var s = bb.subarray(3,6);
+	mat4.translate( m, matrix, bb.subarray(0,3) );
+	mat4.scale( m, m, [s[0]*2,s[1]*2,s[2]*2] );
+	this.renderMesh( m, gl.meshes["cube"], null, [1,1,0,1], null, gl.LINES, "wireframe" );
 }
 
 Renderer.prototype.enableNodeFlags = function(node)
@@ -2427,6 +2508,107 @@ Renderer.prototype.setPointSize = function(v)
 	this.point_size = v;
 	gl.shaders["point"].uniforms({u_pointSize: this.point_size});
 }
+
+
+/**
+* Helper method to render points very fast
+* positions and extra must be a Float32Array with all the positions, extra must have 4
+* @method renderPoints
+* @param {Float32Array} positions
+* @param {Float32Array} extra used to stored extra info per point
+* @param {RD.Camera} camera
+* @param {Number} num_points
+* @param {GL.Shader} shader
+* @param {Number} point_size
+*/
+RD.Renderer.prototype.renderPoints = function( positions, extra, camera, num_points, shader, point_size )
+{
+	if(!positions || positions.constructor !== Float32Array)
+		throw("RD.renderPoints only accepts Float32Array");
+	if(!shader)
+	{
+		shader = this.shaders["_points"];
+		if(!shader)
+		{
+			shader = this.shaders["_points"] = new GL.Shader( RD.points_vs_shader, RD.points_fs_shader );
+			shader.uniforms({u_texture:0, u_atlas: 1, u_pointSize: 1});
+		}
+	}
+
+	point_size = point_size || 1;
+
+	var max_points = 1024;
+	num_points = num_points || positions.length / 3;
+	var positions_data = null;
+	var extra_data = null;
+	var mesh = this._points_mesh;
+
+	if( num_points > positions.length / 3)
+		num_points = positions.length / 3;
+
+	if( !mesh || positions.length > (max_points*3) )
+	{
+		if( num_points > max_points )
+			max_points = GL.Texture.nextPOT( num_points );
+		positions_data = new Float32Array( max_points * 3 );
+		extra_data = new Float32Array( max_points * 4 );
+		mesh = this._points_mesh = GL.Mesh.load({ vertices: positions_data, extra4: extra_data });
+	}
+	else
+	{
+		positions_data = this._points_mesh.getBuffer("vertices").data;
+		extra_data = this._points_mesh.getBuffer("extra4").data;
+	}
+
+	positions_data.set( positions_data.length > positions.length ? positions : positions.subarray(0, positions_data.length) );
+	if(extra)
+		extra_data.set( extra_data.length > extra.length ? extra : extra.subarray(0, extra_data.length) );
+	else if( extra_data.fill ) //fill with zeros
+		extra_data.fill(0);
+	mesh.upload( GL.DYNAMIC_STREAM );
+
+	shader.setUniform( "u_color", this._color );
+	shader.setUniform( "u_pointSize", point_size );
+	shader.setUniform( "u_camera_perspective", camera._projection_matrix[5] );
+	shader.setUniform( "u_viewport", gl.viewport_data );
+	shader.setUniform( "u_viewprojection", camera._viewprojection_matrix );
+	shader.drawRange( mesh, GL.POINTS, 0, num_points );
+}
+
+RD.points_vs_shader = "\n\
+precision highp float;\n\
+attribute vec3 a_vertex;\n\
+attribute vec4 a_extra4;\n\
+varying vec3 v_pos;\n\
+varying vec4 v_extra4;\n\
+uniform mat4 u_viewprojection;\n\
+uniform vec4 u_viewport;\n\
+uniform float u_camera_perspective;\n\
+uniform float u_pointSize;\n\
+\n\
+float computePointSize( float radius, float w )\n\
+{\n\
+	if(radius < 0.0)\n\
+		return -radius;\n\
+	return u_viewport.w * u_camera_perspective * radius / w;\n\
+}\n\
+\n\
+void main() {\n\
+	v_pos = a_vertex;\n\
+	v_extra4 = a_extra4;\n\
+	gl_Position = u_viewprojection * vec4(v_pos,1.0);\n\
+	gl_PointSize = computePointSize( u_pointSize, gl_Position.w );\n\
+}\n\
+";
+
+RD.points_fs_shader = "\n\
+precision highp float;\n\
+uniform vec4 u_color;\n\
+\n\
+void main() {\n\
+	gl_FragColor = u_color;\n\
+}\n\
+";
 
 /**
 * Loads one mesh and stores inside the meshes object to be reused in the future, if it is already loaded it skips the loading
@@ -2538,6 +2720,8 @@ Renderer.prototype.loadTexture = function( url, options, on_complete )
 		new_tex = GL.Texture.fromURL( full_url, options, inner_callback );
 
 	function inner_callback(t){
+		if(that.debug)
+			console.log(" + texture loaded: " + url );
 		if(!t)
 			that.assets_not_found[ url ] = true;
 		else
@@ -3486,6 +3670,13 @@ Camera.prototype.lerp = function(camera, f)
 	this._must_update_matrix = true;
 }
 
+//it rotates the matrix so it faces the camera
+Camera.prototype.orientMatrixToCamera = function( matrix )
+{
+	matrix.set( this._right, 0 );
+	matrix.set( this._top, 4 );
+	matrix.set( this._front, 8 );
+}
 
 Camera.prototype.extractPlanes = function()
 {
@@ -3538,6 +3729,23 @@ var CLIP_INSIDE = RD.CLIP_INSIDE = 0;
 var CLIP_OUTSIDE = RD.CLIP_OUTSIDE = 1;
 var CLIP_OVERLAP = RD.CLIP_OVERLAP = 2;
 
+
+Camera.prototype.testMesh = (function(){ 
+
+	var aabb = BBox.create();
+	var center = aabb.subarray(0,3);
+	var halfsize = aabb.subarray(3,6);
+
+	return function( mesh, matrix )
+	{
+		//convert oobb to aabb
+		var bounding = mesh.bounding;
+		if(!bounding)
+			return CLIP_INSIDE;
+		BBox.transformMat4(aabb, bounding, matrix);
+		return this.testBox(center,halfsize);
+	}
+})();
 /**
 * test if box is inside frustrum (you must call camera.extractPlanes() previously to update frustrum planes)
 * @method testBox
@@ -3944,121 +4152,6 @@ RD.readPixels = function( url, on_complete )
 		on_complete(data,this);
 	}
 };
-
-//Helper method to render points very fast
-//positions and extra must be a Float32Array with all the positions, extra must have 4
-RD.renderPoints = function( positions, extra, camera, num_points, shader )
-{
-	if(!positions || positions.constructor !== Float32Array)
-		throw("RD.renderPoints only accepts Float32Array");
-	if(!shader)
-	{
-		shader = gl.shaders["_points"];
-		if(!shader)
-		{
-			shader = gl.shaders["_points"] = new GL.Shader( RD.renderPoints.vs_shader, RD.renderPoints.fs_shader );
-			shader.uniforms({u_texture:0, u_atlas: 1, u_pointSize: 1});
-		}
-	}
-
-	var max_points = 1024;
-	num_points = num_points || positions.length / 3;
-	var positions_data = null;
-	var extra_data = null;
-	var mesh = this._points_mesh;
-
-	if( num_points > positions.length / 3)
-		num_points = positions.length / 3;
-
-	if( !mesh || positions.length > (max_points*3) )
-	{
-		if( num_points > max_points )
-			max_points = GL.Texture.nextPOT( num_points );
-		positions_data = new Float32Array( max_points * 3 );
-		extra_data = new Float32Array( max_points * 4 );
-		mesh = this._points_mesh = GL.Mesh.load({ vertices: positions_data, extra4: extra_data });
-	}
-	else
-	{
-		positions_data = this._points_mesh.getBuffer("vertices").data;
-		extra_data = this._points_mesh.getBuffer("extra4").data;
-	}
-
-	positions_data.set( positions_data.length > positions.length ? positions : positions.subarray(0, positions_data.length) );
-	if(extra)
-		extra_data.set( extra_data.length > extra.length ? extra : extra.subarray(0, extra_data.length) );
-	else if( extra_data.fill ) //fill with zeros
-		extra_data.fill(0);
-	mesh.upload( GL.DYNAMIC_STREAM );
-
-	shader.setUniform( "u_camera_perspective", camera._projection_matrix[5] );
-	shader.setUniform( "u_viewport", gl.viewport_data );
-	shader.setUniform( "u_model", RD.IDENTITY );
-	shader.setUniform( "u_mvp", camera._viewprojection_matrix );
-	shader.drawRange( mesh, GL.POINTS, 0, num_points );
-}
-
-RD.renderPoints.vs_shader = "\n\
-precision highp float;\n\
-attribute vec3 a_vertex;\n\
-attribute vec4 a_extra4;\n\
-varying vec3 v_pos;\n\
-varying vec3 v_wPos;\n\
-varying vec4 v_extra4;\n\
-uniform mat4 u_model;\n\
-uniform mat4 u_mvp;\n\
-uniform vec4 u_viewport;\n\
-uniform float u_camera_perspective;\n\
-uniform float u_pointSize;\n\
-\n\
-float computePointSize( float radius, float w )\n\
-{\n\
-	if(radius < 0.0)\n\
-		return -radius;\n\
-	return u_viewport.w * u_camera_perspective * radius / w;\n\
-}\n\
-\n\
-void main() {\n\
-	vec3 vertex = a_vertex;	\n\
-	\n\
-	v_pos = vertex;\n\
-	v_wPos = (u_model * vec4(vertex,1.0)).xyz;\n\
-	v_extra4 = a_extra4;\n\
-	gl_Position = u_mvp * vec4(vertex,1.0);\n\
-	gl_Position.x = floor(gl_Position.x * u_viewport.z) / u_viewport.z;\n\
-	gl_Position.y = floor(gl_Position.y * u_viewport.w) / u_viewport.w;\n\
-	gl_PointSize = computePointSize( u_pointSize, gl_Position.w );\n\
-}\n\
-";
-
-RD.renderPoints.fs_shader = "\n\
-precision highp float;\n\
-varying vec3 v_pos;\n\
-varying vec3 v_wPos;\n\
-varying vec4 v_extra4; //id,flip \n\
-uniform float u_atlas;\n\
-\n\
-uniform sampler2D u_texture;\n\
-\n\
-void main() {\n\
-	float i_atlas = 1.0 / u_atlas;\n\
-	float frame = v_extra4.x;\n\
-	float x = frame * i_atlas;\n\
-	float y = floor(x);\n\
-	x = (x - y);\n\
-	y = y / u_atlas;\n\
-	if( v_extra4.y > 0.0 ) //must flip in x\n\
-		x -= gl_PointCoord.x * i_atlas - i_atlas;\n\
-	else\n\
-		x += gl_PointCoord.x * i_atlas;\n\
-	\n\
-	vec2 uv = vec2( x, 1.0 - (y + gl_PointCoord.y / u_atlas) );\n\
-	vec4 color = texture2D( u_texture, uv );\n\
-	if(color.a < 0.1)\n\
-		discard;\n\
-	gl_FragColor = color;\n\
-}\n\
-";
 
 //in case litegl is not installed, Rendeer could still be useful
 if(typeof(GL) == "undefined")
