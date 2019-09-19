@@ -18,9 +18,15 @@ GL.blockable_keys = {"Up":true,"Down":true,"Left":true,"Right":true};
 GL.reverse = null;
 
 //some consts
-GL.LEFT_MOUSE_BUTTON = 1;
-GL.MIDDLE_MOUSE_BUTTON = 2;
-GL.RIGHT_MOUSE_BUTTON = 3;
+//https://developer.mozilla.org/en-US/docs/Web/API/MouseEvent/button
+GL.LEFT_MOUSE_BUTTON = 0;
+GL.MIDDLE_MOUSE_BUTTON = 1;
+GL.RIGHT_MOUSE_BUTTON = 2;
+
+GL.LEFT_MOUSE_BUTTON_MASK = 1;
+GL.RIGHT_MOUSE_BUTTON_MASK = 2;
+GL.MIDDLE_MOUSE_BUTTON_MASK = 4;
+
 GL.last_context_id = 0;
 
 
@@ -212,6 +218,54 @@ global.EPSILON = 0.000001;
 global.isPowerOfTwo = GL.isPowerOfTwo = function isPowerOfTwo(v)
 {
 	return ((Math.log(v) / Math.log(2)) % 1) == 0;
+}
+
+/**
+* Tells if one number is power of two (used for textures)
+* @method isPowerOfTwo
+* @param {v} number
+* @return {boolean}
+*/
+global.nearestPowerOfTwo = GL.nearestPowerOfTwo = function nearestPowerOfTwo(v)
+{
+	return Math.pow(2, Math.round( Math.log( v ) / Math.log(2) ) )
+}
+
+
+/**
+* converts from polar to cartesian
+* @method polarToCartesian
+* @param {vec3} out
+* @param {number} azimuth orientation from 0 to 2PI
+* @param {number} inclianation from -PI to PI
+* @param {number} radius
+* @return {vec3} returns out
+*/
+global.polarToCartesian = function( out, azimuth, inclination, radius )
+{
+	out = out || vec3.create();
+	out[0] = radius * Math.sin(inclination) * Math.cos(azimuth);
+	out[1] = radius * Math.cos(inclination);
+	out[2] = radius * Math.sin(inclination) * Math.sin(azimuth);
+	return out;
+}
+
+/**
+* converts from cartesian to polar
+* @method cartesianToPolar
+* @param {vec3} out
+* @param {number} x
+* @param {number} y
+* @param {number} z
+* @return {vec3} returns [azimuth,inclination,radius]
+*/
+global.cartesianToPolar = function( out, x,y,z )
+{
+	out = out || vec3.create();
+	out[2] = Math.sqrt(x*x+y*y+z*z);
+	out[0] = Math.atan2(x,z);
+	out[1] = Math.acos(z/out[2]);
+	return out;
 }
 
 //Global Scope
@@ -1676,16 +1730,18 @@ vec3.project = function(out, vec,  mvp, viewport) {
 	var iy = vec[1];
 	var iz = vec[2];
 
-	var ox = m[0] * ix + m[4] * iy + m[8] * iz + m[12]
-	var oy = m[1] * ix + m[5] * iy + m[9] * iz + m[13]
-	var ow = m[3] * ix + m[7] * iy + m[11] * iz + m[15]
+	var ox = m[0] * ix + m[4] * iy + m[8] * iz + m[12];
+	var oy = m[1] * ix + m[5] * iy + m[9] * iz + m[13];
+	var oz = m[2] * ix + m[6] * iy + m[10] * iz + m[14];
+	var ow = m[3] * ix + m[7] * iy + m[11] * iz + m[15];
 
 	var projx =     (ox / ow + 1) / 2;
 	var projy = 1 - (oy / ow + 1) / 2;
+	var projz =     (oz / ow + 1) / 2;
 
 	out[0] = projx * viewport[2] + viewport[0];
 	out[1] = projy * viewport[3] + viewport[1];
-	out[2] = ow;
+	out[2] = projz; //ow
 	return out;
 };
 
@@ -2458,7 +2514,11 @@ Mesh.prototype.addBuffer = function(name, buffer)
 		this.indexBuffers[name] = buffer;
 
 	if(!buffer.attribute)
-		buffer.attribute = GL.Mesh.common_buffers[name].attribute;
+	{
+		var info = GL.Mesh.common_buffers[name];
+		if(info)
+			buffer.attribute = info.attribute;
+	}
 }
 
 
@@ -3564,12 +3624,23 @@ Mesh.prototype.computeTextureCoordinates = function( stream_type )
 /**
 * Computes the number of vertices
 * @method getVertexNumber
-* @param {typed Array} vertices array containing all the vertices
 */
 Mesh.prototype.getNumVertices = function() {
 	var b = this.vertexBuffers["vertices"];
-	if(!b) return 0;
+	if(!b)
+		return 0;
 	return b.data.length / b.spacing;
+}
+
+/**
+* Computes the number of triangles (takes into account indices)
+* @method getNumTriangles
+*/
+Mesh.prototype.getNumTriangles = function() {
+	var indices_buffer = this.getIndexBuffer("triangles");
+	if(!indices_buffer)
+		return this.getNumVertices() / 3;
+	return indices_buffer.data.length / 3;
 }
 
 
@@ -3793,6 +3864,61 @@ Mesh.prototype.totalMemory = function()
 
 	return num;
 }
+
+Mesh.prototype.slice = function(start, length)
+{
+	var new_vertex_buffers = {};
+
+	var indices_buffer = this.indexBuffers["triangles"];
+	if(!indices_buffer)
+	{
+		console.warn("splice in not indexed not supported yet");
+		return null;
+	}
+
+	var indices = indices_buffer.data;
+
+	var new_triangles = [];
+	var reindex = new Int32Array( indices.length );
+	reindex.fill(-1);
+
+	var end = start + length;
+	if(end >= indices.length)
+		end = indices.length;
+
+	var last_index = 0;
+	for(var j = start; j < end; ++j)
+	{
+		var index = indices[j];
+		if( reindex[index] != -1 )
+		{
+			new_triangles.push(reindex[index]);
+			continue;
+		}
+
+		//new vertex
+		var new_index = last_index++;
+		reindex[index] = new_index;
+		new_triangles.push(new_index);
+
+		for( var i in this.vertexBuffers )
+		{
+			var buffer = this.vertexBuffers[i];
+			var data = buffer.data;
+			var spacing = buffer.spacing;
+			if(!new_vertex_buffers[i])
+				new_vertex_buffers[i] = [];
+			var new_buffer = new_vertex_buffers[i];
+			for(var k = 0; k < spacing; ++k)
+				new_buffer.push( data[k + index*spacing] );
+		}
+	}
+
+	var new_mesh = new GL.Mesh( new_vertex_buffers, {triangles: new_triangles}, null,gl);
+	new_mesh.updateBoundingBox();
+	return new_mesh;
+}
+
 
 /**
 * returns a low poly version of the mesh that takes much less memory (but breaks tiling of uvs and smoothing groups)
@@ -5087,12 +5213,8 @@ global.Texture = GL.Texture = function Texture( width, height, options, gl ) {
 	}
 	else if(this.texture_type == GL.TEXTURE_CUBE_MAP)
 	{
-		gl.texImage2D( gl.TEXTURE_CUBE_MAP_POSITIVE_X, 0, this.internalFormat, this.width, this.height, 0, this.format, this.type, pixel_data ? pixel_data[0] : null );
-		gl.texImage2D( gl.TEXTURE_CUBE_MAP_POSITIVE_Y, 0, this.internalFormat, this.width, this.height, 0, this.format, this.type, pixel_data ? pixel_data[1] : null );
-		gl.texImage2D( gl.TEXTURE_CUBE_MAP_POSITIVE_Z, 0, this.internalFormat, this.width, this.height, 0, this.format, this.type, pixel_data ? pixel_data[2] : null );
-		gl.texImage2D( gl.TEXTURE_CUBE_MAP_NEGATIVE_X, 0, this.internalFormat, this.width, this.height, 0, this.format, this.type, pixel_data ? pixel_data[3] : null );
-		gl.texImage2D( gl.TEXTURE_CUBE_MAP_NEGATIVE_Y, 0, this.internalFormat, this.width, this.height, 0, this.format, this.type, pixel_data ? pixel_data[4] : null );
-		gl.texImage2D( gl.TEXTURE_CUBE_MAP_NEGATIVE_Z, 0, this.internalFormat, this.width, this.height, 0, this.format, this.type, pixel_data ? pixel_data[5] : null );
+		for(var i = 0; i < 6; ++i)
+			gl.texImage2D( gl.TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, this.internalFormat, this.width, this.height, 0, this.format, this.type, pixel_data ? pixel_data[i] : null );
 	}
 	else if(this.texture_type == GL.TEXTURE_3D)
 	{
@@ -5100,6 +5222,8 @@ global.Texture = GL.Texture = function Texture( width, height, options, gl ) {
 			throw("TEXTURE_3D not supported in WebGL 1. Enable WebGL 2 in the context by passing webgl2:true to the context");
 		if(!options.depth)
 			throw("3d texture depth must be set in the options.depth");
+		gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false ); //standard does not allow this flags for 3D textures
+		gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false );
 		gl.texImage3D( GL.TEXTURE_3D, 0, this.internalFormat, width, height, options.depth, 0, this.format, this.type, pixel_data || null );
 	}
 	gl.bindTexture(this.texture_type, null); //disable
@@ -5374,6 +5498,7 @@ Texture.prototype.uploadData = function( data, options, skip_mipmaps )
 	var height = this.height;
 	width = width >> mipmap_level; 
 	height = height >> mipmap_level;
+	var internal_format = this.internalFormat || this.format;
 
 	if( this.type == GL.HALF_FLOAT_OES && data.constructor === Float32Array )
 		console.warn("cannot uploadData to a HALF_FLOAT texture from a Float32Array, must be Uint16Array. To upload it we recomment to create a FLOAT texture, upload data there and copy to your HALF_FLOAT.");
@@ -5383,22 +5508,26 @@ Texture.prototype.uploadData = function( data, options, skip_mipmaps )
 		if(gl.webgl_version == 1)
 		{
 			if(data.buffer && data.buffer.constructor == ArrayBuffer)
-				gl.texImage2D(this.texture_type, mipmap_level, this.format, width, height, 0, this.format, this.type, data);
+				gl.texImage2D(this.texture_type, mipmap_level, internal_format, width, height, 0, this.format, this.type, data);
 			else
-				gl.texImage2D(this.texture_type, mipmap_level, this.format, this.format, this.type, data);
+				gl.texImage2D(this.texture_type, mipmap_level, internal_format, this.format, this.type, data);
 		}
 		else if(gl.webgl_version == 2) //webgl forces to use width and height
 		{
 			if(data.buffer && data.buffer.constructor == ArrayBuffer)
-				gl.texImage2D(this.texture_type, mipmap_level, this.format, width, height, 0, this.format, this.type, data);
+				gl.texImage2D(this.texture_type, mipmap_level, internal_format, width, height, 0, this.format, this.type, data);
 			else
-				gl.texImage2D(this.texture_type, mipmap_level, this.format, width, height, 0, this.format, this.type, data);
+				gl.texImage2D(this.texture_type, mipmap_level, internal_format, width, height, 0, this.format, this.type, data);
 		}
 	}
 	else if( this.texture_type == GL.TEXTURE_3D )
-		gl.texImage3D( this.texture_type, mipmap_level, this.format, width, height, this.depth >> mipmap_level, 0, this.format, this.type, data);
+	{
+		gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false ); //standard does not allow this flags for 3D textures
+		gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false );
+		gl.texImage3D( this.texture_type, mipmap_level, internal_format, width, height, this.depth >> mipmap_level, 0, this.format, this.type, data);
+	}
 	else if( this.texture_type == GL.TEXTURE_CUBE_MAP )
-		gl.texImage2D( gl.TEXTURE_CUBE_MAP_POSITIVE_X + (options.cubemap_face || 0), mipmap_level, this.format, width, height, 0, this.format, this.type, data);
+		gl.texImage2D( gl.TEXTURE_CUBE_MAP_POSITIVE_X + (options.cubemap_face || 0), mipmap_level, internal_format, width, height, 0, this.format, this.type, data);
 	else
 		throw("cannot uploadData for this texture type");
 
@@ -6454,7 +6583,7 @@ Texture.cubemapFromImages = function(images, options) {
 Texture.cubemapFromImage = function( image, options ) {
 	options = options || {};
 
-	if(image.width != (image.height / 6) && image.height % 6 != 0 && !options.faces)
+	if(image.width != (image.height / 6) && image.height % 6 != 0 && !options.faces && !options.is_polar )
 	{
 		console.error( "Cubemap image not valid, only 1x6 (vertical) or 6x3 (cross) formats. Check size:", image.width, image.height );
 		return null;
@@ -6462,8 +6591,37 @@ Texture.cubemapFromImage = function( image, options ) {
 
 	var width = image.width;
 	var height = image.height;
-	
-	if(options.is_cross !== undefined)
+
+	if(options.is_polar)
+	{
+		var size = options.size || GL.nearestPowerOfTwo( image.height );
+		var temp_tex = GL.Texture.fromImage( image, { ignore_pot:true, wrap: gl.REPEAT, filter: gl.LINEAR } );
+		var cubemap = new GL.Texture( size, size, { texture_type: gl.TEXTURE_CUBE_MAP, format: gl.RGBA });
+		if(options.texture)
+		{
+			var old_tex = options.texture;
+			for(var i in cubemap)
+				old_tex[i] = cubemap[i];
+			cubemap = old_tex;
+		}
+		var rot_matrix = mat3.create();
+		var uniforms = { u_texture:0, u_rotation: rot_matrix };
+		gl.disable( gl.DEPTH_TEST );
+		gl.disable( gl.BLEND );
+		var shader = GL.Shader.getPolarToCubemapShader();
+		cubemap.drawTo(function(t,i){
+			var face_info = GL.Texture.cubemap_camera_parameters[ i ];
+			mat3.identity( rot_matrix );
+			rot_matrix.set( face_info.right, 0 );
+			rot_matrix.set( face_info.up, 3 );
+			rot_matrix.set( face_info.dir, 6 );
+			temp_tex.toViewport( shader, uniforms );
+		});
+		if(options.keep_image)
+			cubemap.img = image;
+		return cubemap;
+	}
+	else if(options.is_cross !== undefined)
 	{
 		options.faces = Texture.generateCubemapCrossFacesInfo(image.width, options.is_cross);
 		width = height = image.width / 4;
@@ -6571,6 +6729,7 @@ Texture.cubemapFromURL = function( url, options, on_complete ) {
 
 /**
 * returns an ArrayBuffer with the pixels in the texture, they are fliped in Y
+* Warn: If cubemap it only returns the pixels of the first face! use getCubemapPixels instead
 * @method getPixels
 * @param {number} cubemap_face [optional] the index of the cubemap face to read (ignore if texture_2D)
 * @param {number} mipmap level [optional, default is 0]
@@ -6642,6 +6801,32 @@ Texture.prototype.setPixels = function( data, no_flip, skip_mipmaps, cubemap_fac
 }
 
 /**
+* returns an array with six arrays containing the pixels of every cubemap face
+* @method getCubemapPixels
+* @return {Array} the array that has 6 typed arrays containing the pixels 
+*/
+Texture.prototype.getCubemapPixels = function()
+{
+	if(this.texture_type !== gl.TEXTURE_CUBE_MAP)
+		throw("this texture is not a cubemap");
+	return [ this.getPixels(0),	this.getPixels(1), this.getPixels(2), this.getPixels(3), this.getPixels(4), this.getPixels(5) ];
+}
+
+/**
+* fills a cubemap given an array with typed arrays containing the pixels of 6 faces
+* @method setCubemapPixels
+* @param {Array} data array that has 6 typed arrays containing the pixels 
+* @param {bool} noflip if pixels should not be flipped according to Y
+*/
+Texture.prototype.setCubemapPixels = function( data_array, no_flip )
+{
+	if(this.texture_type !== gl.TEXTURE_CUBE_MAP)
+		throw("this texture is not a cubemap, it should be created with { texture_type: gl.TEXTURE_CUBE_MAP }");
+	for(var i = 0; i < 6; ++i)
+		this.setPixels( data_array[i], no_flip, i != 5, i );
+}
+
+/**
 * Copy texture content to a canvas
 * @method toCanvas
 * @param {Canvas} canvas must have the same size, if different the canvas will be resized
@@ -6672,7 +6857,7 @@ Texture.prototype.toCanvas = function( canvas, flip_y, max_size )
 	var buffer = null;
 	if(this.texture_type == gl.TEXTURE_2D )
 	{
-		if(this.width != w || this.height != h ) //resize image to fit the canvas
+		if(this.width != w || this.height != h || this.type != gl.UNSIGNED_BYTE) //resize image to fit the canvas
 		{
 			//create a temporary texture
 			var temp = new GL.Texture(w,h,{ format: gl.RGBA, filter: gl.NEAREST });
@@ -6707,10 +6892,18 @@ Texture.prototype.toCanvas = function( canvas, flip_y, max_size )
 		ctx.fillStyle = "black";
 		ctx.fillRect(0,0,canvas.width, canvas.height );
 
+		var cubemap = this;
+		if(this.type != gl.UNSIGNED_BYTE) //convert pixels to uint8 as it is the only supported format by the canvas
+		{
+			//create a temporary texture
+			cubemap = new GL.Texture( this.width, this.height, { format: gl.RGBA, texture_type: gl.TEXTURE_CUBE_MAP, filter: gl.NEAREST, type: gl.UNSIGNED_BYTE });
+			this.copyTo( cubemap );
+		}
+
 		for(var i = 0; i < 6; i++)
 		{
-			buffer = this.getPixels(i);
 			var pixels = temp_ctx.getImageData(0,0, temp_canvas.width, temp_canvas.height );
+			buffer = cubemap.getPixels(i);
 			pixels.data.set( buffer );
 			temp_ctx.putImageData(pixels,0,0);
 			ctx.drawImage( temp_canvas, info[i].x, info[i].y, temp_canvas.width, temp_canvas.height );
@@ -6888,6 +7081,43 @@ Texture.blend = function( a, b, factor, out )
 	return true;
 }
 
+Texture.cubemapToTexture2D = function( cubemap_texture, size, target_texture, keep_type, yaw )
+{
+	if(!cubemap_texture || cubemap_texture.texture_type != gl.TEXTURE_CUBE_MAP) {
+		throw("No cubemap in convert");
+		return null;
+	}
+
+	size = size || cubemap_texture.width;
+	var type = keep_type ? cubemap_texture.type : gl.UNSIGNED_BYTE;
+	yaw = yaw || 0;
+	if(!target_texture)
+		target_texture = new GL.Texture(size*2,size,{ minFilter: gl.NEAREST, type: type });
+	var shader = gl.shaders["cubemap_to_texture2D"];
+	if(!shader)
+	{
+		shader = gl.shaders["cubemap_to_texture2D"] = new GL.Shader( GL.Shader.SCREEN_VERTEX_SHADER, '\
+		precision mediump float;\n\
+		#define PI 3.14159265358979323846264\n\
+		uniform samplerCube texture;\
+		varying vec2 v_coord;\
+		uniform float u_yaw;\n\
+		void main() {\
+			float alpha = ((1.0 - v_coord.x) * 2.0) * PI + u_yaw;\
+			float beta = (v_coord.y * 2.0 - 1.0) * PI * 0.5;\
+			vec3 N = vec3( -cos(alpha) * cos(beta), sin(beta), sin(alpha) * cos(beta) );\
+			gl_FragColor = textureCube(texture,N);\
+		}');
+	}
+	shader.setUniform("u_yaw", yaw );
+	target_texture.drawTo(function() {
+		gl.disable(gl.DEPTH_TEST);
+		gl.disable(gl.CULL_FACE);
+		gl.disable(gl.BLEND);
+		cubemap_texture.toViewport( shader );
+	});
+	return target_texture;
+}
 
 /**
 * returns a white texture of 1x1 pixel 
@@ -7522,8 +7752,13 @@ Shader.prototype.updateShader = function( vertexSource, fragmentSource, macros )
 	//expand macros
 	var extra_code = Shader.expandMacros( macros );
 
-	if(this.program)
+	if(!this.program)
 		this.program = gl.createProgram();
+	else
+	{
+		gl.detachShader( this.program, this.vs_shader );
+		gl.detachShader( this.program, this.fs_shader );
+	}
 
 	var extra_code = Shader.expandMacros( macros );
 
@@ -8681,6 +8916,34 @@ Shader.getCubemapShowShader = function(gl)
 }
 
 //shader to copy a cubemap into another 
+Shader.getPolarToCubemapShader = function(gl)
+{
+	gl = gl || global.gl;
+	var shader = gl.shaders[":polar_to_cubemap"];
+	if(shader)
+		return shader;
+
+	var shader = new GL.Shader( Shader.SCREEN_VERTEX_SHADER,"\n\
+			precision highp float;\n\
+			varying vec2 v_coord;\n\
+			uniform sampler2D u_texture;\n\
+			uniform mat3 u_rotation;\n\
+			void main() {\n\
+				vec2 uv = vec2( v_coord.x, 1.0 - v_coord.y );\n\
+				vec3 dir = normalize( vec3( uv - vec2(0.5), 0.5 ));\n\
+				dir = u_rotation * dir;\n\
+				float u = atan(dir.x,dir.z) / 6.28318531;\n\
+				float v = (asin(dir.y) / 1.57079633) * 0.5 + 0.5;\n\
+				u = mod(u,1.0);\n\
+				v = mod(v,1.0);\n\
+			   gl_FragColor = texture2D( u_texture, vec2(u,v) );\n\
+			}\n\
+			");
+	return gl.shaders[":polar_to_cubemap"] = shader;
+}
+
+
+//shader to copy a cubemap into another 
 Shader.getCubemapCopyShader = function(gl)
 {
 	gl = gl || global.gl;
@@ -9145,13 +9408,25 @@ GL.create = function(options) {
 		*/
 		isButtonPressed: function(num)
 		{
-			return this.buttons & (1<<num);
+			if(num == GL.LEFT_MOUSE_BUTTON)
+				return this.buttons & GL.LEFT_MOUSE_BUTTON_MASK;
+			if(num == GL.MIDDLE_MOUSE_BUTTON)
+				return this.buttons & GL.MIDDLE_MOUSE_BUTTON_MASK;
+			if(num == GL.RIGHT_MOUSE_BUTTON)
+				return this.buttons & GL.RIGHT_MOUSE_BUTTON_MASK;
 		},
 
 		wasButtonPressed: function(num)
 		{
-			return (this.buttons & (1<<num)) && !(this.last_buttons & (1<<num));
-		},
+			var mask = 0;
+			if(num == GL.LEFT_MOUSE_BUTTON)
+				mask = GL.LEFT_MOUSE_BUTTON_MASK;
+			else if(num == GL.MIDDLE_MOUSE_BUTTON)
+				mask = GL.MIDDLE_MOUSE_BUTTON_MASK;
+			else if(num == GL.RIGHT_MOUSE_BUTTON)
+				mask = GL.RIGHT_MOUSE_BUTTON_MASK;
+			return (this.buttons & mask) && !(this.last_buttons & mask);
+		}
 	};
 
 	/**
@@ -9202,9 +9477,10 @@ GL.create = function(options) {
 		mouse.canvasy = e.canvasy;
 		mouse.clientx = e.mousex;
 		mouse.clienty = e.mousey;
-		mouse.left_button = !!(mouse.buttons & (1<<GL.LEFT_MOUSE_BUTTON));
-		mouse.middle_button = !!(mouse.buttons & (1<<GL.MIDDLE_MOUSE_BUTTON));
-		mouse.right_button = !!(mouse.buttons & (1<<GL.RIGHT_MOUSE_BUTTON));
+		mouse.buttons = e.buttons;
+		mouse.left_button = !!(mouse.buttons & GL.LEFT_MOUSE_BUTTON_MASK);
+		mouse.middle_button = !!(mouse.buttons & GL.MIDDLE_MOUSE_BUTTON_MASK);
+		mouse.right_button = !!(mouse.buttons & GL.RIGHT_MOUSE_BUTTON_MASK);
 
 		if(e.eventType == "mousedown")
 		{
@@ -9838,15 +10114,15 @@ GL.augmentEvent = function(e, root_element)
 	if(e.type == "mousedown")
 	{
 		this.dragging = true;
-		gl.mouse.buttons |= (1 << e.which); //enable
+		//gl.mouse.buttons |= (1 << e.which); //enable
 	}
 	else if (e.type == "mousemove")
 	{
 	}
 	else if (e.type == "mouseup")
 	{
-		gl.mouse.buttons = gl.mouse.buttons & ~(1 << e.which);
-		if(gl.mouse.buttons == 0)
+		//gl.mouse.buttons = gl.mouse.buttons & ~(1 << e.which);
+		if(e.buttons == 0)
 			this.dragging = false;
 	}
 
@@ -9866,10 +10142,14 @@ GL.augmentEvent = function(e, root_element)
 
 	//insert info in event
 	e.dragging = this.dragging;
-	e.buttons_mask = gl.mouse.buttons;
-	e.leftButton = !!(gl.mouse.buttons & (1<<GL.LEFT_MOUSE_BUTTON));
-	e.middleButton = !!(gl.mouse.buttons & (1<<GL.MIDDLE_MOUSE_BUTTON));
-	e.rightButton = !!(gl.mouse.buttons & (1<<GL.RIGHT_MOUSE_BUTTON));
+	e.leftButton = !!(gl.mouse.buttons & GL.LEFT_MOUSE_BUTTON_MASK);
+	e.middleButton = !!(gl.mouse.buttons & GL.MIDDLE_MOUSE_BUTTON_MASK);
+	e.rightButton = !!(gl.mouse.buttons & GL.RIGHT_MOUSE_BUTTON_MASK);
+	//shitty non-coherent API, e.buttons use 1:left,2:right,4:middle) but e.button uses (0:left,1:middle,2:right)
+	e.buttons_mask = 0;
+	if( e.leftButton ) e.buttons_mask = 1;
+	if( e.middleButton ) e.buttons_mask |= 2;
+	if( e.rightButton ) e.buttons_mask |= 4;
 	e.isButtonPressed = function(num) { return this.buttons_mask & (1<<num); }
 }
 
@@ -11193,9 +11473,12 @@ global.BBox = GL.BBox = {
 		bb[3] = halfsize[0];
 		bb[4] = halfsize[1];
 		bb[5] = halfsize[2];
-
-		vec3.sub(bb.subarray(6,9), bb.subarray(0,3), bb.subarray(3,6) );
-		vec3.add(bb.subarray(9,12), bb.subarray(0,3), bb.subarray(3,6) );
+		bb[6] = bb[0] - bb[3];
+		bb[7] = bb[1] - bb[4];
+		bb[8] = bb[2] - bb[5];
+		bb[9] = bb[0] + bb[3];
+		bb[10] = bb[1] + bb[4];
+		bb[11] = bb[2] + bb[5];
 		if(radius)
 			bb[12] = radius;
 		else
@@ -11306,6 +11589,25 @@ global.BBox = GL.BBox = {
 		vec3.subtract( out.subarray(3,6), max, center );
 		out[12] = vec3.length( out.subarray(3,6) ); //radius		
 		return out;
+	},
+
+	clampPoint: function(out, box, point)
+	{
+		out[0] = Math.clamp( point[0], box[0] - box[3], box[0] + box[3]);
+		out[1] = Math.clamp( point[1], box[1] - box[4], box[1] + box[4]);
+		out[2] = Math.clamp( point[2], box[2] - box[5], box[2] + box[5]);
+	},
+
+	isPointInside: function( bbox, point )
+	{
+		if( (bbox[0] - bbox[3]) > point[0] ||
+			(bbox[1] - bbox[4]) > point[1] ||
+			(bbox[2] - bbox[5]) > point[2] ||
+			(bbox[0] + bbox[3]) < point[0] ||
+			(bbox[1] + bbox[4]) < point[1] ||
+			(bbox[2] + bbox[5]) < point[2] )
+			return false;
+		return true;
 	},
 
 	getCenter: function(bb) { return bb.subarray(0,3); },
@@ -12548,7 +12850,7 @@ Mesh.parsers["mesh"] = function( text, options )
 		}
 		else if(type == "*") //index
 		{
-			var data = new Uint16Array( Number(t[1]) );
+			var data = Number(t[1]) > 256*256 ? new Uint32Array( Number(t[1]) ) : new Uint16Array( Number(t[1]) );
 			for(var j = 0; j < data.length; ++j)
 				data[j] = Number(t[j+2]);
 			mesh[name] = data;

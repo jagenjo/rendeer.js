@@ -188,7 +188,7 @@ SceneNode.prototype._ctor = function()
 
 	//could be used for many things
 	this.blend_mode = RD.BLEND_NONE;
-	this.layers = 0x3; //first two layers
+	this.layers = 0x3|0; //first two layers
 	this._color = vec4.fromValues(1,1,1,1);
 	this._uniforms = { u_color: this._color, u_color_texture: 0 };
 	this.primitive = GL.TRIANGLES;
@@ -1150,7 +1150,7 @@ SceneNode.prototype.findNode = function(id)
 * Searchs which nodes pass the filter function
 * @method findNodesByFilter
 * @param {Function} filter_func a function that receives the node and must return true if it passes
-* @param {Number} layers [optional] to filter by layers too
+* @param {Number} layers [optional] bitmask to filter by layers too
 * @param {Array} result [optional] where to store the output
 * @return {Array} array with all the nodes that passed the function
 */
@@ -1268,7 +1268,7 @@ SceneNode.prototype.updateBoundingBox = function( ignore_children )
 * @param { GL.Ray } ray the object containing origin and direction of the ray
 * @param { vec3 } result where to store the collision point
 * @param { Number } max_dist the max distance of the ray
-* @param { Number } layers the layers where you want to test
+* @param { Number } layers the layers bitmask where you want to test
 * @param { Boolean } test_against_mesh if true it will test collision with mesh, otherwise only boundings
 * @return { RD.SceneNode } the node where it collided
 */
@@ -1467,7 +1467,7 @@ SceneNode.prototype.setRangeFromSubmesh = function( submesh_id )
 /**
 * returns an array of nodes which center is inside the sphere
 * @method findNodesInSphere
-* @param {number} layers [optional]
+* @param {number} layers [optional] bitmask to filter by layer, otherwise 0xFF is used
 */
 SceneNode.prototype.findNodesInSphere = function( center, radius, layers, out )
 {
@@ -1944,7 +1944,7 @@ Scene.prototype.getNodeById = function(id)
 * 
 * @method findNodesInBBox
 * @param {BBox} box  use BBox.fromCenterHalfsize(center,halfsize) to define it
-* @param {number} layers [optional]
+* @param {number} layers [optional] bitmask to filter by layer, otherwise 0xFF is used
 */
 Scene.prototype.findNodesInBBox = function( box, layers, out )
 {
@@ -2005,7 +2005,7 @@ Object.defineProperty(Scene.prototype, 'root', {
 * @param {RD.Ray} ray
 * @param {vec3} result the collision point in case there was
 * @param {number} max_dist
-* @param {number} layers mask
+* @param {number} layers bitmask to filter by layer, otherwise 0xFF is used
 * @param {boolean} test_against_mesh test against every mesh
 * @return {RD.SceneNode} node collided or null
 */
@@ -2168,6 +2168,7 @@ Renderer._sort_by_priority_and_dist_func = function(a,b)
 * @param {RD.Scene} scene
 * @param {RD.Camera} camera
 * @param {Array} nodes [Optional] array with nodes to render, otherwise all nodes will be rendered
+* @param {Number} layers [Optional] bit mask with which layers should be rendered, if omited then 0xFF is used (8 first layers)
 */
 Renderer.prototype.render = function(scene, camera, nodes, layers )
 {
@@ -2243,11 +2244,12 @@ Renderer.prototype.render = function(scene, camera, nodes, layers )
 		for (var i = 0; i < nodes.length; ++i)
 		{
 			var node = nodes[i];
+			node.flags.was_rendered = false;
 			if(node.flags.visible === false || !(node.layers & layers) )
 				continue;
 			if(this.mustRenderNode && this.mustRenderNode(node, camera) === false)
 				continue;
-			
+			node.flags.was_rendered = true;
 			this.setModelMatrix( node._global_matrix );
 			
 			if(node.render)
@@ -2886,10 +2888,10 @@ Renderer.prototype.compileShadersFromAtlas = function(files, extra_macros)
 		if(macros && extra_macros)
 		{
 			var final_macros = {};
-			for(var i in macros)
-				final_macros[i] = macros[i];
-			for(var i in extra_macros)
-				final_macros[i] = extra_macros[i];
+			for(var k in macros)
+				final_macros[k] = macros[k];
+			for(var k in extra_macros)
+				final_macros[k] = extra_macros[k];
 			macros = final_macros;
 		}
 		else if(extra_macros)
@@ -3741,6 +3743,8 @@ var CLIP_OVERLAP = RD.CLIP_OVERLAP = 2;
 
 
 Camera.prototype.testMesh = (function(){ 
+	if(!global.BBox) //no litegl installed
+		return;
 
 	var aabb = BBox.create();
 	var center = aabb.subarray(0,3);

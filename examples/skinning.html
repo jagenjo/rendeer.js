@@ -16,47 +16,48 @@
 	
 	var anim = null;
 	var anim2 = null;
+	var renderer = null;
+	var scene = null;
 
 	function init()
 	{
 		//create a scene
-		var scene = new RD.Scene();
+		scene = new RD.Scene();
 
 		//create the rendering context
 		var context = GL.create({ width: window.innerWidth, height:window.innerHeight });
-		var renderer = new RD.Renderer( context );
+		renderer = new RD.Renderer( context );
 		document.body.appendChild( renderer.canvas ); //attach
+
+		renderer.meshes["circle"] = GL.Mesh.circle({size:5,xz:true});
+
+		var center = vec3.create();
+		renderer.mustRenderNode = function(node, camera)
+		{
+			center.set( node.position );
+			center[1] += 5;
+			return camera.testSphere( center, 16 ) != CLIP_OUTSIDE;
+		}
 
 		var vertex_shader = '\
 					precision highp float;\n\
 					attribute vec3 a_vertex;\n\
 					attribute vec3 a_normal;\n\
 					attribute vec2 a_coord;\n\
-					attribute vec4 a_bone_indices;\n\
-					attribute vec4 a_weights;\n\
 					varying vec3 v_pos;\n\
 					varying vec3 v_normal;\n\
 					varying vec2 v_coord;\n\
 					uniform mat4 u_model;\n\
-					uniform mat4 u_bones[128];\n\
 					uniform mat4 u_viewprojection;\n\
+					'+Skeleton.shader_code+'\n\
 					void main() {\n\
-						vec4 v = vec4(a_vertex,1.0);\n\
-						vec3 pos = (u_bones[int(a_bone_indices.x)] * a_weights.x * v + \n\
-								u_bones[int(a_bone_indices.y)] * a_weights.y * v + \n\
-								u_bones[int(a_bone_indices.z)] * a_weights.z * v + \n\
-								u_bones[int(a_bone_indices.w)] * a_weights.w * v).xyz;\n\
-						vec4 N = vec4(a_normal,0.0);\n\
-						v_normal =	(u_bones[int(a_bone_indices.x)] * a_weights.x * N + \n\
-								u_bones[int(a_bone_indices.y)] * a_weights.y * N + \n\
-								u_bones[int(a_bone_indices.z)] * a_weights.z * N + \n\
-								u_bones[int(a_bone_indices.w)] * a_weights.w * N).xyz;\n\
-						v_normal = normalize(v_normal);\n\
-						v_pos = (u_model * vec4(pos,1.0)).xyz;\n\
-						v_normal = (u_model * vec4(v_normal,0.0)).xyz;\n\
+						vec3 vertex = a_vertex;\n\
+						vec3 normal = a_normal;\n\
+						computeSkinning(vertex,normal);\n\
+						v_pos = (u_model * vec4(vertex,1.0)).xyz;\n\
+						v_normal = (u_model * vec4(normal,0.0)).xyz;\n\
 						v_coord = a_coord;\n\
 						gl_Position = u_viewprojection * vec4( v_pos , 1.0 );\n\
-						gl_PointSize = 2.0;\n\
 					}\
 					';
 		var fragment_shader = '\
@@ -73,33 +74,46 @@
 
 		//create camera
 		var camera = new RD.Camera();
-		camera.perspective( 45, gl.canvas.width / gl.canvas.height, 1, 1000 );
-		camera.lookAt( [0,30,40],[0,10,0],[0,1,0] );
+		camera.perspective( 45, gl.canvas.width / gl.canvas.height, 1, 2000 );
+		camera.lookAt( [0,80,80],[0,10,0],[0,1,0] );
 
 		//create a node
 		var people = [];
-		for(var i = 0 ; i < 1; ++i )
+		for(var i = 0 ; i < 625; ++i )
 		{
 			var man = new RD.SceneNode();
 			man.color = [1,1,1,1];
 			man.mesh = "data/male.mesh";
-			man.texture = "data/male.png";
+			man.texture = "data/casual.png";
 			man.shader = "skinning";
+			man.id = i;
+			man.phase = Math.random();
+			man.x = (i%25) * 20 - 250 + Math.random() * 10 - 5;
+			man.z = Math.floor(i/25) * 20 - 250 + Math.random() * 10 - 5;
+			man.scaling = 1 + Math.random()*0.2;
+			man.rotate(Math.random() * 360 * DEG2RAD,RD.UP);
+			man.color = [0.5 + Math.random()*0.5,0.5 + Math.random()*0.5,0.5 + Math.random()*0.5,1];
 			scene.root.addChild(man);
 			people.push(man);
 		}
+
+		var floor = new RD.SceneNode();
+		floor.color = [0.3,0.3,0.3,1];
+		floor.mesh = "circle";
+		floor.scale(100,100,100);
+		scene.root.addChild(floor);
 
 		anim = new SkeletalAnimation();
 		HttpRequest("data/idle.skanim", null, function(data) {
 			anim.fromData(data);
 		});
 		anim2 = new SkeletalAnimation();
-		HttpRequest("data/walking.skanim", null, function(data) {
+		HttpRequest("data/rumba.skanim", null, function(data) {
 			anim2.fromData(data);
 		});
 
 		//global settings
-		var bg_color = vec4.fromValues(0.2,0.3,0.4,1);
+		var bg_color = vec4.fromValues(0.0,0.0,0.0,1);
 		var bones = [];
 
 		//main render loop
@@ -112,29 +126,44 @@
 			last = now;
 			now = getTime();
 			var dt = (now - last) * 0.001;
+			renderer.draw_calls = 0;
+			if(camera.position[1] < 1)
+				camera.position[1] = 1;
 			renderer.clear(bg_color);
 			renderer.render(scene, camera);
-			if(anim.duration)
-				anim.assignTime( time );
-			if(anim2.duration)
-				anim2.assignTime( time );
-			if(anim.duration && anim2.duration )
-				Skeleton.blend( anim.skeleton, anim2.skeleton, Math.sin(time)*0.5+0.5, anim.skeleton );
+
+			for(var i = 0; i < people.length; ++i)
+			{
+				var person = people[i];
+				if(!person.flags.was_rendered)
+					continue;
+				if(anim.duration)
+					anim.assignTime( time + i);
+				if(anim2.duration)
+					anim2.assignTime( time + i);
+				if(anim.duration && anim2.duration )
+					Skeleton.blend( anim.skeleton, anim2.skeleton, Math.sin(time + person.phase*2*Math.PI)*0.5+0.5, anim.skeleton );
+				person.bones = anim.skeleton.computeFinalBoneMatrices( person.bones, gl.meshes[ person.mesh ] );
+				if(person.bones && person.bones.length)
+					person.uniforms.u_bones = person.bones;
+			}
 
 			scene.update(dt);
-
-			var player = people[0];
-			bones = anim.skeleton.computeFinalBoneMatrices(bones,gl.meshes[ player.mesh ]);
-			if(bones && bones.length)
-				player.uniforms.u_bones = bones;
-
-			camera.lookAt( [Math.cos(getTime() * 0.0001 )*60,50,Math.sin(getTime()* 0.0001 )*60],[0,10,0],[0,1,0] );
 		}
 
 		//input
-		renderer.context.captureMouse();
+		renderer.context.captureMouse(true);
 		renderer.context.onmousemove = function(e)
 		{
+			if(e.dragging)
+			{
+				camera.orbit( e.deltax * -0.002, [0,1,0] );
+				camera.orbit( e.deltay * 0.002, [1,0,0], null, true );
+			}
+		}
+		renderer.context.onmousewheel = function(e)
+		{
+			camera.orbitDistanceFactor( 1.0 + (e.wheel * -0.001) );
 		}
 	}
 
