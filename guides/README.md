@@ -23,16 +23,16 @@ All the dependencies are included in the external folder.
 
 About the libraries it uses, some remarks:
 
-* gl-matrix has an specific way of working that some people could feel is not very user-friendly but it was made to have the best performance possible in Javascript, just check some examples to understand it better.
-* litegl.js is a very low-level API, it wraps some actions common to WebGL, but if you want to do anything manually feel free to call the WebGL API directly, the only problem will be that Rendeer expects some basic classes to handle the render (like ```GL.Shader```, ```GL.Texture``` and ```GL.Mesh```) but if you bypasss the rendering stage there is no problem.
+* **gl-matrix** has an specific way of working that some people could feel is not very user-friendly but it was made to have the best performance possible in Javascript, just check some examples to understand it better.
+* **litegl.js** is a very low-level API, it wraps some actions common to WebGL, but if you want to do anything manually feel free to call the WebGL API directly, the only problem will be that Rendeer expects some basic classes to handle the render (like ```GL.Shader```, ```GL.Texture``` and ```GL.Mesh```) but if you bypasss the rendering stage there is no problem.
 
 Although not mandatory I recommend to also include Canvas2DToWebGL.js, a library that helps using the Canvas2D API inside WebGL, something useful if you want to skip using the DOM.
 
 ### The WebGL context
 
-Rendeers requires that you pass an existing WebGL Context when creating the renderer (```RD.Renderer```), to create the context you must use LiteGL, you cannot pass another WebGL Context created by another library.
+Rendeer requires that you pass an existing WebGL Context when creating the renderer (```RD.Renderer```), to create the context you must use LiteGL, you cannot pass another WebGL Context created by another library as Rendeer relies on functions of LiteGL.
 
-To create the GL context follow the LiteGL.js guide, but here is an example:
+To create the GL context follow [the LiteGL.js guide](https://github.com/jagenjo/litegl.js/blob/master/guides/context.md), but here is an example:
 
 ```javascript
 var context = GL.create({width:800,height:600});
@@ -49,9 +49,9 @@ gl.enable( gl.DEPTH_TEST );
 
 ### The Scene 
 
-There are two classes to keep in mind when using the scene graph, the Scene class that contains all the scene info and the nodes, and the SceneNode that represents every node in the scene.
+There are two classes to keep in mind when using the scene graph, the ```RD.Scene``` class that contains all the scene info and the nodes, and the ```RD.SceneNode``` that represents every node in the scene.
 
-We must create a RD.Scene to contain our scene:
+We must create a ```RD.Scene``` to contain our scene:
 
 ```javascript
 var scene = new RD.Scene();
@@ -71,7 +71,7 @@ scene.root.addChild( node );
 
 ### The SceneNode properties
 
-We use SceneNodes to render meshes on the screen, so the three main properties to keep in mind are ```node.mesh```, ```node.shader``` and ```node.textures```.
+We use SceneNodes to render meshes on the screen, so the three main properties of a ```RD.SceneNode``` to keep in mind are ```node.mesh```, ```node.shader``` and ```node.textures```.
 All three store strings, although textures is an object where you can store different textures for different channels (color, specular, etc).
 
 ```javascript
@@ -79,17 +79,17 @@ node.mesh = "mymesh.obj";
 node.texture = "mytexture.png"; //is the same as node.textures.color = "..."
 ```
 
-The strings are the name of the assets that will be fetched when rendering. These assets must be stored in the RD.Renderer's containers (```renderer.meshes(```, ```renderer.shaders``` and ```renderer.textures```), which are the sames in the gl context (you can use them indistinguishable).
+The strings are the name of the assets that will be fetched when rendering. These assets must be stored in the ```RD.Renderer```'s containers (```renderer.meshes```, ```renderer.shaders``` and ```renderer.textures```), which are the same containers as in the gl context (```gl.meshes[...]```,...), you can use them indistinguishable.
 
-But user is in charge of loading the assets manually, Rendeer does not perform loading automatically unless you set the ```renderer.autoload_assets = true;```, so add your resources to those containers before using them.
+But user is in charge of loading the assets manually, by default Rendeer does not perform asset loading automatically unless you set the ```renderer.autoload_assets = true;```, so add your resources to those containers before using them.
 
 ### The SceneNode transformations
 
 To perform transformations in the SceneNode there are three main properties in every SceneNode, which are position, rotation and scaling. 
 
 ```javascript
-node.position = [10,10,10];
-node.rotation = quat.create();
+node.position = [10,10,10]; //relative to parent node
+node.rotation = quat.create(); //rotations are in quaternion format
 node.scaling = 10; //it also accepts a vec3 in which case the scaling will be non-uniform
 ```
 
@@ -108,12 +108,12 @@ You can  access the local matrix in ```_local_matrix``` or the global matrix in 
 
 ### The Camera
 
-Cameras are not part of the scene and cannot be attached directly to the Scene (although they can be stored in a node if you want).
+Cameras help define the view point and the view settings. They are not part of the scene and cannot be attached directly to the Scene (although they can be stored in a node if you want).
 
 ```javascript
 var camera = new RD.Camera();
-camera.perspective(fov,aspect,near,far);
-camera.lookAt([100,100,100],[0,0,0],[0,1,0]);
+camera.perspective(fov,aspect,near,far); //to render in perspective mode
+camera.lookAt([100,100,100],[0,0,0],[0,1,0]); //to set eye,center and up
 ```
 
 When rendering the scene you must supply which camera you want to use.
@@ -127,13 +127,13 @@ Cameras do not perform frustum culling but they provide methods so you can do it
 
 ### The Renderer 
 
-To render the scene we need a Renderer, to create one we must supply an existing WebGLContext created with LiteGL.
+To render the scene we need a ```RD.Renderer```, to create one we must supply an existing WebGLContext created with LiteGL.
 
 ```javascript
 var renderer = new RD.Renderer( context );
 ```
 
-The Renderer is in charge of allocating resources in the GPU and of performing the rendering of one frame.
+The ```RD.Renderer``` is in charge of allocating resources in the GPU and of performing the rendering of one frame.
 
 So if we want to be able to see the scene we need to render one frame by calling the render function:
 
@@ -150,7 +150,7 @@ By default resources like textures and meshes will be loaded automatically (you 
 To add a texture you must use the LiteGL functions manually and store the result in renderer.textures or call the renderer method loadTexture;
 
 ```javascript
-renderer.loadTexture( "data/sky.png", {name: "sky"}, callback );
+renderer.loadTexture( "data/sky.png", { format: GL.RGB, name: "sky"}, callback );
 ```
 
 The same with loadMesh:
@@ -161,14 +161,14 @@ renderer.loadMesh( "data/sky.obj", callback ); //callback in case we want to exe
 
 ### The shaders
 
-Rendeer only comes with a very basic flat shader, if you want to use more interesting shaders you must code them by yourself using the shaders system.
+Rendeer only comes with a very basic flat and phong shader, if you want to use more interesting shaders you must code them by yourself using the shaders system.
 
 When creating a shader here are some considerations:
 
 * Global parameters passed to the shader: float u_time
 * Camera parameters: mat4 u_view, mat4 u_viewprojection, mat4 u_mvp
 * Node parameters: mat4 u_model
-* Textures will have "u_" + channel_name + "_texture"
+* Textures will have "u_" + channel_name + "_texture" (like u_color_texture)
 * Other parameters stored in node._uniforms will be passed as they are.
 
 To compile and store shaders in the renderer you can use the old approach of compiling your own shaders manually using LiteGL and storing them in ```renderer.shaders```:
