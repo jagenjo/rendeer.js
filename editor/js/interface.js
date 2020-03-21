@@ -33,9 +33,6 @@ var GUI = {
 			canvas.redraw();
 		};
 
-		var docked_bottom = new LiteGUI.Panel({title:'Docked panel',hide:true});
-		mainarea.getSection(0).getSection(1).add( docked_bottom );
-
 		mainmenu.add("file/new");
 		mainmenu.add("file/open");
 		mainmenu.add("file/save");
@@ -126,26 +123,15 @@ var GUI = {
 
 		widgets.addSlider("slider",10,{min:1,max:100,step:1});
 		widgets.addSeparator();
-		widgets.addVector2("vector2",[10,20], {min:0});
-		widgets.addVector3("vector3",[10,20,30], {min:0});
-		widgets.addVector4("vector4",[0.1,0.2,0.3,0.4], {min:0});
-		widgets.addSection("Text stuff");
-		widgets.addString("string","foo");
-		widgets.addStringButton("string button","foo", { callback_button: function(v) { console.log("Button: " + v); } });
-		widgets.addTextarea(null,"a really long silly text", {height: 100});
-		var w = widgets.addCombo("combo","javi",{values:["foo","faa","super largo texto que no cabe entero","javi","nada"], callback: function(name) { console.log("Combo selected: " + name); }});
-		widgets.addComboButtons("combobuttons","javi",{values:["foo","faa","javi","nada"], callback: function(name) { console.log("Combo button selected: " + name); }});
-		widgets.addTags("tags","pop",{values:["rap","blues","pop","jazz"], callback: function(tags) { console.log("Tag added: " + JSON.stringify(tags) ); }});
-		widgets.addSection("Other widgets");
-		widgets.addCheckbox("checkbox",true,{callback: function(value) { console.log("Checkbox pressed: " + value); } });
-		widgets.addButton("Serialize","Save",{callback: function(name) { console.log("Button pressed: " + name); } });
-		widgets.addButtons("Serialize",["Save","Load","New"],{callback: function(name) { console.log("Button pressed: " + name); } });
-		widgets.addButton(null,"Save");
-		widgets.addSeparator();
+
+		widgets.addSection("SceneNode");
+		widgets.addString("name","foo");
+		widgets.addCheckbox("visible",true);
 		widgets.addColor("Color",[0,1,0]);
-		widgets.addPad("Pad",[0.5,0.5], function(v){ console.log(v); });
-		widgets.addFile("File","test.png");
-		widgets.addLine("Line",[[0.5,1],[0.75,0.25]],{defaulty:0,width:120}); 
+		widgets.addVector3("position",[10,20,30], {min:0});
+		widgets.addString("shader","hong");
+		//var w = widgets.addCombo("combo","javi",{values:["foo","faa","super largo texto que no cabe entero","javi","nada"], callback: function(name) { console.log("Combo selected: " + name); }});
+		//widgets.addComboButtons("combobuttons","javi",{values:["foo","faa","javi","nada"], callback: function(name) { console.log("Combo button selected: " + name); }});
 
 		//mainarea.resize();
 	}

@@ -231,8 +231,8 @@ SceneNode.prototype.clone = function()
 	{
 		if(i[0] == "_") //private
 			continue;
-		if(this.__lookupGetter__(i)) //its a getter
-			continue;
+		//if(this.__lookupGetter__(i)) //its a getter
+		//	continue;
 		if(i == "children") //never copy this
 			continue;
 		var v = this[i];
@@ -858,23 +858,35 @@ SceneNode.prototype.setTextureTiling = function( tiling_x, tiling_y, offset_x, o
 /**
 * Get transform local matrix
 * @method getLocalMatrix
+* @param {mat4} out [optional] where to copy the result, otherwise it is returned the property matrix
 * @return {mat4} matrix44 
 */
-SceneNode.prototype.getLocalMatrix = function()
+SceneNode.prototype.getLocalMatrix = function(out)
 {
 	if(this._must_update_matrix)
 		this.updateLocalMatrix();
+	if(out)
+	{
+		out.set(this._global_matrix);
+		return out;
+	}
 	return this._local_matrix;
 }
 
 /**
 * Get transform global matrix (concatenating parents) (its a reference)
 * @method getGlobalMatrix
+* @param {mat4} out [optional] where to copy the result, otherwise it is returned the property matrix
 * @return {mat4} matrix44 
 */
-SceneNode.prototype.getGlobalMatrix = function()
+SceneNode.prototype.getGlobalMatrix = function(out)
 {
 	this.updateGlobalMatrix();
+	if(out)
+	{
+		out.set(this._global_matrix);
+		return out;
+	}
 	return this._global_matrix;
 }
 
@@ -1370,6 +1382,9 @@ SceneNode.prototype.testRayWithMesh = (function(){
 		var bb = mesh.getBoundingBox();
 		if(!bb) //mesh has no vertices
 			return false;
+
+		if(!max_dist)
+			max_dist = 10000000;
 
 		//ray to local
 		var model = this._global_matrix;
@@ -2056,6 +2071,7 @@ function Renderer( context, options )
 	this._model_matrix = mat4.create();
 	this._texture_matrix = mat3.create();
 	this._color = vec4.fromValues(1,1,1,1); //in case we need to set a color
+	this._viewprojection2D_matrix = mat4.create(); //used to 2D rendering
 	
 	this._nodes = [];
 	this._uniforms = {
@@ -2198,6 +2214,7 @@ Renderer.prototype.render = function(scene, camera, nodes, layers )
 
 	//get matrices in the camera
 	this.enableCamera( camera );
+	this.enable2DView();
 
 	//find which nodes should we render
 	this._nodes.length = 0;
@@ -2287,6 +2304,13 @@ Renderer.prototype.enableCamera = function(camera)
 	this._viewprojection_matrix.set(camera._viewprojection_matrix);
 	this._uniforms.u_camera_position = camera.position;
 }
+
+//in case you are going to use functions to render in 2D in screen space
+Renderer.prototype.enable2DView = function()
+{
+	mat4.ortho( this._viewprojection2D_matrix, 0,gl.viewport_data[2], 0, gl.viewport_data[3], -1, 1 );
+}
+
 
 //this functions allow to interrupt the render of one scene to render another one
 Renderer.prototype.saveState = function()
@@ -2925,6 +2949,44 @@ Renderer.prototype.setShadersFromFile = function( file_data )
 	this.compileShadersFromAtlas( files );
 }
 
+Renderer.prototype.drawCircle2D = function( x,y, radius, color, fill )
+{
+	if(!gl.meshes["circle"])
+		gl.meshes["circle"] = GL.Mesh.circle({radius:1,slices:32});
+	if(!gl.meshes["ring"])
+		gl.meshes["ring"] = GL.Mesh.ring({radius:1,thickness:0.02,slices:64});
+	var shader = gl.shaders["flat"];
+	shader.setUniform("u_color",color);
+	shader.setUniform("u_viewprojection",this._viewprojection2D_matrix);
+	var m = temp_mat4;
+	mat4.identity(m);
+	mat4.translate(m,m,[x,y,0]);
+	mat4.scale(m,m,[radius*2,radius*2,radius*2]);
+	shader.setUniform("u_model",m);
+	shader.draw( gl.meshes[ fill ? "circle" : "ring" ] );
+}
+
+Renderer.prototype.drawLine2D = function( x,y, x2,y2, width, color, shader )
+{
+	var mesh = gl.meshes["plane"];
+	shader = shader || gl.shaders["flat"];
+	shader.setUniform("u_color",color);
+	shader.setUniform("u_viewprojection",this._viewprojection2D_matrix);
+	var m = temp_mat4;
+	var dx = x2-x;
+	var dy = y2-y;
+	var angle = Math.atan2(dx,dy);
+	var dist = Math.sqrt(dx*dx+dy*dy);
+	width /= 2;
+	mat4.identity(m);
+	mat4.translate(m,m,[(x+x2)*0.5,(y+y2)*0.5,0]);
+	mat4.rotate(m,m,angle,RD.FRONT);
+	var f = width;
+	mat4.scale(m,m,[f,dist,f]);
+	shader.setUniform("u_model",m);
+	shader.draw( mesh );
+}
+
 
 RD.sortByDistance = function(nodes, position)
 {
@@ -3106,6 +3168,16 @@ Ray.prototype.testSphere = function( center, radius, max_dist )
 	return geo.testRaySphere( this.origin, this.direction, center, radius, this.collision_point, max_dist );
 }
 
+Ray.prototype.closestPointOnRay = function( origin, direction, closest )
+{
+	closest = closest || vec3.create();
+	var end = vec3.create();
+	vec3.add(end, this.origin, this.direction );
+	var end2 = vec3.create();
+	vec3.add(end2, origin, direction );
+	geo.closestPointBetweenLines( this.origin, end, origin, end2, null, closest );
+	return closest;
+}
 
 /**
 * Camera wraps all the info about the camera (properties and view and projection matrices)
@@ -3150,11 +3222,11 @@ function Camera( options )
 	*/
 	this._fov = 45; //persp
 	/**
-	* size of frustrum when working in orthographic
+	* size of frustrum when working in orthographic (could be also an array with [left,right,top,bottom]
 	* @property frustum_size {number} 
 	* @default 50
 	*/
-	this._frustum_size = 50; //ortho
+	this._frustum_size = 50; //ortho (could be also an array with [left,right,top,bottom]
 	this.flip_y = false;
 
 	this._view_matrix = mat4.create();
@@ -3241,6 +3313,7 @@ Object.defineProperty(Camera.prototype, 'aspect', {
 	enumerable: false //avoid problems
 });
 
+//(could be also an array with [left,right,top,bottom]
 Object.defineProperty(Camera.prototype, 'frustum_size', {
 	get: function() { return this._frustum_size; },
 	set: function(v) { this._frustum_size = v; this._must_update_matrix = true; },
@@ -3308,9 +3381,12 @@ Camera.prototype.orthographic = function(frustum_size, near, far, aspect)
 {
 	this.type = Camera.ORTHOGRAPHIC;
 	this._frustum_size = frustum_size;
-	this._near = near;
-	this._far = far;
-	this._aspect = aspect || 1;
+	if(arguments.lenth > 1)
+	{
+		this._near = near;
+		this._far = far;
+		this._aspect = aspect || 1;
+	}
 
 	this._must_update_matrix = true;
 }
@@ -3341,7 +3417,12 @@ Camera.prototype.updateMatrices = function( force )
 	{
 		//proj
 		if(this.type == Camera.ORTHOGRAPHIC)
-			mat4.ortho(this._projection_matrix, -this.frustum_size*this._aspect, this.frustum_size*this._aspect, -this._frustum_size, this._frustum_size, this._near, this._far);
+		{
+			if( this.frustum_size.constructor === Number )
+				mat4.ortho(this._projection_matrix, -this.frustum_size*this._aspect, this.frustum_size*this._aspect, -this._frustum_size, this._frustum_size, this._near, this._far);
+			else if( this.frustum_size.length )
+				mat4.ortho(this._projection_matrix, this.frustum_size[0], this.frustum_size[1], this.frustum_size[2], this.frustum_size[3], this.frustum_size.length > 3 ? this.frustum_size[4] : this._near, this.frustum_size.length > 4 ? this.frustum_size[5] : this._far);
+		}
 		else
 			mat4.perspective(this._projection_matrix, this._fov * DEG2RAD, this._aspect, this._near, this._far);
 
@@ -3678,7 +3759,9 @@ Camera.prototype.lerp = function(camera, f)
 	this._fov = this._fov * (1.0 - f) + camera._fov * f;
 	this._near = this._near * (1.0 - f) + camera._near * f;
 	this._far = this._far * (1.0 - f) + camera._far * f;
-	this._frustum_size = this._frustum_size * (1.0 - f) + camera._frustum_sizer * f;
+
+	if( this._frustum_size.constructor === Number )
+		this._frustum_size = this._frustum_size * (1.0 - f) + camera._frustum_sizer * f;
 	this._must_update_matrix = true;
 }
 
@@ -4064,7 +4147,7 @@ Renderer.prototype.createShaders = function()
 	gl.shaders["texture_transform"] = this._texture_transform_shader;
 	
 	//basic phong shader
-	var phong_uniforms = { u_ambient: vec3.create(), u_light_vector: vec3.fromValues(0.577, 0.577, 0.577), u_light_color: RD.WHITE };
+	var phong_uniforms = { u_ambient: vec3.create(), u_light_vector: vec3.fromValues(0.5442, 0.6385, 0.544), u_light_color: RD.WHITE };
 
 	var fragment_shader = '\
 			precision highp float;\n\
