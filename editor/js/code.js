@@ -30,13 +30,16 @@ var CORE = {
 		this.grid = RD.Factory("grid");
 		this.scene.root.addChild(this.grid);
 
-		this.gizmo = new RD.Gizmo();
-		this.scene.root.addChild(this.gizmo);
+		this.gizmo = new RD.Gizmo(); //gizmo is not added to the scene as it should be rendered after the outline
 
 		this.object = new RD.SceneNode({color:[0.5,0.5,0.5,1],mesh:"data/monkey.obj", shader:"phong"});
 		this.object.rotate(90*DEG2RAD,RD.UP);
 		this.scene.root.addChild(this.object);
 
+		gl.shaders["phong"] = new GL.Shader( this.renderer._vertex_shader, this.renderer._fragment_shader, { EXTRA: "NdotL = dot(u_light_vector,N) * 0.5 + 0.5;\n" });
+		gl.shaders["phong"].uniforms(this.renderer._phong_uniforms);
+
+		this.selected_objects = [this.object];
 		this.gizmo.setTarget( this.object );
 	},
 
@@ -52,7 +55,39 @@ var CORE = {
 		gl.clearColor(0.1,0.1,0.1,1);
 		gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
 
-		this.renderer.render( this.scene, this.camera );
+		this.renderer.render( this.scene, this.camera ); //render scene
+		this.renderOutline(); //render outline
+		this.renderer.render( this.scene, this.camera, [this.gizmo] ); //render gizmo on top
+	},
+
+	renderOutline: function()
+	{
+		if(!this.gizmo.target)
+			return;
+		this.selected_objects = [this.gizmo.target];
+		if(!this._selection_buffer || this._selection_buffer.width != gl.canvas.width || this._selection_buffer.height != gl.canvas.height)
+			this._selection_buffer = new GL.Texture( gl.canvas.width, gl.canvas.height );
+		var that = this;
+		this._selection_buffer.drawTo(function(){
+			gl.clearColor(0,0,0,1);
+			gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
+			that.renderer.shader_overwrite = "flat";
+			that.renderer.onNodeShaderUniforms = function(node,shader) { shader.setUniform("u_color",[1,1,1,1]); };
+			that.renderer.render( that.scene, that.camera, that.selected_objects );
+			that.renderer.onNodeShaderUniforms = that.renderer.shader_overwrite = null;
+		});
+		var outline_shader = gl.shaders["outline"];
+		if(!outline_shader)
+			outline_shader = gl.shaders["outline"] = GL.Shader.createFX("\
+				vec4 colorUp = texture2D(u_texture, uv - vec2(0.0,u_res.y));\n\
+				vec4 colorRight = texture2D(u_texture, uv - vec2(u_res.x,0.0));\n\
+				color = abs( (color - colorUp) + (color - colorRight));\n\
+			","uniform vec2 u_res;\n");
+
+		gl.blendFunc(gl.ONE,gl.ONE);
+		gl.enable(gl.BLEND);
+		this._selection_buffer.toViewport(outline_shader, {u_res: [1/gl.canvas.width,1/gl.canvas.height]});
+		gl.disable(gl.BLEND);
 	},
 
 	update: function(dt)
@@ -61,8 +96,28 @@ var CORE = {
 	
 	onMouse: function(e)
 	{
+		if(e.type == "mousedown")
+			this.last_click_time = getTime();
+		var prev_pos = null;
+		//if(e.type == "mouseup")
+		//	document.exitPointerLock();
+
+		if(e.ctrlKey)
+		{
+			prev_pos = vec3.clone(this.gizmo.position);
+			//if(e.type == "mousedown")
+			//	document.body.requestPointerLock();
+		}
 		if(this.gizmo.onMouse(e))
+		{
+			if(e.ctrlKey && prev_pos)
+			{
+				var diff = vec3.sub(vec3.create(),this.gizmo.position,prev_pos);
+				this.camera.move(diff);
+				vec3.add( this.gizmo._last,this.gizmo._last,diff);
+			}
 			return;
+		}
 
 		if(e.type == "mousemove")
 		{
@@ -81,10 +136,33 @@ var CORE = {
 				}
 			}
 		}
+		else if(e.type == "mouseup")
+		{
+			var click_time = getTime() - this.last_click_time;
+			if(click_time < 200)
+			{
+				var ray = this.camera.getRay(e.canvasx,e.canvasy);
+				var coll = vec3.create();
+				var node = this.scene.testRay(ray, coll, this.camera.far, 0xFF,true );
+				if(node)
+					this.gizmo.setTarget(node);
+			}
+		}
 	},
 
 	onMouseWheel: function(e)
 	{
+		var prev_pos = vec3.clone(this.gizmo.position);
+		if(this.gizmo.onMouse(e))
+		{
+			if(e.ctrlKey)
+			{
+				var diff = vec3.sub(vec3.create(),this.gizmo.position,prev_pos);
+				this.camera.move(diff);
+				vec3.add( this.gizmo._last,this.gizmo._last,diff);
+			}
+			return;
+		}
 		this.camera.orbitDistanceFactor(1 + e.wheel * -0.001);
 	},
 
@@ -97,7 +175,8 @@ var CORE = {
 		else if(e.code == "KeyR")
 		{
 			this.gizmo.resetTransform();
-			this.gizmo.updateTarget();
+			if(this.gizmo.target)
+				this.gizmo.target.resetTransform();
 		}
 		
 	}

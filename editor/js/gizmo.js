@@ -8,10 +8,11 @@ function Gizmo(o)
 	this.render_priority = 0;
 	this.target = null;
 	this.size = 150; //in pixels
+	this.mode = Gizmo.ALL;
 
 	this._last = vec3.create();
 
-	var actions = ["drag","movex","movey","movez","scalex","scaley","scalez","rotatex","rotatey","rotatez","rotatefront","rotate"];
+	var actions = ["drag","movex","movey","movez","scalex","scaley","scalez","rotatex","rotatey","rotatez","rotatefront","rotate","scale"];
 	this.actions = {};
 	for(var i in actions)
 	{
@@ -20,7 +21,9 @@ function Gizmo(o)
 			mask: 0xFF,
 			pos: vec3.create(),
 			pos2D: vec3.create(),
-			radius: 0.2
+			radius: 0.2,
+			visible: false,
+			flag: Gizmo[action.toUpperCase()]
 		};
 		if(action.indexOf("move") == 0)
 			info.move = true;
@@ -34,6 +37,7 @@ function Gizmo(o)
 	this.actions["scalex"].axis = this.actions["rotatex"].axis = this.actions["movex"].axis = vec3.fromValues(1,0,0);
 	this.actions["scaley"].axis = this.actions["rotatey"].axis = this.actions["movey"].axis = vec3.fromValues(0,1,0);
 	this.actions["scalez"].axis = this.actions["rotatez"].axis = this.actions["movez"].axis = vec3.fromValues(0,0,1);
+	//this.actions["scale"].radius = 0.3;
 
 	this.click_model = mat4.create();
 	this.click_transform = new Float32Array(10);
@@ -43,6 +47,25 @@ function Gizmo(o)
 	this.center_2D = vec3.create();
 	this.click_dist = 1;
 }
+
+Gizmo.MOVEX = 1<<0;
+Gizmo.MOVEY = 1<<1;
+Gizmo.MOVEZ = 1<<2;
+Gizmo.ROTATEX = 1<<3;
+Gizmo.ROTATEY = 1<<4;
+Gizmo.ROTATEZ = 1<<5;
+Gizmo.SCALEX = 1<<6;
+Gizmo.SCALEY = 1<<7;
+Gizmo.SCALEZ = 1<<8;
+Gizmo.SCALE = 1<<9;
+Gizmo.DRAG = 1<<10;
+Gizmo.ROTATE = 1<<11;
+Gizmo.ROTATEFRONT = 1<<12;
+
+Gizmo.MOVEALL = Gizmo.DRAG | Gizmo.MOVEX | Gizmo.MOVEY | Gizmo.MOVEZ;
+Gizmo.ROTATEALL = Gizmo.ROTATE | Gizmo.ROTATEX | Gizmo.ROTATEY | Gizmo.ROTATEZ | Gizmo.ROTATEFRONT;
+Gizmo.SCALEALL = Gizmo.SCALE | Gizmo.SCALEX | Gizmo.SCALEY | Gizmo.SCALEZ;
+Gizmo.ALL = Gizmo.MOVEALL | Gizmo.ROTATEALL | Gizmo.SCALEX | Gizmo.SCALEY | Gizmo.SCALEZ;
 
 var axisX = mat4.create();
 var axisY = mat4.create();
@@ -83,24 +106,28 @@ Gizmo.RING_COLOR = [0.5,0.5,0.5,1];
 Gizmo.INNERSPHERE_COLOR = [0.6,0.6,0.6,1];
 Gizmo.SELECTED_COLOR = [1,1,1,1];
 
-Gizmo.prototype.toScreen = function( m, action )
-{
-	var info = this.actions[action];
-	mat4.multiplyVec3( info.pos, m, [0,0,0] );
-	this._camera.project( info.pos, null, info.pos2D );
-}
-
 Gizmo.prototype.setTarget = function( node )
 {
 	this.target = node;
 	this.transform = node.transform;
 }
 
-Gizmo.prototype.updateTarget = function( node )
+Gizmo.prototype.updateTarget = function()
 {
 	if(!this.target)
 		return;
-	this.target.transform = this.transform;
+	if(this.target.constructor === Array)
+	{
+		for(var i = 0; i < this.target.length; ++i)
+		{
+			//this.target[i]
+		}
+	}
+	else
+	{
+		this.target.position = this.position;
+		this.target.rotation = this.rotation;
+	}
 }
 
 Gizmo.prototype.render = function(renderer,camera)
@@ -128,12 +155,17 @@ Gizmo.prototype.render = function(renderer,camera)
 	this.updateMatrices();
 	model.set( this._global_matrix );
 
+	//mark as not rendered
+	for(var i in this.actions)
+		this.actions[i].visible = false;
+
 	this._camera = camera;
 	this._unitary_model = model;
 	var hover = this._hover_action;
 	var selected = this._selected_action;
 	if(selected)
 		hover = selected;
+	var mode = this.mode;
 
 	mat4.rotateVec3(right,model,RD.RIGHT);
 	mat4.rotateVec3(up,model,RD.UP);
@@ -196,9 +228,16 @@ Gizmo.prototype.render = function(renderer,camera)
 		//return;
 	}
 
+	if(selected == "scale")
+	{
+		renderer.drawCircle2D(this.center_2D[0],this.click_2D[1],2,Gizmo.INNERSPHERE_COLOR,true);
+		renderer.drawCircle2D(this.center_2D[0],this.center_2D[1],2,Gizmo.INNERSPHERE_COLOR,true);
+		renderer.drawLine2D(this.center_2D[0],this.click_2D[1],this.center_2D[0],this.center_2D[1],4,Gizmo.INNERSPHERE_COLOR);
+		return;		
+	}
 
 	//sphere
-	if(hover == "rotate")
+	if( mode & Gizmo.ROTATE && hover == "rotate")
 	{
 		gl.enable(gl.BLEND);
 		gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -210,11 +249,14 @@ Gizmo.prototype.render = function(renderer,camera)
 	}
 
 	//ring
-	mat4.rotateX(tmp, model_aligned, Math.PI/2 );
-	shader.setUniform("u_model",tmp);
-	shader.setUniform("u_color", hover == "rotatefront" ? Gizmo.SELECTED_COLOR : Gizmo.RING_COLOR );
-	shader.draw( torus );
-
+	if( mode & Gizmo.ROTATEFRONT )
+	{
+		mat4.rotateX(tmp, model_aligned, Math.PI/2 );
+		shader.setUniform("u_model",tmp);
+		shader.setUniform("u_color", hover == "rotatefront" ? Gizmo.SELECTED_COLOR : Gizmo.RING_COLOR );
+		shader.draw( torus );
+		this.actions.rotatefront.visible = true;
+	}
 	/*
 	//rotator X
 	if( Math.abs(dotx) > 0.1)
@@ -247,36 +289,45 @@ Gizmo.prototype.render = function(renderer,camera)
 	if( Math.abs(dotx) < 0.95)
 	{
 		mat4.rotateZ( tmp, model, dotx < 0  ? -Math.PI / 2 : Math.PI / 2 );
-		this.drawArrow( tmp, hover == "movex" ? Gizmo.SELECTED_COLOR : Gizmo.XAXIS_COLOR, "movex" );
-		this.drawScale( tmp, hover == "scalex" ? Gizmo.SELECTED_COLOR : Gizmo.XAXIS_COLOR, "scalex" );
+		if(mode & Gizmo.MOVEX)
+			this.drawArrow( tmp, hover == "movex" ? Gizmo.SELECTED_COLOR : Gizmo.XAXIS_COLOR, "movex" );
+		if(mode & Gizmo.SCALEX)
+			this.drawScale( tmp, hover == "scalex" ? Gizmo.SELECTED_COLOR : Gizmo.XAXIS_COLOR, "scalex" );
 	}
 
-	//translate Y
+	//translate and scale Y
 	if( Math.abs(doty) < 0.95)
 	{
 		if(doty > 0)
 			mat4.rotateZ( tmp, model, Math.PI );
 		else
 			tmp.set(model);
-		this.drawArrow( tmp, hover == "movey" ? Gizmo.SELECTED_COLOR : Gizmo.YAXIS_COLOR, "movey" );
-		this.drawScale( tmp, hover == "scaley" ? Gizmo.SELECTED_COLOR : Gizmo.YAXIS_COLOR, "scaley" );
+		if(mode & Gizmo.MOVEY)
+			this.drawArrow( tmp, hover == "movey" ? Gizmo.SELECTED_COLOR : Gizmo.YAXIS_COLOR, "movey" );
+		if(mode & Gizmo.SCALEY)
+			this.drawScale( tmp, hover == "scaley" ? Gizmo.SELECTED_COLOR : Gizmo.YAXIS_COLOR, "scaley" );
 	}
 
-	//translate Z
-	if( Math.abs(dotz) < 0.95)
+	//translate and scale Z
+	if( Math.abs(dotz) < 0.95 )
 	{
 		mat4.rotateX( tmp, model, dotz < 0 ? -Math.PI / 2 : Math.PI / 2 );
-		this.drawArrow( tmp, hover == "movez" ? Gizmo.SELECTED_COLOR : Gizmo.ZAXIS_COLOR, "movez" );
-		this.drawScale( tmp, hover == "scalez" ? Gizmo.SELECTED_COLOR : Gizmo.ZAXIS_COLOR, "scalez" );
+		if(mode & Gizmo.MOVEZ)
+			this.drawArrow( tmp, hover == "movez" ? Gizmo.SELECTED_COLOR : Gizmo.ZAXIS_COLOR, "movez" );
+		if(mode & Gizmo.SCALEZ)
+			this.drawScale( tmp, hover == "scalez" ? Gizmo.SELECTED_COLOR : Gizmo.ZAXIS_COLOR, "scalez" );
 	}
 
-	//inner sphere
-	this.drawInnerSphere(model);
+	if( mode & Gizmo.DRAG )
+		this.drawInnerSphere(model,"drag");
+
+	if( mode & Gizmo.SCALE )
+		this.drawInnerSphere(model,"scale");
 
 	gl.enable(gl.DEPTH_TEST);
 }
 
-Gizmo.prototype.drawArrow = function(model,color,action)
+Gizmo.prototype.drawArrow = function( model, color, action )
 {
 	var shader = gl.shaders["flat"];
 	var cone = gl.meshes["cone"];
@@ -287,8 +338,17 @@ Gizmo.prototype.drawArrow = function(model,color,action)
 	shader.setUniform("u_color", hover == action ? Gizmo.SELECTED_COLOR : color);//Gizmo.XAXIS_COLOR);
 	shader.draw( cone );
 
-	mat4.translate( tmp2, tmp2, [0,-0.15,0] );
-	mat4.scale( tmp2, tmp2, [1,0.5,1] );
+	var action_info = this.actions[action];
+	if(this.mode == Gizmo.MOVEALL)
+	{
+		mat4.translate( tmp2, tmp2, [0,-0.4,0] );
+		mat4.scale( tmp2, tmp2, [1,1,1] );
+	}
+	else
+	{
+		mat4.translate( tmp2, tmp2, [0,-0.15,0] );
+		mat4.scale( tmp2, tmp2, [1,0.5,1] );
+	}
 	shader.setUniform("u_model",tmp2);
 	shader.draw( cylinder );
 
@@ -317,36 +377,62 @@ Gizmo.prototype.drawScale = function(model,color,action)
 	var shader = gl.shaders["flat"];
 	shader.setUniform("u_color",color);
 
-	mat4.translate( tmp, model, [0,0.25,0] );
-	mat4.scale( tmp, tmp, [1,0.5,1] );
+	var action_info = this.actions[action];
+
+	if(this.mode == Gizmo.SCALEALL)
+	{
+		mat4.translate( tmp, model, [0,0.5,0] );
+		mat4.scale( tmp, tmp, [1,1,1] );
+	}
+	else
+	{
+		mat4.translate( tmp, model, [0,0.25,0] );
+		mat4.scale( tmp, tmp, [1,0.5,1] );
+	}
+
 	shader.setUniform("u_model",tmp);
 	shader.draw( cylinder );
 
 	mat4.translate( tmp, model, [0,0.4,0] );
-	mat4.scale( tmp, tmp, [0.1,0.2,0.1] );
+	if(this.mode == Gizmo.SCALEALL)
+		mat4.scale( tmp, tmp, [0.1,0.1,0.1] );
+	else
+		mat4.scale( tmp, tmp, [0.1,0.2,0.1] );
 	shader.setUniform("u_model",tmp);
 	shader.draw( sphere );
-
 
 	this.toScreen(tmp,action);
 }
 
-
-
-Gizmo.prototype.drawInnerSphere = function(model)
+Gizmo.prototype.drawInnerSphere = function(model, action)
 {
 	var shader = gl.shaders["flat"];
 	var sphere = gl.meshes["sphere"];
 	var hover = this._hover_action;
+
 	mat4.scale( tmp, model, [0.1,0.1,0.1] );
 	shader.setUniform("u_model", tmp);
-	shader.setUniform("u_color", hover == "drag" ? Gizmo.SELECTED_COLOR :Gizmo.INNERSPHERE_COLOR);
+	shader.setUniform("u_color", hover == action ? Gizmo.SELECTED_COLOR :Gizmo.INNERSPHERE_COLOR);
 	shader.draw( sphere );
-	mat4.scale( tmp, model, [0.07,0.07,0.07] );
-	shader.setUniform("u_model",tmp);
-	shader.setUniform("u_color", hover == "drag" ? Gizmo.INNERSPHERE_COLOR : [0,0,0,1]);
-	shader.draw( sphere );
-	this.toScreen(tmp,"drag");
+
+	if( action == "drag" )
+	{
+		mat4.scale( tmp, model, [0.07,0.07,0.07] );
+		shader.setUniform("u_model",tmp);
+		shader.setUniform("u_color", hover == action ? Gizmo.INNERSPHERE_COLOR : [0,0,0,1]);
+		shader.draw( sphere );
+	}
+
+	if(action)
+		this.toScreen(tmp,action);
+}
+
+Gizmo.prototype.toScreen = function( m, action )
+{
+	var info = this.actions[action];
+	mat4.multiplyVec3( info.pos, m, [0,0,0] );
+	this._camera.project( info.pos, null, info.pos2D );
+	info.visible = true;
 }
 
 Gizmo.prototype.onMouse = function(e)
@@ -354,19 +440,25 @@ Gizmo.prototype.onMouse = function(e)
 	if(!this._camera)
 		return;
 
-	var front = this._camera.getFront();
-	var ray = this._camera.getRay(e.canvasx, e.canvasy);
+	var camera = this._camera;
+	var front = camera.getFront();
+	var mouse = [e.canvasx, e.canvasy];
+	if(document.pointerLockElement && 0)
+	{
+		mouse[0] += e.movementX;
+		mouse[1] += e.movementY;
+	}
+	var ray = camera.getRay(mouse[0], mouse[1]);
 	var center = this.position;
 	var action = this._selected_action;
 	var action_info = this.actions[action];
 	var model = this._global_matrix;
-	var center2D = this.actions["drag"].pos2D;
-	var mouse = [e.canvasx, e.canvasy];
+	var center2D = camera.project( center );
 
 	if(e.type == "mousedown")
 	{
-		this.click_2D[0] = this.click_2D2[0] = e.canvasx;
-		this.click_2D[1] = this.click_2D2[0] = e.canvasy;
+		this.click_2D[0] = this.click_2D2[0] = mouse[0];
+		this.click_2D[1] = this.click_2D2[0] = mouse[1];
 
 		action = this._selected_action = this._hover_action;
 		action_info = this.actions[action];
@@ -433,22 +525,28 @@ Gizmo.prototype.onMouse = function(e)
 				var angle1 = Math.atan2(v[0],v[1]);
 				var angle2 = Math.atan2(v2[0],v2[1]);
 				var angle = angle1 - angle2;
+				if(e.shiftKey)
+					angle = (Math.PI*2) * Math.ceil(36 * angle / (Math.PI*2)) / 36;
 				if(angle)
 				{
 					this.transform.set( this.click_transform );
 					this.rotate( angle, front, true );
 				}
-				if(this.target)
-					this.target.rotation = this.rotation;
-
-				//this.updateMatrices();
-				//if(this.target)
-				//	this.target.fromMatrix( this.getGlobalMatrix(), true);
+				this.updateTarget();
 				return true;
 			}
 			var diff = null;
 			if( action_info.move || action_info.scale )
 			{
+				if(action == "scale" || e.ctrlKey)
+				{
+					var f = (1 + (mouse[1] - this.click_2D[1]) * 0.01 );
+					this.target.scale(f);
+					this.click_2D[0] = mouse[0];
+					this.click_2D[1] = mouse[1];
+					return true;
+				}
+
 				var axis = vec3.clone(action_info.axis);
 				mat4.rotateVec3(axis,model,axis);
 				vec3.normalize(axis,axis);
@@ -482,8 +580,7 @@ Gizmo.prototype.onMouse = function(e)
 			{
 				this.translate(diff);
 				this.updateMatrices();
-				if(this.target)
-					this.target.position = this.position;
+				this.updateTarget();
 				return true;
 			}
 		}
@@ -497,6 +594,8 @@ Gizmo.prototype.onMouse = function(e)
 			for(var i in this.actions)
 			{
 				var info = this.actions[i];
+				if(!info.visible)
+					continue;
 				var pos = info.pos2D;
 				var dist = vec2.distance( pos, mouse );
 				if(dist < info.radius * this.size && dist < mindist)
@@ -508,9 +607,9 @@ Gizmo.prototype.onMouse = function(e)
 			if( !hover )
 			{
 				var disttocenter = vec2.distance( center2D, mouse );
-				if( Math.abs(disttocenter - this.size*0.5) < 10 ) //border
+				if( this.actions.rotatefront.visible && Math.abs(disttocenter - this.size*0.5) < 10 ) //border
 					hover = "rotatefront";
-				else if( disttocenter <  this.size*0.5 )
+				else if( this.actions.rotate.visible && disttocenter < this.size*0.5 )
 					hover = "rotate";
 			}
 			this._hover_action = hover;
@@ -519,6 +618,30 @@ Gizmo.prototype.onMouse = function(e)
 	else if(e.type == "mouseup")
 	{
 		this._selected_action = null;
+	}
+	else if(e.type == "wheel")
+	{
+		if(this._selected_action == "scale")
+		{
+			var f = 1 + e.wheel * 0.0002;
+			this.target.scale(f);
+			return true;
+		}
+
+		if(this._selected_action == "drag")
+		{
+			var diff = vec3.sub( vec3.create(), center, camera.position );
+			var f = 1 + e.wheel * 0.0002;
+			vec3.scaleAndAdd(diff,camera.position,diff,f);
+			this.position = diff;
+			var closest = ray.testPlane( center, this._camera.getFront() );
+			var closest = ray.collision_point;
+			diff = vec3.sub( vec3.create(), closest, this._last );
+			this._last = closest;
+			this.updateMatrices();
+			this.updateTarget();
+			return true;
+		}
 	}
 
 	return false;
