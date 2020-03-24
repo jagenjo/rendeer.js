@@ -82,6 +82,8 @@ var GUI = {
 		root = root || window.sidepanel;
 		root.content.innerHTML = "";
 
+		return;
+
 		//tabs 
 		var tabs_widget = new LiteGUI.Tabs();
 		tabs_widget.addTab("Info");

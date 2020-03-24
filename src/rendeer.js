@@ -965,7 +965,7 @@ SceneNode.prototype.updateGlobalMatrix = function(fast, update_childs)
 	if( this._must_update_matrix && !this.flags.no_transform )
 		this.updateLocalMatrix();
 
-	if(this._parent && this._scene && this._parent != this._scene._root)
+	if(this._parent && this._parent._transform && this._parent.flags.no_transform !== true)
 	{
 		global = fast ? this._parent._global_matrix : this._parent.getGlobalMatrix();
 		if( this.flags.no_transform )
@@ -1005,7 +1005,7 @@ SceneNode.prototype.updateMatrices = function(fast)
 */
 SceneNode.prototype.fromMatrix = function(m, is_global)
 {
-	if(is_global && this._parent)
+	if(is_global && this._parent && this._parent._transform ) //&& this._parent != this.
 	{
 		mat4.copy(this._global_matrix, m); //assign to global
 		var M_parent = this._parent.getGlobalMatrix(); //get parent transform
@@ -1027,7 +1027,9 @@ SceneNode.prototype.fromMatrix = function(m, is_global)
 
 	//rot
 	//quat.fromMat4(this._rotation, M);
-	//*
+	var M3 = mat3.fromMat4( temp_mat3, M );
+	quat.fromMat3AndQuat( this._rotation, M3 );
+	/*
 	vec3.normalize( M.subarray(0,3), M.subarray(0,3) );
 	vec3.normalize( M.subarray(4,7), M.subarray(4,7) );
 	vec3.normalize( M.subarray(8,11), M.subarray(8,11) );
@@ -1085,7 +1087,7 @@ SceneNode.prototype.getGlobalPosition = function(result, fast)
 	if(fast)
 		return vec3.transformMat4( result, RD.ZERO, this._global_matrix );
 
-	if(this._parent == this._scene._root)
+	if(!this._parent || !this._parent._transform)
 	{
 		result.set( this._position );
 		return result;
@@ -1110,6 +1112,15 @@ SceneNode.prototype.getGlobalPoint = function(v, result)
 }
 
 SceneNode.prototype.localToGlobal = SceneNode.prototype.getGlobalPoint;
+
+
+SceneNode.prototype.globalToLocal = function(v,result)
+{
+	result = result || vec3.create();
+	var m = this.getGlobalMatrix();
+	mat4.invert(temp_mat4,m);
+	return vec3.transformMat4(result, v, temp_mat4 );
+}
 
 /**
 * Returns a point rotated by the global matrix
@@ -2452,6 +2463,9 @@ Renderer.prototype.renderNode = function(node, camera)
 	if(node.onShaderUniforms) //in case the node wants to add extra shader uniforms that need to be computed at render time
 		node.onShaderUniforms(this, shader);
 
+	if(this.onNodeShaderUniforms) //in case the node wants to add extra shader uniforms that need to be computed at render time
+		this.onNodeShaderUniforms(this, shader, node );
+
 	if(instancing)
 	{
 		instancing_uniforms.u_model = node._instances;
@@ -2948,6 +2962,22 @@ Renderer.prototype.setShadersFromFile = function( file_data )
 	var files = GL.processFileAtlas( file_data );
 	this.compileShadersFromAtlas( files );
 }
+
+Renderer.prototype.drawSphere3D = function( pos, radius, color )
+{
+	if(!gl.meshes["sphere"])
+		gl.meshes["sphere"] = GL.Mesh.sphere({slices:32});
+	var shader = gl.shaders["flat"];
+	shader.setUniform("u_color",color);
+	shader.setUniform("u_viewprojection",this._viewprojection_matrix);
+	var m = temp_mat4;
+	mat4.identity(m);
+	mat4.translate(m,m,pos);
+	mat4.scale(m,m,[radius,radius,radius]);
+	shader.setUniform("u_model",m);
+	shader.draw( gl.meshes[ "sphere" ] );
+}
+
 
 Renderer.prototype.drawCircle2D = function( x,y, radius, color, fill )
 {
@@ -4028,7 +4058,7 @@ RD.parseTextConfig = function(text)
 
 Renderer.prototype.createShaders = function()
 {
-	var vertex_shader = '\
+	var vertex_shader = this._vertex_shader = '\
 				precision highp float;\n\
 				attribute vec3 a_vertex;\n\
 				attribute vec3 a_normal;\n\
@@ -4147,9 +4177,9 @@ Renderer.prototype.createShaders = function()
 	gl.shaders["texture_transform"] = this._texture_transform_shader;
 	
 	//basic phong shader
-	var phong_uniforms = { u_ambient: vec3.create(), u_light_vector: vec3.fromValues(0.5442, 0.6385, 0.544), u_light_color: RD.WHITE };
+	this._phong_uniforms = { u_ambient: vec3.create(), u_light_vector: vec3.fromValues(0.5442, 0.6385, 0.544), u_light_color: RD.WHITE };
 
-	var fragment_shader = '\
+	var fragment_shader = this._fragment_shader = '\
 			precision highp float;\n\
 			varying vec3 v_normal;\n\
 			varying vec2 v_coord;\n\
@@ -4160,29 +4190,36 @@ Renderer.prototype.createShaders = function()
 			#ifdef TEXTURED\n\
 				uniform sampler2D u_color_texture;\n\
 			#endif\n\
+			#ifdef UNIFORMS\n\
+				UNIFORMS\n\
+			#endif\n\
 			void main() {\n\
 				vec4 color = u_color;\n\
 				#ifdef TEXTURED\n\
 					color *= texture2D( u_color_texture, v_coord );\n\
 				#endif\n\
 				vec3 N = normalize(v_normal);\n\
-				gl_FragColor = color * (vec4(u_ambient,1.0) + max(0.0, dot(u_light_vector,N)) * vec4(u_light_color,1.0));\n\
+				float NdotL = max(0.0, dot(u_light_vector,N));\n\
+				#ifdef EXTRA\n\
+					EXTRA\n\
+				#endif\n\
+				gl_FragColor = color * (vec4(u_ambient,1.0) + NdotL * vec4(u_light_color,1.0));\n\
 			}\
 	'
 	
 	gl.shaders["phong"] = this._phong_shader = new GL.Shader( vertex_shader, fragment_shader );
-	this._phong_shader._uniforms = phong_uniforms;
-	this._phong_shader.uniforms( phong_uniforms );
+	this._phong_shader._uniforms = this._phong_uniforms;
+	this._phong_shader.uniforms( this._phong_uniforms );
 
 	gl.shaders["phong_instancing"] = this._phong_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { INSTANCING: "" } );
-	this._phong_instancing_shader._uniforms = phong_uniforms;
-	this._phong_instancing_shader.uniforms( phong_uniforms );
+	this._phong_instancing_shader._uniforms = this._phong_uniforms;
+	this._phong_instancing_shader.uniforms( this._phong_uniforms );
 
 	gl.shaders["textured_phong"] = this._textured_phong_shader = new GL.Shader( vertex_shader, fragment_shader, { TEXTURED: "" } );
-	this._textured_phong_shader.uniforms( phong_uniforms );
+	this._textured_phong_shader.uniforms( this._phong_uniforms );
 	
 	gl.shaders["textured_phong_instancing"] = this._textured_phong_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { INSTANCING: "", TEXTURED: "" } );
-	this._textured_phong_instancing_shader.uniforms( phong_uniforms );
+	this._textured_phong_instancing_shader.uniforms( this._phong_uniforms );
 }
 
 RD.orientNodeToCamera = function( mode, node, camera, renderer )

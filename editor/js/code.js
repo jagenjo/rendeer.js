@@ -32,15 +32,24 @@ var CORE = {
 
 		this.gizmo = new RD.Gizmo(); //gizmo is not added to the scene as it should be rendered after the outline
 
-		this.object = new RD.SceneNode({color:[0.5,0.5,0.5,1],mesh:"data/monkey.obj", shader:"phong"});
-		this.object.rotate(90*DEG2RAD,RD.UP);
+		this.object = new RD.SceneNode({color:[0.6,0.5,0.5,1],mesh:"data/monkey.obj", shader:"phong"});
+		//this.object.rotate(90*DEG2RAD,RD.RIGHT);
 		this.scene.root.addChild(this.object);
+
+		this.objectb = new RD.SceneNode({color:[0.6,0.5,0.5,1],mesh:"data/monkey.obj", shader:"phong"});
+		this.objectb.position = [0,1,0];
+		this.objectb.scale(0.2);
+		this.object.addChild(this.objectb);
+
+
+		this.object2 = new RD.SceneNode({ position:[4,0,0], color:[0.5,0.6,0.5,1],mesh:"data/monkey.obj", shader:"phong"});
+		this.object2.rotate(-90*DEG2RAD,RD.UP);
+		this.scene.root.addChild(this.object2);
 
 		gl.shaders["phong"] = new GL.Shader( this.renderer._vertex_shader, this.renderer._fragment_shader, { EXTRA: "NdotL = dot(u_light_vector,N) * 0.5 + 0.5;\n" });
 		gl.shaders["phong"].uniforms(this.renderer._phong_uniforms);
 
-		this.selected_objects = [this.object];
-		this.gizmo.setTarget( this.object );
+		this.gizmo.setTargets( [this.object,this.object2] );
 	},
 
 	render: function()
@@ -56,38 +65,8 @@ var CORE = {
 		gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
 
 		this.renderer.render( this.scene, this.camera ); //render scene
-		this.renderOutline(); //render outline
+		this.gizmo.renderOutline(this.renderer, this.scene, this.camera); //render outline
 		this.renderer.render( this.scene, this.camera, [this.gizmo] ); //render gizmo on top
-	},
-
-	renderOutline: function()
-	{
-		if(!this.gizmo.target)
-			return;
-		this.selected_objects = [this.gizmo.target];
-		if(!this._selection_buffer || this._selection_buffer.width != gl.canvas.width || this._selection_buffer.height != gl.canvas.height)
-			this._selection_buffer = new GL.Texture( gl.canvas.width, gl.canvas.height );
-		var that = this;
-		this._selection_buffer.drawTo(function(){
-			gl.clearColor(0,0,0,1);
-			gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
-			that.renderer.shader_overwrite = "flat";
-			that.renderer.onNodeShaderUniforms = function(node,shader) { shader.setUniform("u_color",[1,1,1,1]); };
-			that.renderer.render( that.scene, that.camera, that.selected_objects );
-			that.renderer.onNodeShaderUniforms = that.renderer.shader_overwrite = null;
-		});
-		var outline_shader = gl.shaders["outline"];
-		if(!outline_shader)
-			outline_shader = gl.shaders["outline"] = GL.Shader.createFX("\
-				vec4 colorUp = texture2D(u_texture, uv - vec2(0.0,u_res.y));\n\
-				vec4 colorRight = texture2D(u_texture, uv - vec2(u_res.x,0.0));\n\
-				color = abs( (color - colorUp) + (color - colorRight));\n\
-			","uniform vec2 u_res;\n");
-
-		gl.blendFunc(gl.ONE,gl.ONE);
-		gl.enable(gl.BLEND);
-		this._selection_buffer.toViewport(outline_shader, {u_res: [1/gl.canvas.width,1/gl.canvas.height]});
-		gl.disable(gl.BLEND);
 	},
 
 	update: function(dt)
@@ -139,13 +118,14 @@ var CORE = {
 		else if(e.type == "mouseup")
 		{
 			var click_time = getTime() - this.last_click_time;
-			if(click_time < 200)
+			if(click_time < 200) //if fast click
 			{
+				//search objects intersecting the ray
 				var ray = this.camera.getRay(e.canvasx,e.canvasy);
 				var coll = vec3.create();
 				var node = this.scene.testRay(ray, coll, this.camera.far, 0xFF,true );
-				if(node)
-					this.gizmo.setTarget(node);
+				if(node) //change selection
+					this.gizmo.setTargets([node], e.shiftKey);
 			}
 		}
 	},
@@ -168,15 +148,35 @@ var CORE = {
 
 	onKey: function(e)
 	{
-		if(e.code == "KeyF")
+		if(e.code == "KeyF") //center on object
 		{
-			this.camera.target = this.object.getGlobalPosition();
+			var diff = vec3.sub( vec3.create(), this.gizmo.computeCenter(), this.camera.target );
+			this.camera.move(diff);
+		}
+		else if(e.code == "Escape")
+		{
+			this.gizmo.cancel();
+		}
+		else if(e.code == "KeyG")
+		{
+			this.gizmo.mode = RD.Gizmo.MOVEALL;
 		}
 		else if(e.code == "KeyR")
 		{
+			this.gizmo.mode = RD.Gizmo.ROTATEALL;
+		}
+		else if(e.code == "KeyS")
+		{
+			this.gizmo.mode = RD.Gizmo.SCALEALL;
+		}
+		else if(e.code == "KeyD")
+		{
+			this.gizmo.mode = RD.Gizmo.ALL;
+		}
+		else if(e.code == "Home")
+		{
 			this.gizmo.resetTransform();
-			if(this.gizmo.target)
-				this.gizmo.target.resetTransform();
+			this.gizmo.updateTargets();
 		}
 		
 	}
