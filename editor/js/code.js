@@ -28,9 +28,11 @@ var CORE = {
 		this.scene = new RD.Scene();
 
 		this.grid = RD.Factory("grid");
+		this.grid.layers = 1<<7;
 		this.scene.root.addChild(this.grid);
 
 		this.gizmo = new RD.Gizmo(); //gizmo is not added to the scene as it should be rendered after the outline
+		this.gizmo.layers = 0x7F; //only affects layers 1 and 2
 
 		this.object = new RD.SceneNode({color:[0.6,0.5,0.5,1],mesh:"data/monkey.obj", shader:"phong"});
 		//this.object.rotate(90*DEG2RAD,RD.RIGHT);
@@ -40,7 +42,6 @@ var CORE = {
 		this.objectb.position = [0,1,0];
 		this.objectb.scale(0.2);
 		this.object.addChild(this.objectb);
-
 
 		this.object2 = new RD.SceneNode({ position:[4,0,0], color:[0.5,0.6,0.5,1],mesh:"data/monkey.obj", shader:"phong"});
 		this.object2.rotate(-90*DEG2RAD,RD.UP);
@@ -63,8 +64,9 @@ var CORE = {
 
 		gl.clearColor(0.1,0.1,0.1,1);
 		gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
+		gl.enable(gl.BLEND);
 
-		this.renderer.render( this.scene, this.camera ); //render scene
+		this.renderer.render( this.scene, this.camera, null ); //render scene
 		this.gizmo.renderOutline(this.renderer, this.scene, this.camera); //render outline
 		this.renderer.render( this.scene, this.camera, [this.gizmo] ); //render gizmo on top
 	},
@@ -124,8 +126,7 @@ var CORE = {
 				var ray = this.camera.getRay(e.canvasx,e.canvasy);
 				var coll = vec3.create();
 				var node = this.scene.testRay(ray, coll, this.camera.far, 0xFF,true );
-				if(node) //change selection
-					this.gizmo.setTargets([node], e.shiftKey);
+				this.gizmo.setTargets(node ? [node] : null, e.shiftKey);
 			}
 		}
 	},
@@ -165,6 +166,13 @@ var CORE = {
 		{
 			this.gizmo.mode = RD.Gizmo.ROTATEALL;
 		}
+		else if(e.code == "KeyA")
+		{
+			if(e.ctrlKey)
+			{
+				this.gizmo.setTargets(CORE.scene._nodes);
+			}
+		}
 		else if(e.code == "KeyS")
 		{
 			this.gizmo.mode = RD.Gizmo.SCALEALL;
@@ -177,6 +185,10 @@ var CORE = {
 		{
 			this.gizmo.resetTransform();
 			this.gizmo.updateTargets();
+		}
+		else if(e.code == "Delete")
+		{
+			this.gizmo.removeTargetsFromScene();
 		}
 		
 	}

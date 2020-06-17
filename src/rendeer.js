@@ -183,7 +183,7 @@ SceneNode.prototype._ctor = function()
 	//bounding box in world space
 	this.bounding_box = null; //use updateBoundingBox to update it
 
-	//rendering priority (order)
+	//rendering priority (order) bigger means earlier
 	this.render_priority = RD.PRIORITY_OPAQUE;
 
 	//could be used for many things
@@ -224,7 +224,7 @@ SceneNode.prototype.super = function(class_name)
 }
 */
 
-SceneNode.prototype.clone = function()
+SceneNode.prototype.clone = function(depth)
 {
 	var o = new this.constructor();
 	for(var i in this)
@@ -234,7 +234,12 @@ SceneNode.prototype.clone = function()
 		//if(this.__lookupGetter__(i)) //its a getter
 		//	continue;
 		if(i == "children") //never copy this
+		{
+			if(depth)
+			for(var j = 0; j < this.children.length; ++j)
+				o.addChild( this.children[j].clone(depth) );
 			continue;
+		}
 		var v = this[i];
 		if(v === undefined)
 			continue;
@@ -688,9 +693,14 @@ SceneNode.prototype.configure = function(o)
 				else
 					this.setTextureTiling(o[i][0],o[i][1],o[i][2],o[i][3]);
 				continue;
+			case "ref":
+			case "draw_range":
+			case "submesh":
+				this[i] = o[i];
+				continue;
 			case "parent":
 				parent = o[i];
-				continue;
+				break;
 		};
 
 		//default
@@ -711,8 +721,13 @@ SceneNode.prototype.configure = function(o)
 
 	if(o.children)
 	{
+		this.removeAllChildren();
 		for(var i = 0; i < o.children.length; ++i)
-			console.warn("configure children: feature not implemented");		
+		{
+			var child = new RD.SceneNode();
+			child.configure( o.children[i] );
+			this.addChild(child);
+		}
 	}
 
 	if(parent)
@@ -898,9 +913,9 @@ SceneNode.prototype.getGlobalMatrix = function(out)
 */
 SceneNode.prototype.getGlobalRotation = function(result)
 {
-	result = result || vec3.create();
+	result = result || vec4.create();
 	quat.identity(result);
-	var current = this;
+	var current = this; 
 	var top = this._scene ? this._scene._root : null;
 	//while we havent reach the tree root
 	while(current != top)
@@ -1023,7 +1038,8 @@ SceneNode.prototype.fromMatrix = function(m, is_global)
 	this._scale[1] = vec3.length( mat4.rotateVec3(tmp,M,RD.UP) );
 	this._scale[2] = vec3.length( mat4.rotateVec3(tmp,M,RD.BACK) );
 
-	mat4.scale( mat4.create(), M, [1/this._scale[0],1/this._scale[1],1/this._scale[2]] );
+	//removes scale, but is not necessary
+	//mat4.scale( M, M, [1/this._scale[0],1/this._scale[1],1/this._scale[2]] );
 
 	//rot
 	//quat.fromMat4(this._rotation, M);
@@ -1390,7 +1406,22 @@ SceneNode.prototype.testRayWithMesh = (function(){
 		if( !mesh ) //mesh not loaded
 			return false;
 
-		var bb = mesh.getBoundingBox();
+		var bb = null;
+		var subgroup = mesh;
+
+		if(this.submesh == null)
+			bb = mesh.getBoundingBox();
+		else
+		{
+			subgroup = mesh.info.groups[ this.submesh ];
+			bb = subgroup.bounding;
+			if(!bb)
+			{
+				mesh.computeGroupsBoundingBoxes();
+				bb = subgroup.bounding;
+			}
+		}
+
 		if(!bb) //mesh has no vertices
 			return false;
 
@@ -1423,11 +1454,16 @@ SceneNode.prototype.testRayWithMesh = (function(){
 			return true;
 
 		//create mesh octree
-		if(!mesh.octree)
-			mesh.octree = new GL.Octree( mesh );
+		if(!subgroup._octree)
+		{
+			if( subgroup == mesh )
+				subgroup._octree = new GL.Octree( mesh );
+			else
+				subgroup._octree = new GL.Octree( mesh, subgroup.start, subgroup.length );
+		}
 
 		//ray test agains octree
-		var hit_test = mesh.octree.testRay( origin, direction, 0, max_dist, this.flags.two_sided );
+		var hit_test = subgroup._octree.testRay( origin, direction, 0, max_dist, this.flags.two_sided );
 
 		//collided the OOBB but not the mesh, so its a not
 		if( !hit_test ) 
@@ -1516,408 +1552,767 @@ SceneNode.prototype.findNodesInSphere = function( center, radius, layers, out )
 	return out;
 }
 
-
-//This node allows to render a mesh where vertices are changing constantly
-function DynamicMeshNode(o)
-{
-	this._ctor();
-	if(o)
-		this.configure(o);
-}
-
-DynamicMeshNode.prototype._ctor = function()
-{
-	SceneNode.prototype._ctor.call(this);
-
-	this.vertices = [];
-	this.normals = [];
-	this.coords = [];
-	this.indices = [];
-
-	var size = 1024;
-	this._vertices_data = new Float32Array( size * 3 );
-	this._normals_data = null;
-	this._coords_data = null;
-	this._indices_data = null;
-	this._total = 0;
-	this._total_indices = 0;
-	this._mesh = GL.Mesh.load({ vertices: this._vertices_data });
-}
-
-DynamicMeshNode.prototype.updateVertices = function( vertices )
-{
-	if(vertices)
-		this.vertices = vertices;
-	this._total = this.vertices.length;
-	if( this._vertices_data.length < this.vertices.length )
-	{
-		this._vertices_data = new Float32Array( this.vertices.length * 2 );
-		this._mesh.getBuffer("vertices").data = this._vertices_data;
-	}
-	this._vertices_data.set( this.vertices );
-	this._mesh.getBuffer("vertices").upload( GL.STREAM_DRAW );
-}
-
-DynamicMeshNode.prototype.updateNormals = function( normals )
-{
-	if(normals)
-		this.normals = normals;
-	if( !this._normals_data || this._normals_data.length < this.normals.length )
-	{
-		this._normals_data = new Float32Array( this.normals.length * 2 );
-		var buffer = this._mesh.getBuffer("normals");
-		if(!buffer)
-			this._mesh.createVertexBuffer("normals",null,3,this._normals_data, GL.STREAM_DRAW);
-	}
-	this._normals_data.set( this.normals );
-	this._mesh.getBuffer("normals").upload( GL.STREAM_DRAW );
-}
-
-DynamicMeshNode.prototype.updateCoords = function( coords )
-{
-	if(coords)
-		this.coords = coords;
-	if( !this._coords_data || this._coords_data.length < this.normals.length )
-	{
-		this._coords_data = new Float32Array( this.coords.length * 2 );
-		var buffer = this._mesh.getBuffer("coords");
-		if(!buffer)
-			this._mesh.createVertexBuffer("coords",null,2,this._coords_data, GL.STREAM_DRAW);
-	}
-	this._coords_data.set( this.coords );
-	this._mesh.getBuffer("coords").upload( GL.STREAM_DRAW );
-}
-
-DynamicMeshNode.prototype.updateIndices = function( indices )
-{
-	if(indices)
-		this.indices = indices;
-	if( !this._indices_data || this._indices_data.length < this.indices.length )
-	{
-		this._indices_data = new Float32Array( this.indices.length * 2 );
-		var buffer = this._mesh.getIndexBuffer("triangles");
-		if(!buffer)
-			this._mesh.createIndicesBuffer( "triangles",this._indices_data, GL.STREAM_DRAW );
-	}
-	this._indices_data.set( this.indices );
-	this._mesh.getIndexBuffer("triangles").upload( GL.STREAM_DRAW );
-	this._total_indices = indices.length;
-}
-
-DynamicMeshNode.prototype.render = function( renderer, camera )
-{
-	if(!this._total)
-		return;
-	var shader = renderer.shaders[ this.shader || "flat" ];
-	if(!shader)
-		return;
-	renderer.setModelMatrix( this._global_matrix );
-	var mesh = this._mesh;
-	var range = this._total_indices ? this._total_indices : this._total / 3;
-	renderer.enableNodeFlags( this );
-	shader.uniforms( renderer._uniforms ).uniforms( this._uniforms ).drawRange( mesh, this.primitive === undefined ? GL.TRIANGLES : this.primitive, 0, range, this._total_indices ? "triangles" : null );
-	renderer.disableNodeFlags( this );
-}
-
-extendClass( DynamicMeshNode, SceneNode );
-RD.DynamicMeshNode = DynamicMeshNode;
-
-
 /**
-* Sprite class , inherits from SceneNode but helps to render 2D planes (in 3D Space)
-* @class Sprite
+* Camera wraps all the info about the camera (properties and view and projection matrices)
+* @class Camera
 * @constructor
 */
-function Sprite(o)
+function Camera( options )
 {
-	this._ctor();
-	if(o)
-		this.configure(o);
-}
+	/**
+	* the camera type, RD.Camera.PERSPECTIVE || RD.Camera.ORTHOGRAPHIC
+	* @property type {number} 
+	* @default RD.Camera.PERSPECTIVE
+	*/
+	this.type = RD.Camera.PERSPECTIVE;
 
-Sprite.prototype._ctor = function()
-{
-	SceneNode.prototype._ctor.call(this);
-
-	this.mesh = "plane";
-	this.size = vec2.fromValues(0,0);
-	this.sprite_pivot = RD.TOP_LEFT;
-	this.blend_mode = RD.BLEND_ALPHA;
-	this.flags.two_sided = true;
-	this.flags.flipX = false;
-	this.flags.flipY = false;
-	this.flags.pixelated = false;
-	//this.flags.depth_test = false;
-	this.shader = "texture_transform";
-	this._angle = 0;
-
-	this.frame = null;
-	this.frames = {};
-	this.texture_matrix = mat3.create();
+	this._position = vec3.fromValues(0,100, 100);
+	this._target = vec3.fromValues(0,0,0);
+	this._up = vec3.fromValues(0,1,0);
 	
-	this._uniforms["u_texture_matrix"] = this.texture_matrix;
+	/**
+	* near distance 
+	* @property near {number} 
+	* @default 0.1
+	*/
+	this._near = 0.1;
+	/**
+	* far distance 
+	* @property far {number} 
+	* @default 10000
+	*/
+	this._far = 10000;
+	/**
+	* aspect (width / height)
+	* @property aspect {number} 
+	* @default 1
+	*/
+	this._aspect = 1.0;
+	/**
+	* fov angle in degrees
+	* @property fov {number}
+	* @default 45
+	*/
+	this._fov = 45; //persp
+	/**
+	* size of frustrum when working in orthographic (could be also an array with [left,right,top,bottom]
+	* @property frustum_size {number} 
+	* @default 50
+	*/
+	this._frustum_size = 50; //ortho (could be also an array with [left,right,top,bottom]
+	this.flip_y = false;
+
+	//if set to [w,h] of the screen (or framebuffer) it will align the viewmatrix to the texel if it is in orthographic mode
+	//useful for shadowmaps in directional lights
+	this.view_texel_grid = null;
+
+	this._view_matrix = mat4.create();
+	this._projection_matrix = mat4.create();
+	this._viewprojection_matrix = mat4.create();
+	this._model_matrix = mat4.create(); //inverse of view
+	
+	this._autoupdate_matrices = true;
+	this._must_update_matrix = false;
+
+	this._top = vec3.create();
+	this._right = vec3.create();
+	this._front = vec3.create();
+
+	this.uniforms = {
+		u_view_matrix: this._view_matrix,
+		u_projection_matrix: this._projection_matrix,
+		u_viewprojection_matrix: this._viewprojection_matrix,
+		u_camera_front: this._front,
+		u_camera_position: this._position
+	};
+
+	if(options)
+	{
+		if(options.type != null) this.type = options.type;
+		if(options.position) this._position.set(options.position);
+		if(options.target) this._target.set(options.target);
+		if(options.up) this._up.set(options.up);
+		if(options.near) this.near = options.near;
+		if(options.far) this.far = options.far;
+		if(options.fov) this.fov = options.fov;
+		if(options.aspect) this.aspect = options.aspect;
+	}
+	
+
+	this.updateMatrices();
 }
 
-Object.defineProperty(Sprite.prototype, 'angle', {
-	get: function() { return this._angle; },
-	set: function(v) { this._angle = v; quat.setAxisAngle( this._rotation, RD.FRONT, this._angle * DEG2RAD ); this._must_update_matrix = true; },
-	enumerable: true //avoid problems
+RD.Camera = Camera;
+
+Camera.PERSPECTIVE = 1;
+Camera.ORTHOGRAPHIC = 2;
+
+/**
+* Position where the camera eye is located
+* @property position {vec3}
+*/
+Object.defineProperty(Camera.prototype, 'position', {
+	get: function() { return this._position; },
+	set: function(v) { this._position.set(v); this._must_update_matrix = true; },
+	enumerable: false //avoid problems
 });
 
-Sprite.prototype.setSize = function(w,h)
-{
-	this.size[0] = w;
-	this.size[1] = h;
-}
-
-//static version
-//num is the number of elements per row and column, if array then [columns,rows]
-Sprite.createFrames = function( num, names, frames )
-{
-	frames = frames || {};
-	var num_rows;
-	var num_colums;
-	if(num.constructor != Number)
-	{
-		num_columns = num[0];
-		num_rows = num[1];
-	}
-	else
-		num_rows = num_columns = num;
-
-	var x = 0;
-	var y = 0;
-	var offsetx = 1/num_columns;
-	var offsety = 1/num_rows;
-	var total = num_columns * num_rows;
-
-	if(!names)
-	{
-		names = [];
-		for(var i = 0; i < total; ++i)
-			names.push( String(i) );
-	}
-
-	for( var i = 0; i < names.length; ++i )
-	{
-		frames[ names[i] ] = { pos:[x,y], size:[offsetx,offsety], normalized: true };
-		x += offsetx;
-		if(x >= 1)
-		{
-			x = 0;
-			y += offsety;
-		}
-		if(y >= 1)
-			return frames;
-	}
-	return frames;
-}
-
-Sprite.prototype.createFrames = function(num, names)
-{
-	Sprite.createFrames(num, names, this.frames );
-}
-
-Sprite.prototype.addFrame = function(name, x,y, w,h, normalized )
-{
-	this.frames[ name ] = { pos: vec2.fromValues(x,y), size: vec2.fromValues(w,h), normalized: !!normalized };
-}
-
-Sprite.prototype.updateTextureMatrix = function( renderer )
-{
-	mat3.identity( this.texture_matrix );
-	//no texture
-	if(!this.texture)
-		return false;
-	
-	var texture = renderer.textures[ this.texture ];
-	if(!texture && renderer.autoload_assets) 
-	{
-		var that = this;
-		if(this.texture.indexOf(".") != -1)
-			renderer.loadTexture( this.texture, renderer.default_texture_settings, function(tex){
-				if(tex && that.size[0] == 0 && that.size[0] == 0 )
-					that.setSize( tex.width, tex.height );	
-			});
-		texture = gl.textures[ "white" ];
-	}
-	if(!texture) //texture not found
-		return false;
-		
-	//adapt texture matrix
-	var matrix = this.texture_matrix;
-		
-	var frame = this.current_frame = this.frames[ this.frame ];
-	
-	//frame not found
-	if(this.frame !== null && !frame)
-		return false;
-	
-	if(!frame)
-	{
-		if(this.flags.flipX)
-		{
-			temp_vec2[0] = this.flags.flipX ? 1 : 0; 
-			temp_vec2[1] = 0;
-			mat3.translate( matrix, matrix, temp_vec2 );
-			temp_vec2[0] = (this.flags.flipX ? -1 : 1); 
-			temp_vec2[1] = 1;
-			mat3.scale( matrix, matrix, temp_vec2 );
-		}
-		return true;
-	}
-	
-	if(frame.normalized)
-	{
-		temp_vec2[0] = this.flags.flipX ? frame.pos[0] + frame.size[0] : frame.pos[0]; 
-		temp_vec2[1] = 1 - frame.pos[1] - frame.size[1];
-		mat3.translate( matrix, matrix, temp_vec2 );
-		temp_vec2[0] = frame.size[0] * (this.flags.flipX ? -1 : 1); 
-		temp_vec2[1] = frame.size[1];
-		mat3.scale( matrix, matrix, temp_vec2 );
-	}
-	else
-	{
-		var tw = texture.width;
-		var th = texture.height;
-		temp_vec2[0] = (this.flags.flipX ? frame.pos[0] + frame.size[0] : frame.pos[0]) / tw; 
-		temp_vec2[1] = (th - frame.pos[1] - frame.size[1]) / th;
-		mat3.translate( matrix, matrix, temp_vec2 );
-		temp_vec2[0] = (frame.size[0] * (this.flags.flipX ? -1 : 1)) / texture.width; 
-		temp_vec2[1] = frame.size[1] / texture.height;
-		mat3.scale( matrix, matrix, temp_vec2 );
-	}
-	
-	return true;
-}
-
-Sprite.prototype.render = function(renderer, camera)
-{
-	if(!this.texture)
-		return;	
-
-	//this autoloads
-	if(!this.updateTextureMatrix(renderer)) //texture or frame not found
-		return;
-
-	var tex = renderer.textures[ this.texture ];
-	if(!tex)
-		return;
-	
-	if( this.flags.pixelated )
-	{
-		tex.bind(0);
-		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, this.flags.pixelated ? gl.NEAREST : gl.LINEAR );
-		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, this.flags.pixelated ? gl.NEAREST_MIPMAP_NEAREST : gl.LINEAR_MIPMAP_LINEAR );
-	}
-
-	if(this.billboard_mode)
-		RD.orientNodeToCamera( this.billboard_mode, this, camera, renderer );
-	if(this.size[0] == 0 && tex.ready !== false)
-		this.size[0] = tex.width;
-	if(this.size[1] == 0 && tex.ready !== false)
-		this.size[1] = tex.height;
-	var size = this.size;
-	var offsetx = 0;
-	var offsety = 0;
-	temp_mat4.set( this._global_matrix );
-
-	var normalized_size = false;
-	if(this.current_frame && this.current_frame.size)
-	{
-		size = this.current_frame.size;
-		normalized_size = this.current_frame.normalized;
-	}
-
-	if (this.sprite_pivot)
-	{
-		switch( this.sprite_pivot )
-		{
-			//case RD.CENTER: break;
-			case RD.TOP_LEFT: offsetx = 0.5; offsety = -0.5; break;
-			case RD.TOP_CENTER: offsety = -0.5; break;
-			case RD.TOP_RIGHT: offsetx = -0.5; break;
-			case RD.BOTTOM_LEFT: offsetx = 0.5; offsety = 0.5; break;
-			case RD.BOTTOM_CENTER: offsety = 0.5; break;
-			case RD.BOTTOM_RIGHT: offsetx = -0.5; offsety = 0.5; break;
-		}
-		mat4.translate( temp_mat4, temp_mat4, [offsetx * size[0], offsety * size[1], 0 ] );
-	}
-	mat4.scale( temp_mat4, temp_mat4, [size[0] * (normalized_size ? this.size[0] : 1), size[1] * (normalized_size ? this.size[1] : 1), 1 ] );
-	renderer.setModelMatrix( temp_mat4 );
-
-	renderer.renderNode( this, renderer, camera );
-}
-
-/*
-Sprite.renderSprite = function( renderer, camera, position, texture, frame_index, atlas_size, scale, billboard_mode, pivot )
-{
-	if(!texture)
-		return;	
-
-	//this autoloads
-	if(!this.updateTextureMatrix(renderer)) //texture or frame not found
-		return;
-
-	if(billboard_mode)
-		RD.orientNodeToCamera( billboard_mode, this, camera, renderer );
-
-	var offsetx = 0;
-	var offsety = 0;
-	temp_mat4.set( this._global_matrix );
-
-	if (pivot)
-	{
-		switch( pivot )
-		{
-			//case RD.CENTER: break;
-			case RD.TOP_LEFT: offsetx = 0.5; offsety = -0.5; break;
-			case RD.TOP_CENTER: offsety = -0.5; break;
-			case RD.TOP_RIGHT: offsetx = -0.5; break;
-			case RD.BOTTOM_LEFT: offsetx = 0.5; offsety = 0.5; break;
-			case RD.BOTTOM_CENTER: offsety = 0.5; break;
-			case RD.BOTTOM_RIGHT: offsetx = -0.5; offsety = 0.5; break;
-		}
-		mat4.translate( temp_mat4, temp_mat4, [offsetx * w, offsety * h, 0 ] );
-	}
-	renderer.setModelMatrix( temp_mat4 );
-	renderer.renderNode( this, renderer, camera );
-}
+/**
+* Where the camera is looking at, the center of where is looking
+* @property target {vec3}
 */
+Object.defineProperty(Camera.prototype, 'target', {
+	get: function() { return this._target; },
+	set: function(v) { this._target.set(v); this._must_update_matrix = true; },
+	enumerable: false //avoid problems
+});
 
-extendClass( Sprite, SceneNode );
-RD.Sprite = Sprite;
+/**
+* Up vector
+* @property up {vec3}
+* @default [0,1,0]
+*/
+Object.defineProperty(Camera.prototype, 'up', {
+	get: function() { return this._up; },
+	set: function(v) { this._up.set(v); this._must_update_matrix = true; },
+	enumerable: false //avoid problems
+});
 
+Object.defineProperty(Camera.prototype, 'fov', {
+	get: function() { return this._fov; },
+	set: function(v) { this._fov = v; this._must_update_matrix = true; },
+	enumerable: false //avoid problems
+});
 
+Object.defineProperty(Camera.prototype, 'aspect', {
+	get: function() { return this._aspect; },
+	set: function(v) { this._aspect = v; this._must_update_matrix = true; },
+	enumerable: false //avoid problems
+});
 
-function Skybox(o)
+//(could be also an array with [left,right,top,bottom]
+Object.defineProperty(Camera.prototype, 'frustum_size', {
+	get: function() { return this._frustum_size; },
+	set: function(v) { this._frustum_size = v; this._must_update_matrix = true; },
+	enumerable: false //avoid problems
+});
+
+Object.defineProperty(Camera.prototype, 'near', {
+	get: function() { return this._near; },
+	set: function(v) { this._near = v; this._must_update_matrix = true; },
+	enumerable: false //avoid problems
+});
+
+Object.defineProperty(Camera.prototype, 'far', {
+	get: function() { return this._far; },
+	set: function(v) { this._far = v; this._must_update_matrix = true; },
+	enumerable: false //avoid problems
+});
+
+Object.defineProperty(Camera.prototype, 'view_matrix', {
+	get: function() { return this._view_matrix; },
+	set: function(v) { this._view_matrix.set(v); mat4.multiply(this._viewprojection_matrix, this._projection_matrix, this._view_matrix ); },
+	enumerable: false 
+});
+
+Object.defineProperty(Camera.prototype, 'projection_matrix', {
+	get: function() { return this._projection_matrix; },
+	set: function(v) { this._projection_matrix.set(v); mat4.multiply(this._viewprojection_matrix, this._projection_matrix, this._view_matrix ); },
+	enumerable: false 
+});
+
+Object.defineProperty(Camera.prototype, 'viewprojection_matrix', {
+	get: function() { return this._viewprojection_matrix; },
+	set: function(v) { this._viewprojection_matrix.set(v); },
+	enumerable: false 
+});
+
+/**
+* changes the camera to perspective mode
+* @method perspective
+* @param {number} fov
+* @param {number} aspect
+* @param {number} near
+* @param {number} far
+*/
+Camera.prototype.perspective = function(fov, aspect, near, far)
 {
-	SceneNode.prototype._ctor.call(this,o);
-	this._ctor();
-	if(o)
-		this.configure(o);
+	this.type = Camera.PERSPECTIVE;
+	this._fov = fov;
+	this._aspect = aspect;
+	this._near = near;
+	this._far = far;
+	
+	this._must_update_matrix = true;
 }
 
-Skybox.prototype._ctor = function()
+/**
+* changes the camera to orthographic mode (frustumsize is top-down)
+* @method orthographic
+* @param {number} frustum_size
+* @param {number} near
+* @param {number} far
+* @param {number} aspect
+*/
+Camera.prototype.orthographic = function(frustum_size, near, far, aspect)
 {
-	this.mesh = "cube";
-	this.shader = "skybox";
-	this.scaling = [10,10,10];
-	this.flags.depth_test = false;
-	this.flags.two_sided = true;
+	this.type = Camera.ORTHOGRAPHIC;
+	this._frustum_size = frustum_size;
+	if(arguments.lenth > 1)
+	{
+		this._near = near;
+		this._far = far;
+		this._aspect = aspect || 1;
+	}
+
+	this._must_update_matrix = true;
 }
 
-Skybox.prototype.render = function( renderer, camera )
+/**
+* configure view of the camera
+* @method lookAt
+* @param {vec3} position
+* @param {vec3} target
+* @param {vec3} up
+*/
+Camera.prototype.lookAt = function(position,target,up)
 {
-	this.position = camera.position;
-	this.updateGlobalMatrix(true);
-	renderer.setModelMatrix( this._global_matrix );
-	renderer.renderNode( this, camera );
+	vec3.copy(this._position, position);
+	vec3.copy(this._target, target);
+	vec3.copy(this._up, up);
+	
+	this._must_update_matrix = true;
 }
 
-extendClass( Skybox, SceneNode );
-RD.Skybox = Skybox;
+/**
+* update view projection matrices
+* @method updateMatrices
+*/
+Camera.prototype.updateMatrices = function( force )
+{
+	if(this._autoupdate_matrices || force)
+	{
+		//proj
+		if(this.type == Camera.ORTHOGRAPHIC)
+		{
+			if( this.frustum_size.constructor === Number )
+				mat4.ortho(this._projection_matrix, -this.frustum_size*this._aspect, this.frustum_size*this._aspect, -this._frustum_size, this._frustum_size, this._near, this._far);
+			else if( this.frustum_size.length )
+				mat4.ortho(this._projection_matrix, this.frustum_size[0], this.frustum_size[1], this.frustum_size[2], this.frustum_size[3], this.frustum_size.length > 3 ? this.frustum_size[4] : this._near, this.frustum_size.length > 4 ? this.frustum_size[5] : this._far);
+		}
+		else
+			mat4.perspective(this._projection_matrix, this._fov * DEG2RAD, this._aspect, this._near, this._far);
 
+		if(this.flip_y)
+			mat4.scale( this._projection_matrix, this._projection_matrix, [1,-1,1] );
+
+		//view
+		mat4.lookAt(this._view_matrix, this._position, this._target, this._up);
+
+		//align
+		if(this.view_texel_grid && this.type == Camera.ORTHOGRAPHIC)
+		{
+			var view_width = this.frustum_size.constructor === Number ? this.frustum_size * this._aspect : this.frustum_size[0];
+			var view_height = this.frustum_size.constructor === Number ? this.frustum_size : this.frustum_size[1];
+			var stepx = 2 * view_width / this.view_texel_grid[0];
+			var stepy = 2 * view_height / this.view_texel_grid[1];
+			this._view_matrix[12] = Math.floor( this._view_matrix[12] / stepx) * stepx;
+			this._view_matrix[13] = Math.floor( this._view_matrix[13] / stepy) * stepy;
+		}
+	}
+
+	if( this.is_reflection )
+		mat4.scale( this._view_matrix, this._view_matrix, [1,-1,1] );
+
+	mat4.multiply(this._viewprojection_matrix, this._projection_matrix, this._view_matrix );
+	mat4.invert(this._model_matrix, this._view_matrix );
+	
+	this._must_update_matrix = false;
+
+	mat4.rotateVec3( this._right, this._model_matrix, RD.RIGHT );
+	mat4.rotateVec3( this._top,   this._model_matrix, RD.UP );
+	mat4.rotateVec3( this._front, this._model_matrix, RD.FRONT );
+
+	this.distance = vec3.distance(this._position, this._target);
+}
+
+Camera.prototype.getModel = function(m)
+{
+	m = m || mat4.create();
+	mat4.invert(this._model_matrix, this._view_matrix );
+	mat4.copy(m, this._model_matrix);
+	return m;
+}
+
+/**
+* update camera using a model_matrix as reference
+* @method updateVectors
+* @param {mat4} model_matrix
+*/
+Camera.prototype.updateVectors = function( model_matrix )
+{
+	var front = vec3.subtract( temp_vec3, this._target, this._position);
+	var dist = vec3.length(front);
+	mat4.multiplyVec3(this._position, model_matrix, RD.ZERO);
+	mat4.multiplyVec3(this._target, model_matrix, [0,0,-dist]);
+	mat4.rotateVec3(this._up, model_matrix, RD.UP);
+}
+
+/**
+* transform vector (only rotates) from local to global
+* @method getLocalVector
+* @param {vec3} v
+* @param {vec3} result [Optional]
+* @return {vec3} local point transformed
+*/
+Camera.prototype.getLocalVector = function(v, result)
+{
+	if(this._must_update_matrix)
+		this.updateMatrices();
+		
+	return mat4.rotateVec3( result || vec3.create(), this._model_matrix, v );
+}
+
+/**
+* transform point from local to global
+* @method getLocalVector
+* @param {vec3} v
+* @param {vec3} result [Optional]
+* @return {vec3} local point transformed
+*/
+Camera.prototype.getLocalPoint = function(v, result)
+{
+	if(this._must_update_matrix)
+		this.updateMatrices();
+	
+	return vec3.transformMat4( result || vec3.create(), v, this._model_matrix );
+}
+
+/**
+* gets the front vector normalized 
+* @method getFront
+* @param {vec3} dest [Optional]
+* @return {vec3} front vector
+*/
+Camera.prototype.getFront = function(dest)
+{
+	dest = dest || vec3.create();
+	vec3.subtract(dest, this._target, this._position);
+	vec3.normalize(dest, dest);
+	return dest;
+}
+
+/**
+* move the position and the target that amount
+* @method move
+* @param {vec3} v
+* @param {Number} scalar [optional] it will be multiplied by the vector
+*/
+Camera.prototype.move = function(v, scalar)
+{
+	if(scalar !== undefined)
+	{
+		vec3.scale( temp_vec3, v, scalar );
+		v = temp_vec3;
+	}
+
+	vec3.add(this._target, this._target, v);
+	vec3.add(this._position, this._position, v);
+	this._must_update_matrix = true;
+}
+
+/**
+* move the position and the target using the local coordinates system of the camera
+* @method moveLocal
+* @param {vec3} v
+* @param {Number} scalar [optional] it will be multiplied by the vector
+*/
+Camera.prototype.moveLocal = function(v, scalar)
+{
+	var delta = mat4.rotateVec3(temp_vec3, this._model_matrix, v);
+	if(scalar !== undefined)
+		vec3.scale( delta, delta, scalar );
+	vec3.add(this._target, this._target, delta);
+	vec3.add(this._position, this._position, delta);
+	this._must_update_matrix = true;
+}
+
+/**
+* rotate over its position
+* @method rotate
+* @param {number} angle in radians
+* @param {vec3} axis
+*/
+Camera.prototype.rotate = function(angle, axis)
+{
+	var R = quat.setAxisAngle( temp_quat, axis, angle );
+	var front = vec3.subtract( temp_vec3, this._target, this._position );
+	vec3.transformQuat(front, front, R );
+	vec3.add(this._target, this._position, front);
+	this._must_update_matrix = true;
+}
+
+/**
+* rotate over its position
+* @method rotateLocal
+* @param {number} angle in radians
+* @param {vec3} axis in local coordinates
+*/
+Camera.prototype.rotateLocal = function(angle, axis)
+{
+	var local_axis = mat4.rotateVec3(temp_vec3b, this._model_matrix, axis);
+	var R = quat.setAxisAngle( temp_quat, local_axis, angle );
+	var front = vec3.subtract( temp_vec3, this._target, this._position );
+	vec3.transformQuat(front, front, R );
+	vec3.add(this._target, this._position, front);
+	this._must_update_matrix = true;
+}
+
+/**
+* rotate around its target position
+* @method rotate
+* @param {number} angle in radians
+* @param {vec3} axis
+* @param {vec3} [center=null] if another center is provided it rotates around it
+*/
+Camera.prototype.orbit = function(angle, axis, center, axis_in_local)
+{
+	if(!axis)
+		throw("RD: orbit axis missing");
+
+	center = center || this._target;
+	if(axis_in_local)
+		axis = mat4.rotateVec3(temp_vec3b, this._model_matrix, axis);
+	var R = quat.setAxisAngle( temp_quat, axis, angle );
+	var front = vec3.subtract( temp_vec3, this._position, this._target );
+	vec3.transformQuat(front, front, R );
+	vec3.add(this._position, center, front);
+	this._must_update_matrix = true;
+}
+
+//multiplies front by f and updates position
+Camera.prototype.orbitDistanceFactor = function(f, center)
+{
+	center = center || this._target;
+	var front = vec3.subtract( temp_vec3, this._position, center);
+	vec3.scale(front, front,f);
+	vec3.add(this._position, center, front);
+	this._must_update_matrix = true;
+}
+
+/**
+* projects a point from 3D to 2D
+* @method project
+* @param {vec3} vec coordinate to project
+* @param {Array} [viewport=gl.viewport]
+* @param {vec3} [result=vec3]
+* @return {vec3} the projected point
+*/
+Camera.prototype.project = function( vec, viewport, result )
+{
+	result = result || vec3.create();
+	viewport = viewport || gl.viewport_data;
+	if(this._must_update_matrix)
+		this.updateMatrices();
+	mat4.projectVec3(result, this._viewprojection_matrix, vec );
+
+	//adjust to viewport
+	result[0] = result[0] * viewport[2] + viewport[0];
+	result[1] = result[1] * viewport[3] + viewport[1];
+
+	return result;
+}
+
+/**
+* projects a point from 2D to 3D
+* @method unproject
+* @param {vec3} vec coordinate to unproject
+* @param {Array} [viewport=gl.viewport]
+* @param {vec3} [result=vec3]
+* @return {vec3} the projected point
+*/
+Camera.prototype.unproject = function( vec, viewport, result )
+{
+	viewport = viewport || gl.viewport_data;
+	if(this._must_update_matrix)
+		this.updateMatrices();
+	return vec3.unproject( result || vec3.create(), vec, this._viewprojection_matrix, viewport );
+}
+
+/**
+* gets the ray passing through one pixel
+* @method getRay
+* @param {number} x
+* @param {number} y
+* @param {Array} [viewport=gl.viewport]
+* @param {RD.Ray} [out] { origin: vec3, direction: vec3 }
+* @return {RD.Ray} ray object { origin: vec3, direction:vec3 }
+*/
+Camera.prototype.getRay = function( x, y, viewport, out )
+{
+	if(x === undefined || y === undefined )
+		throw("RD.Camera.getRay requires x and y parameters");
+
+	viewport = viewport || gl.viewport_data;
+
+	if(!out)
+		out = new RD.Ray();
+
+	if(this._must_update_matrix)
+		this.updateMatrices();
+	
+	var origin = out.origin;
+	vec3.set( origin, x,y,0 );
+	if(this.type == RD.Camera.ORTHOGRAPHIC)
+		vec3.unproject( origin, origin, this._viewprojection_matrix, viewport );
+	else
+		vec3.copy( origin, this.position );
+
+	var direction = out.direction;
+	vec3.set( direction, x,y,1 );
+	vec3.unproject( direction, direction, this._viewprojection_matrix, viewport );
+	vec3.sub( direction, direction, origin );
+	vec3.normalize( direction, direction );
+	return out;
+}
+
+/**
+* given a screen coordinate it cast a ray and returns the collision point with a given plane
+* @method getRayPlaneCollision
+* @param {number} x
+* @param {number} y
+* @param {vec3} position Plane point
+* @param {vec3} normal Plane normal
+* @param {vec3} [result=vec3]
+* @param {vec4} [viewport=vec4]
+* @return {vec3} the collision point, or null
+*/
+Camera.prototype.getRayPlaneCollision = function(x,y, position, normal, result, viewport )
+{
+	result = result || vec3.create();
+	//*
+	var ray = this.getRay( x, y, viewport );
+	if( geo.testRayPlane( ray.origin, ray.direction, position, normal, result ) )
+		return result;
+	return null;
+	/*/
+	if(this._must_update_matrix)
+		this.updateMatrices();
+	var RT = new GL.Raytracer( this._viewprojection_matrix, viewport );
+	var start = this._position;
+	var dir = RT.getRayForPixel( x,y );
+	if( geo.testRayPlane( start, dir, position, normal, result ) )
+		return result;
+	return null;
+	//*/
+}
+
+Camera.controller_keys = { forward: "UP", back: "DOWN", left:"LEFT", right:"RIGHT" };
+
+/**
+* Used to move the camera (helps during debug)
+* @method applyController
+* @param {number} dt delta time from update
+* @param {Event} e mouse event or keyboard event
+*/
+Camera.prototype.applyController = function(dt, event, speed)
+{
+	speed  = speed || 10;
+	if(dt)
+	{
+		if(gl.keys[ Camera.controller_keys.forward ])
+			this.moveLocal( vec3.scale(temp_vec3,RD.FRONT,dt * speed) );
+		else if(gl.keys[ Camera.controller_keys.back ])
+			this.moveLocal( vec3.scale(temp_vec3,RD.BACK,dt * speed) );
+		if(gl.keys[ Camera.controller_keys.left ])
+			this.moveLocal( vec3.scale(temp_vec3,RD.LEFT,dt * speed) );
+		else if(gl.keys[ Camera.controller_keys.right ])
+			this.moveLocal( vec3.scale(temp_vec3,RD.RIGHT,dt * speed) );
+	}
+
+	if(event)
+	{
+		if(event.deltax)
+			this.rotate( event.deltax * -0.005, RD.UP );
+		if(event.deltay)
+			this.rotateLocal( event.deltay * -0.005, RD.RIGHT );
+	}
+}
+
+Camera.prototype.lerp = function(camera, f)
+{
+	vec3.lerp( this._position, this._position, camera._position, f );
+	vec3.lerp( this._target, this._target, camera._target, f );
+	vec3.lerp( this._up, this._up, camera._up, f );
+	this._fov = this._fov * (1.0 - f) + camera._fov * f;
+	this._near = this._near * (1.0 - f) + camera._near * f;
+	this._far = this._far * (1.0 - f) + camera._far * f;
+
+	if( this._frustum_size.constructor === Number )
+		this._frustum_size = this._frustum_size * (1.0 - f) + camera._frustum_sizer * f;
+	this._must_update_matrix = true;
+}
+
+//it rotates the matrix so it faces the camera
+Camera.prototype.orientMatrixToCamera = function( matrix )
+{
+	matrix.set( this._right, 0 );
+	matrix.set( this._top, 4 );
+	matrix.set( this._front, 8 );
+}
+
+Camera.prototype.extractPlanes = function()
+{
+	var vp = this._viewprojection_matrix;
+	var planes = this._planes_data || new Float32Array(4*6);
+
+	//right
+	planes.set( [vp[3] - vp[0], vp[7] - vp[4], vp[11] - vp[8], vp[15] - vp[12] ], 0); 
+	normalize(0);
+
+	//left
+	planes.set( [vp[3] + vp[0], vp[ 7] + vp[ 4], vp[11] + vp[ 8], vp[15] + vp[12] ], 4);
+	normalize(4);
+
+	//bottom
+	planes.set( [ vp[ 3] + vp[ 1], vp[ 7] + vp[ 5], vp[11] + vp[ 9], vp[15] + vp[13] ], 8);
+	normalize(8);
+
+	//top
+	planes.set( [ vp[ 3] - vp[ 1], vp[ 7] - vp[ 5], vp[11] - vp[ 9], vp[15] - vp[13] ],12);
+	normalize(12);
+
+	//back
+	planes.set( [ vp[ 3] - vp[ 2], vp[ 7] - vp[ 6], vp[11] - vp[10], vp[15] - vp[14] ],16);
+	normalize(16);
+
+	//front
+	planes.set( [ vp[ 3] + vp[ 2], vp[ 7] + vp[ 6], vp[11] + vp[10], vp[15] + vp[14] ],20);
+	normalize(20);
+
+	this._planes_data = planes;
+	if(!this._frustrum_planes)
+		this._frustrum_planes = [ planes.subarray(0,4),planes.subarray(4,8),planes.subarray(8,12),planes.subarray(12,16),planes.subarray(16,20),planes.subarray(20,24) ];
+
+	function normalize(pos)
+	{
+		var N = planes.subarray(pos,pos+3);
+		var l = vec3.length(N);
+		if(!l === 0.0)
+			return;
+		l = 1.0 / l;
+		planes[pos] *= l;
+		planes[pos+1] *= l;
+		planes[pos+2] *= l;
+		planes[pos+3] *= l;
+	}
+}
+
+var CLIP_INSIDE = RD.CLIP_INSIDE = 0;
+var CLIP_OUTSIDE = RD.CLIP_OUTSIDE = 1;
+var CLIP_OVERLAP = RD.CLIP_OVERLAP = 2;
+
+
+Camera.prototype.testMesh = (function(){ 
+	if(!global.BBox) //no litegl installed
+		return;
+
+	var aabb = BBox.create();
+	var center = aabb.subarray(0,3);
+	var halfsize = aabb.subarray(3,6);
+
+	return function( mesh, matrix )
+	{
+		//convert oobb to aabb
+		var bounding = mesh.bounding;
+		if(!bounding)
+			return CLIP_INSIDE;
+		BBox.transformMat4(aabb, bounding, matrix);
+		return this.testBox(center,halfsize);
+	}
+})();
+/**
+* test if box is inside frustrum (you must call camera.extractPlanes() previously to update frustrum planes)
+* @method testBox
+* @param {vec3} center center of the box
+* @param {vec3} halfsize halfsize of the box (vector from center to corner)
+* @return {number} CLIP_OUTSIDE or CLIP_INSIDE or CLIP_OVERLAP
+*/
+Camera.prototype.testBox = function(center, halfsize)
+{
+	if(!this._frustrum_planes)
+		this.extractPlanes();
+	var planes = this._frustrum_planes;
+	var flag = 0, o = 0;
+
+	flag = planeOverlap( planes[0],center, halfsize);
+	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
+	flag =  planeOverlap( planes[1],center, halfsize);
+	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
+	flag =  planeOverlap( planes[2],center, halfsize);
+	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
+	flag =  planeOverlap( planes[3],center, halfsize);
+	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
+	flag =  planeOverlap( planes[4],center, halfsize);
+	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
+	flag =  planeOverlap( planes[5],center, halfsize);
+	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
+
+	if (o==0) return CLIP_INSIDE;
+	else return CLIP_OVERLAP;
+}
+
+/**
+* test if sphere is inside frustrum (you must call camera.extractPlanes() previously to update frustrum planes)
+* @method testSphere
+* @param {vec3} center 
+* @param {number} radius
+* @return {number} CLIP_OUTSIDE or CLIP_INSIDE or CLIP_OVERLAP
+*/
+Camera.prototype.testSphere = function(center, radius)
+{
+	if(!this._frustrum_planes)
+		this.extractPlanes();
+	var planes = this._frustrum_planes;
+
+	var dist;
+	var overlap = false;
+
+	dist = distanceToPlane( planes[0], center );
+	if( dist < -radius )
+		return CLIP_OUTSIDE;
+	else if(dist >= -radius && dist <= radius)
+		overlap = true;
+	dist = distanceToPlane( planes[1], center );
+	if( dist < -radius )
+		return CLIP_OUTSIDE;
+	else if(dist >= -radius && dist <= radius)
+		overlap = true;
+	dist = distanceToPlane( planes[2], center );
+	if( dist < -radius )
+		return CLIP_OUTSIDE;
+	else if(dist >= -radius && dist <= radius)
+		overlap = true;
+	dist = distanceToPlane( planes[3], center );
+	if( dist < -radius )
+		return CLIP_OUTSIDE;
+	else if(dist >= -radius && dist <= radius)
+		overlap = true;
+	dist = distanceToPlane( planes[4], center );
+	if( dist < -radius )
+		return CLIP_OUTSIDE;
+	else if(dist >= -radius && dist <= radius)
+		overlap = true;
+	dist = distanceToPlane( planes[5], center );
+	if( dist < -radius )
+		return CLIP_OUTSIDE;
+	else if(dist >= -radius && dist <= radius)
+		overlap = true;
+	
+	if(overlap)
+		return CLIP_OVERLAP;
+	return CLIP_INSIDE;
+}
 
 
 /**
@@ -2048,6 +2443,80 @@ Scene.prototype.testRay = function( ray, result, max_dist, layers, test_against_
 		//store them in an octree
 
 	return this.root.testRay( ray, result, max_dist, layers, test_against_mesh );
+}
+
+Scene.prototype.fromJSON = function(json)
+{
+	this.root.clear();
+	this.root.configure( json );
+}
+
+Scene.prototype.toJSON = function( on_node_to_json )
+{
+	if(	on_node_to_json && on_node_to_json.constructor !== Function )
+		on_node_to_json = null;
+
+	var index = 0;
+	var json = {};
+	tojson(this.root,json);
+	return json;
+	
+	function tojson(node,data)
+	{
+		if(on_node_to_json)
+		{
+			var r = on_node_to_json(node, data);
+			if ( !r )
+				return false;
+		}
+		else
+		{
+			if(!node.flags.no_transform)
+			{
+				data.position = typedArrayToArray(node.position);
+				if(node.rotation[0] != 0 || node.rotation[1] != 0 || node.rotation[2] != 0 || node.rotation[3] != 1 )
+					data.rotation = typedArrayToArray(node.rotation);
+				if(node.scaling[0] != 1 || node.scaling[1] != 1 || node.scaling[2] != 1 )
+					data.scaling = typedArrayToArray(node.scaling);
+			}
+			if(node.id)
+				data.id = node.id;
+			node.ref = data.ref = index++;
+			if(node.mesh)
+				data.mesh = node.mesh;
+			if(node.submesh != null)
+				data.submesh = node.submesh;
+			if(node.draw_range)
+				data.draw_range = node.draw_range.concat();
+			if(node.material)
+				data.material = node.material;
+			if(node.shader)
+				data.shader = node.shader;
+			if(node.color[0] != 1 || node.color[1] != 1 || node.color[2] != 1 || node.color[3] != 1 )
+				data.color = typedArrayToArray(node.color);
+			if(Object.values(node.textures).filter(function(a){return a;}) > 0)
+				data.shader = node.shader;
+			if(node.extra)
+				data.extra = node.extra;
+
+			data.layers = node.layers;
+			data.flags = node.flags;
+		}
+
+		if(!node.children.length)
+			return true;
+		var children_data = [];
+		for(var i = 0; i < node.children.length; ++i)
+		{
+			var child = node.children[i];
+			var child_json = {};
+			if( tojson(child,child_json) )
+				children_data.push(child_json);
+		}
+		if(children_data.length)
+			data.children = children_data;
+		return true;
+	}
 }
 
 
@@ -2210,7 +2679,6 @@ Renderer.prototype.render = function(scene, camera, nodes, layers )
 		this._current_scene = null;
 		throw("Cannot render an scene while rendering an scene");
 	}
-	this._current_scene = scene;
 
 	camera = camera || scene.camera;
 	if (!camera)
@@ -2218,86 +2686,90 @@ Renderer.prototype.render = function(scene, camera, nodes, layers )
 	
 	global.gl = this.gl;
 	
-	//stack to store state
-	this._state = [];
-	this._meshes_missing = 0;
-	//this.draw_calls = 0;
-
-	//get matrices in the camera
-	this.enableCamera( camera );
-	this.enable2DView();
-
 	//find which nodes should we render
 	this._nodes.length = 0;
 	if(!nodes)
 		scene._root.getVisibleChildren( this._nodes, layers );
 	nodes = nodes || this._nodes;
 
-	if(nodes.length)
+	if(!nodes.length)
 	{
-		//set globals
-		this._uniforms.u_time = scene.time;
+		scene.frame++;
+		this.frame++;
+		return;
+	}
 
-		//precompute distances
-		if(this.sort_by_distance)
-			nodes.forEach( function(a) { a._distance = a.getDistanceTo( camera._position ); } );
+	//get matrices in the camera
+	this.enableCamera( camera );
+	this.enable2DView();
 
-		//filter by mustRender (you can do your frustum culling here)
-		var that = this;
-		nodes = nodes.filter( function(n) { return !n.mustRender || n.mustRender(that,camera) != false; }); //GC
-		
-		//sort 
-		if(this.sort_by_distance && this.sort_by_priority)
-			nodes.sort( RD.Renderer._sort_by_priority_and_dist_func );
-		else if(this.sort_by_priority)
-			nodes.sort( RD.Renderer._sort_by_priority_func );
-		else if(this.sort_by_distance)
-			nodes.sort( RD.Renderer._sort_by_dist_func );
-		
-		//pre rendering
-		if(scene._root.preRender)
-			scene._root.preRender(this,camera);
-		for (var i = 0; i < nodes.length; ++i)
-		{
-			var node = nodes[i];
-			
-			//recompute matrices
-			node.updateGlobalMatrix(true);
-			
-			if(node.preRender)
-				node.preRender(this,camera);
-		}
-		
-		//rendering	
-		for (var i = 0; i < nodes.length; ++i)
-		{
-			var node = nodes[i];
-			node.flags.was_rendered = false;
-			if(node.flags.visible === false || !(node.layers & layers) )
-				continue;
-			if(this.mustRenderNode && this.mustRenderNode(node, camera) === false)
-				continue;
-			node.flags.was_rendered = true;
-			this.setModelMatrix( node._global_matrix );
-			
-			if(node.render)
-				node.render(this, camera);
-			else
-				this.renderNode(node, camera);
-			this.draw_calls += 1;
-		}
-		
-		//post rendering
-		if(scene._root.postRender)
-			scene._root.postRender(this,camera);
-		for (var i = 0; i < nodes.length; ++i)
-		{
-			var node = nodes[i];
-			if(node.postRender)
-				node.postRender(this,camera);
-		}
+	//stack to store state
+	this._state = [];
+	this._meshes_missing = 0;
+	//this.draw_calls = 0;
+	this._current_scene = scene;
 
-	}//nodes.length
+	//set globals
+	this._uniforms.u_time = scene.time;
+
+	//precompute distances
+	if(this.sort_by_distance)
+		nodes.forEach( function(a) { a._distance = a.getDistanceTo( camera._position ); } );
+
+	//filter by mustRender (you can do your frustum culling here)
+	var that = this;
+	nodes = nodes.filter( function(n) { return !n.mustRender || n.mustRender(that,camera) != false; }); //GC
+	
+	//sort 
+	if(this.sort_by_distance && this.sort_by_priority)
+		nodes.sort( RD.Renderer._sort_by_priority_and_dist_func );
+	else if(this.sort_by_priority)
+		nodes.sort( RD.Renderer._sort_by_priority_func );
+	else if(this.sort_by_distance)
+		nodes.sort( RD.Renderer._sort_by_dist_func );
+	
+	//pre rendering
+	if(scene._root.preRender)
+		scene._root.preRender(this,camera);
+	for (var i = 0; i < nodes.length; ++i)
+	{
+		var node = nodes[i];
+		
+		//recompute matrices
+		node.updateGlobalMatrix(true);
+		
+		if(node.preRender)
+			node.preRender(this,camera);
+	}
+	
+	//rendering	
+	for (var i = 0; i < nodes.length; ++i)
+	{
+		var node = nodes[i];
+		node.flags.was_rendered = false;
+		if(node.flags.visible === false || !(node.layers & layers) )
+			continue;
+		if(this.mustRenderNode && this.mustRenderNode(node, camera) === false)
+			continue;
+		node.flags.was_rendered = true;
+		this.setModelMatrix( node._global_matrix );
+		
+		if(node.render)
+			node.render(this, camera);
+		else
+			this.renderNode(node, camera);
+		this.draw_calls += 1;
+	}
+	
+	//post rendering
+	if(scene._root.postRender)
+		scene._root.postRender(this,camera);
+	for (var i = 0; i < nodes.length; ++i)
+	{
+		var node = nodes[i];
+		if(node.postRender)
+			node.postRender(this,camera);
+	}
 	
 	scene.frame++;
 	this.frame++;
@@ -2447,6 +2919,20 @@ Renderer.prototype.renderNode = function(node, camera)
 				this.loadTexture( texture_name, this.default_texture_settings );
 			texture = gl.textures[ "white" ];
 		}
+
+		if( node.flags.pixelated )
+		{
+			texture.bind(0);
+			gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST );
+			gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST );
+		}
+		else if ( node.flags.pixelated === false )
+		{
+			texture.bind(0);
+			gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR );
+			gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR );
+		}
+
 		node._uniforms[texture_uniform_name] = texture.bind( slot++ );
 	}
 
@@ -2458,25 +2944,33 @@ Renderer.prototype.renderNode = function(node, camera)
 		node.onRender(this, camera, shader);
 	
 	shader.uniforms( this._uniforms ); //globals
-	shader.uniforms( node._uniforms ); //node specifics
-
+	if(!this.skip_node_uniforms)
+		shader.uniforms( node._uniforms ); //node specifics
 	if(node.onShaderUniforms) //in case the node wants to add extra shader uniforms that need to be computed at render time
 		node.onShaderUniforms(this, shader);
 
 	if(this.onNodeShaderUniforms) //in case the node wants to add extra shader uniforms that need to be computed at render time
 		this.onNodeShaderUniforms(this, shader, node );
 
+	var group = null;
+	if( node.submesh != null && mesh.info && mesh.info.groups && mesh.info.groups[ node.submesh ] )
+		group = mesh.info.groups[ node.submesh ];
+
 	if(instancing)
 	{
 		instancing_uniforms.u_model = node._instances;
-		if(node.draw_range)
+		if(group)
+			shader.drawInstanced( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.indices, instancing_uniforms, group.start, group.length );
+		else if(node.draw_range)
 			shader.drawInstanced( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.indices, instancing_uniforms, node.draw_range[0], node.draw_range[1] );
 		else
 			shader.drawInstanced( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.indices, instancing_uniforms );
 	}
 	else
 	{
-		if(node.draw_range)
+		if(group)
+			shader.drawRange( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, group.start, group.length, node.indices );
+		else if(node.draw_range)
 			shader.drawRange( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.draw_range[0], node.draw_range[1] , node.indices );
 		else
 			shader.draw( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.indices );
@@ -3209,753 +3703,6 @@ Ray.prototype.closestPointOnRay = function( origin, direction, closest )
 	return closest;
 }
 
-/**
-* Camera wraps all the info about the camera (properties and view and projection matrices)
-* @class Camera
-* @constructor
-*/
-function Camera( options )
-{
-	/**
-	* the camera type, RD.Camera.PERSPECTIVE || RD.Camera.ORTHOGRAPHIC
-	* @property type {number} 
-	* @default RD.Camera.PERSPECTIVE
-	*/
-	this.type = RD.Camera.PERSPECTIVE;
-
-	this._position = vec3.fromValues(0,100, 100);
-	this._target = vec3.fromValues(0,0,0);
-	this._up = vec3.fromValues(0,1,0);
-	
-	/**
-	* near distance 
-	* @property near {number} 
-	* @default 0.1
-	*/
-	this._near = 0.1;
-	/**
-	* far distance 
-	* @property far {number} 
-	* @default 10000
-	*/
-	this._far = 10000;
-	/**
-	* aspect (width / height)
-	* @property aspect {number} 
-	* @default 1
-	*/
-	this._aspect = 1.0;
-	/**
-	* fov angle in degrees
-	* @property fov {number}
-	* @default 45
-	*/
-	this._fov = 45; //persp
-	/**
-	* size of frustrum when working in orthographic (could be also an array with [left,right,top,bottom]
-	* @property frustum_size {number} 
-	* @default 50
-	*/
-	this._frustum_size = 50; //ortho (could be also an array with [left,right,top,bottom]
-	this.flip_y = false;
-
-	this._view_matrix = mat4.create();
-	this._projection_matrix = mat4.create();
-	this._viewprojection_matrix = mat4.create();
-	this._model_matrix = mat4.create(); //inverse of view
-	
-	this._autoupdate_matrices = true;
-	this._must_update_matrix = false;
-
-	this._top = vec3.create();
-	this._right = vec3.create();
-	this._front = vec3.create();
-
-	this.uniforms = {
-		u_view_matrix: this._view_matrix,
-		u_projection_matrix: this._projection_matrix,
-		u_viewprojection_matrix: this._viewprojection_matrix,
-		u_camera_front: this._front,
-		u_camera_position: this._position
-	};
-
-	if(options)
-	{
-		if(options.type != null) this.type = options.type;
-		if(options.position) this._position.set(options.position);
-		if(options.target) this._target.set(options.target);
-		if(options.up) this._up.set(options.up);
-		if(options.near) this.near = options.near;
-		if(options.far) this.far = options.far;
-		if(options.fov) this.fov = options.fov;
-		if(options.aspect) this.aspect = options.aspect;
-	}
-	
-
-	this.updateMatrices();
-}
-
-RD.Camera = Camera;
-
-Camera.PERSPECTIVE = 1;
-Camera.ORTHOGRAPHIC = 2;
-
-/**
-* Position where the camera eye is located
-* @property position {vec3}
-*/
-Object.defineProperty(Camera.prototype, 'position', {
-	get: function() { return this._position; },
-	set: function(v) { this._position.set(v); this._must_update_matrix = true; },
-	enumerable: false //avoid problems
-});
-
-/**
-* Where the camera is looking at, the center of where is looking
-* @property target {vec3}
-*/
-Object.defineProperty(Camera.prototype, 'target', {
-	get: function() { return this._target; },
-	set: function(v) { this._target.set(v); this._must_update_matrix = true; },
-	enumerable: false //avoid problems
-});
-
-/**
-* Up vector
-* @property up {vec3}
-* @default [0,1,0]
-*/
-Object.defineProperty(Camera.prototype, 'up', {
-	get: function() { return this._up; },
-	set: function(v) { this._up.set(v); this._must_update_matrix = true; },
-	enumerable: false //avoid problems
-});
-
-Object.defineProperty(Camera.prototype, 'fov', {
-	get: function() { return this._fov; },
-	set: function(v) { this._fov = v; this._must_update_matrix = true; },
-	enumerable: false //avoid problems
-});
-
-Object.defineProperty(Camera.prototype, 'aspect', {
-	get: function() { return this._aspect; },
-	set: function(v) { this._aspect = v; this._must_update_matrix = true; },
-	enumerable: false //avoid problems
-});
-
-//(could be also an array with [left,right,top,bottom]
-Object.defineProperty(Camera.prototype, 'frustum_size', {
-	get: function() { return this._frustum_size; },
-	set: function(v) { this._frustum_size = v; this._must_update_matrix = true; },
-	enumerable: false //avoid problems
-});
-
-Object.defineProperty(Camera.prototype, 'near', {
-	get: function() { return this._near; },
-	set: function(v) { this._near = v; this._must_update_matrix = true; },
-	enumerable: false //avoid problems
-});
-
-Object.defineProperty(Camera.prototype, 'far', {
-	get: function() { return this._far; },
-	set: function(v) { this._far = v; this._must_update_matrix = true; },
-	enumerable: false //avoid problems
-});
-
-Object.defineProperty(Camera.prototype, 'view_matrix', {
-	get: function() { return this._view_matrix; },
-	set: function(v) { this._view_matrix.set(v); mat4.multiply(this._viewprojection_matrix, this._projection_matrix, this._view_matrix ); },
-	enumerable: false 
-});
-
-Object.defineProperty(Camera.prototype, 'projection_matrix', {
-	get: function() { return this._projection_matrix; },
-	set: function(v) { this._projection_matrix.set(v); mat4.multiply(this._viewprojection_matrix, this._projection_matrix, this._view_matrix ); },
-	enumerable: false 
-});
-
-Object.defineProperty(Camera.prototype, 'viewprojection_matrix', {
-	get: function() { return this._viewprojection_matrix; },
-	set: function(v) { this._viewprojection_matrix.set(v); },
-	enumerable: false 
-});
-
-/**
-* changes the camera to perspective mode
-* @method perspective
-* @param {number} fov
-* @param {number} aspect
-* @param {number} near
-* @param {number} far
-*/
-Camera.prototype.perspective = function(fov, aspect, near, far)
-{
-	this.type = Camera.PERSPECTIVE;
-	this._fov = fov;
-	this._aspect = aspect;
-	this._near = near;
-	this._far = far;
-	
-	this._must_update_matrix = true;
-}
-
-/**
-* changes the camera to orthographic mode (frustumsize is top-down)
-* @method orthographic
-* @param {number} frustum_size
-* @param {number} near
-* @param {number} far
-* @param {number} aspect
-*/
-Camera.prototype.orthographic = function(frustum_size, near, far, aspect)
-{
-	this.type = Camera.ORTHOGRAPHIC;
-	this._frustum_size = frustum_size;
-	if(arguments.lenth > 1)
-	{
-		this._near = near;
-		this._far = far;
-		this._aspect = aspect || 1;
-	}
-
-	this._must_update_matrix = true;
-}
-
-/**
-* configure view of the camera
-* @method lookAt
-* @param {vec3} position
-* @param {vec3} target
-* @param {vec3} up
-*/
-Camera.prototype.lookAt = function(position,target,up)
-{
-	vec3.copy(this._position, position);
-	vec3.copy(this._target, target);
-	vec3.copy(this._up, up);
-	
-	this._must_update_matrix = true;
-}
-
-/**
-* update view projection matrices
-* @method updateMatrices
-*/
-Camera.prototype.updateMatrices = function( force )
-{
-	if(this._autoupdate_matrices || force)
-	{
-		//proj
-		if(this.type == Camera.ORTHOGRAPHIC)
-		{
-			if( this.frustum_size.constructor === Number )
-				mat4.ortho(this._projection_matrix, -this.frustum_size*this._aspect, this.frustum_size*this._aspect, -this._frustum_size, this._frustum_size, this._near, this._far);
-			else if( this.frustum_size.length )
-				mat4.ortho(this._projection_matrix, this.frustum_size[0], this.frustum_size[1], this.frustum_size[2], this.frustum_size[3], this.frustum_size.length > 3 ? this.frustum_size[4] : this._near, this.frustum_size.length > 4 ? this.frustum_size[5] : this._far);
-		}
-		else
-			mat4.perspective(this._projection_matrix, this._fov * DEG2RAD, this._aspect, this._near, this._far);
-
-		if(this.flip_y)
-			mat4.scale( this._projection_matrix, this._projection_matrix, [1,-1,1] );
-
-		//view
-		mat4.lookAt(this._view_matrix, this._position, this._target, this._up);
-	}
-
-	if( this.is_reflection )
-		mat4.scale( this._view_matrix, this._view_matrix, [1,-1,1] );
-
-	mat4.multiply(this._viewprojection_matrix, this._projection_matrix, this._view_matrix );
-	mat4.invert(this._model_matrix, this._view_matrix );
-	
-	this._must_update_matrix = false;
-
-	mat4.rotateVec3( this._right, this._model_matrix, RD.RIGHT );
-	mat4.rotateVec3( this._top,   this._model_matrix, RD.UP );
-	mat4.rotateVec3( this._front, this._model_matrix, RD.FRONT );
-
-	this.distance = vec3.distance(this._position, this._target);
-}
-
-Camera.prototype.getModel = function(m)
-{
-	m = m || mat4.create();
-	mat4.invert(this._model_matrix, this._view_matrix );
-	mat4.copy(m, this._model_matrix);
-	return m;
-}
-
-/**
-* update camera using a model_matrix as reference
-* @method updateVectors
-* @param {mat4} model_matrix
-*/
-Camera.prototype.updateVectors = function( model_matrix )
-{
-	var front = vec3.subtract( temp_vec3, this._target, this._position);
-	var dist = vec3.length(front);
-	mat4.multiplyVec3(this._position, model_matrix, RD.ZERO);
-	mat4.multiplyVec3(this._target, model_matrix, [0,0,-dist]);
-	mat4.rotateVec3(this._up, model_matrix, RD.UP);
-}
-
-/**
-* transform vector (only rotates) from local to global
-* @method getLocalVector
-* @param {vec3} v
-* @param {vec3} result [Optional]
-* @return {vec3} local point transformed
-*/
-Camera.prototype.getLocalVector = function(v, result)
-{
-	if(this._must_update_matrix)
-		this.updateMatrices();
-		
-	return mat4.rotateVec3( result || vec3.create(), this._model_matrix, v );
-}
-
-/**
-* transform point from local to global
-* @method getLocalVector
-* @param {vec3} v
-* @param {vec3} result [Optional]
-* @return {vec3} local point transformed
-*/
-Camera.prototype.getLocalPoint = function(v, result)
-{
-	if(this._must_update_matrix)
-		this.updateMatrices();
-	
-	return vec3.transformMat4( result || vec3.create(), v, this._model_matrix );
-}
-
-/**
-* gets the front vector normalized 
-* @method getFront
-* @param {vec3} dest [Optional]
-* @return {vec3} front vector
-*/
-Camera.prototype.getFront = function(dest)
-{
-	dest = dest || vec3.create();
-	vec3.subtract(dest, this._target, this._position);
-	vec3.normalize(dest, dest);
-	return dest;
-}
-
-/**
-* move the position and the target that amount
-* @method move
-* @param {vec3} v
-* @param {Number} scalar [optional] it will be multiplied by the vector
-*/
-Camera.prototype.move = function(v, scalar)
-{
-	if(scalar !== undefined)
-	{
-		vec3.scale( temp_vec3, v, scalar );
-		v = temp_vec3;
-	}
-
-	vec3.add(this._target, this._target, v);
-	vec3.add(this._position, this._position, v);
-	this._must_update_matrix = true;
-}
-
-/**
-* move the position and the target using the local coordinates system of the camera
-* @method moveLocal
-* @param {vec3} v
-* @param {Number} scalar [optional] it will be multiplied by the vector
-*/
-Camera.prototype.moveLocal = function(v, scalar)
-{
-	var delta = mat4.rotateVec3(temp_vec3, this._model_matrix, v);
-	if(scalar !== undefined)
-		vec3.scale( delta, delta, scalar );
-	vec3.add(this._target, this._target, delta);
-	vec3.add(this._position, this._position, delta);
-	this._must_update_matrix = true;
-}
-
-/**
-* rotate over its position
-* @method rotate
-* @param {number} angle in radians
-* @param {vec3} axis
-*/
-Camera.prototype.rotate = function(angle, axis)
-{
-	var R = quat.setAxisAngle( temp_quat, axis, angle );
-	var front = vec3.subtract( temp_vec3, this._target, this._position );
-	vec3.transformQuat(front, front, R );
-	vec3.add(this._target, this._position, front);
-	this._must_update_matrix = true;
-}
-
-/**
-* rotate over its position
-* @method rotateLocal
-* @param {number} angle in radians
-* @param {vec3} axis in local coordinates
-*/
-Camera.prototype.rotateLocal = function(angle, axis)
-{
-	var local_axis = mat4.rotateVec3(temp_vec3b, this._model_matrix, axis);
-	var R = quat.setAxisAngle( temp_quat, local_axis, angle );
-	var front = vec3.subtract( temp_vec3, this._target, this._position );
-	vec3.transformQuat(front, front, R );
-	vec3.add(this._target, this._position, front);
-	this._must_update_matrix = true;
-}
-
-/**
-* rotate around its target position
-* @method rotate
-* @param {number} angle in radians
-* @param {vec3} axis
-* @param {vec3} [center=null] if another center is provided it rotates around it
-*/
-Camera.prototype.orbit = function(angle, axis, center, axis_in_local)
-{
-	if(!axis)
-		throw("RD: orbit axis missing");
-
-	center = center || this._target;
-	if(axis_in_local)
-		axis = mat4.rotateVec3(temp_vec3b, this._model_matrix, axis);
-	var R = quat.setAxisAngle( temp_quat, axis, angle );
-	var front = vec3.subtract( temp_vec3, this._position, this._target );
-	vec3.transformQuat(front, front, R );
-	vec3.add(this._position, center, front);
-	this._must_update_matrix = true;
-}
-
-//multiplies front by f and updates position
-Camera.prototype.orbitDistanceFactor = function(f, center)
-{
-	center = center || this._target;
-	var front = vec3.subtract( temp_vec3, this._position, center);
-	vec3.scale(front, front,f);
-	vec3.add(this._position, center, front);
-	this._must_update_matrix = true;
-}
-
-/**
-* projects a point from 3D to 2D
-* @method project
-* @param {vec3} vec coordinate to project
-* @param {Array} [viewport=gl.viewport]
-* @param {vec3} [result=vec3]
-* @return {vec3} the projected point
-*/
-Camera.prototype.project = function( vec, viewport, result )
-{
-	result = result || vec3.create();
-	viewport = viewport || gl.viewport_data;
-	if(this._must_update_matrix)
-		this.updateMatrices();
-	mat4.projectVec3(result, this._viewprojection_matrix, vec );
-
-	//adjust to viewport
-	result[0] = result[0] * viewport[2] + viewport[0];
-	result[1] = result[1] * viewport[3] + viewport[1];
-
-	return result;
-}
-
-/**
-* projects a point from 2D to 3D
-* @method unproject
-* @param {vec3} vec coordinate to unproject
-* @param {Array} [viewport=gl.viewport]
-* @param {vec3} [result=vec3]
-* @return {vec3} the projected point
-*/
-Camera.prototype.unproject = function( vec, viewport, result )
-{
-	viewport = viewport || gl.viewport_data;
-	if(this._must_update_matrix)
-		this.updateMatrices();
-	return vec3.unproject( result || vec3.create(), vec, this._viewprojection_matrix, viewport );
-}
-
-/**
-* gets the ray passing through one pixel
-* @method getRay
-* @param {number} x
-* @param {number} y
-* @param {Array} [viewport=gl.viewport]
-* @param {RD.Ray} [out] { origin: vec3, direction: vec3 }
-* @return {RD.Ray} ray object { origin: vec3, direction:vec3 }
-*/
-Camera.prototype.getRay = function( x, y, viewport, out )
-{
-	if(x === undefined || y === undefined )
-		throw("RD.Camera.getRay requires x and y parameters");
-
-	viewport = viewport || gl.viewport_data;
-
-	if(!out)
-		out = new RD.Ray();
-
-	if(this._must_update_matrix)
-		this.updateMatrices();
-	
-	var origin = out.origin;
-	vec3.set( origin, x,y,0 );
-	if(this.type == RD.Camera.ORTHOGRAPHIC)
-		vec3.unproject( origin, origin, this._viewprojection_matrix, viewport );
-	else
-		vec3.copy( origin, this.position );
-
-	var direction = out.direction;
-	vec3.set( direction, x,y,1 );
-	vec3.unproject( direction, direction, this._viewprojection_matrix, viewport );
-	vec3.sub( direction, direction, origin );
-	vec3.normalize( direction, direction );
-	return out;
-}
-
-/**
-* given a screen coordinate it cast a ray and returns the collision point with a given plane
-* @method getRayPlaneCollision
-* @param {number} x
-* @param {number} y
-* @param {vec3} position Plane point
-* @param {vec3} normal Plane normal
-* @param {vec3} [result=vec3]
-* @param {vec4} [viewport=vec4]
-* @return {vec3} the collision point, or null
-*/
-Camera.prototype.getRayPlaneCollision = function(x,y, position, normal, result, viewport )
-{
-	result = result || vec3.create();
-	//*
-	var ray = this.getRay( x, y, viewport );
-	if( geo.testRayPlane( ray.origin, ray.direction, position, normal, result ) )
-		return result;
-	return null;
-	/*/
-	if(this._must_update_matrix)
-		this.updateMatrices();
-	var RT = new GL.Raytracer( this._viewprojection_matrix, viewport );
-	var start = this._position;
-	var dir = RT.getRayForPixel( x,y );
-	if( geo.testRayPlane( start, dir, position, normal, result ) )
-		return result;
-	return null;
-	//*/
-}
-
-Camera.controller_keys = { forward: "UP", back: "DOWN", left:"LEFT", right:"RIGHT" };
-
-/**
-* Used to move the camera (helps during debug)
-* @method applyController
-* @param {number} dt delta time from update
-* @param {Event} e mouse event or keyboard event
-*/
-Camera.prototype.applyController = function(dt, event, speed)
-{
-	speed  = speed || 10;
-	if(dt)
-	{
-		if(gl.keys[ Camera.controller_keys.forward ])
-			this.moveLocal( vec3.scale(temp_vec3,RD.FRONT,dt * speed) );
-		else if(gl.keys[ Camera.controller_keys.back ])
-			this.moveLocal( vec3.scale(temp_vec3,RD.BACK,dt * speed) );
-		if(gl.keys[ Camera.controller_keys.left ])
-			this.moveLocal( vec3.scale(temp_vec3,RD.LEFT,dt * speed) );
-		else if(gl.keys[ Camera.controller_keys.right ])
-			this.moveLocal( vec3.scale(temp_vec3,RD.RIGHT,dt * speed) );
-	}
-
-	if(event)
-	{
-		if(event.deltax)
-			this.rotate( event.deltax * -0.005, RD.UP );
-		if(event.deltay)
-			this.rotateLocal( event.deltay * -0.005, RD.RIGHT );
-	}
-}
-
-Camera.prototype.lerp = function(camera, f)
-{
-	vec3.lerp( this._position, this._position, camera._position, f );
-	vec3.lerp( this._target, this._target, camera._target, f );
-	vec3.lerp( this._up, this._up, camera._up, f );
-	this._fov = this._fov * (1.0 - f) + camera._fov * f;
-	this._near = this._near * (1.0 - f) + camera._near * f;
-	this._far = this._far * (1.0 - f) + camera._far * f;
-
-	if( this._frustum_size.constructor === Number )
-		this._frustum_size = this._frustum_size * (1.0 - f) + camera._frustum_sizer * f;
-	this._must_update_matrix = true;
-}
-
-//it rotates the matrix so it faces the camera
-Camera.prototype.orientMatrixToCamera = function( matrix )
-{
-	matrix.set( this._right, 0 );
-	matrix.set( this._top, 4 );
-	matrix.set( this._front, 8 );
-}
-
-Camera.prototype.extractPlanes = function()
-{
-	var vp = this._viewprojection_matrix;
-	var planes = this._planes_data || new Float32Array(4*6);
-
-	//right
-	planes.set( [vp[3] - vp[0], vp[7] - vp[4], vp[11] - vp[8], vp[15] - vp[12] ], 0); 
-	normalize(0);
-
-	//left
-	planes.set( [vp[3] + vp[0], vp[ 7] + vp[ 4], vp[11] + vp[ 8], vp[15] + vp[12] ], 4);
-	normalize(4);
-
-	//bottom
-	planes.set( [ vp[ 3] + vp[ 1], vp[ 7] + vp[ 5], vp[11] + vp[ 9], vp[15] + vp[13] ], 8);
-	normalize(8);
-
-	//top
-	planes.set( [ vp[ 3] - vp[ 1], vp[ 7] - vp[ 5], vp[11] - vp[ 9], vp[15] - vp[13] ],12);
-	normalize(12);
-
-	//back
-	planes.set( [ vp[ 3] - vp[ 2], vp[ 7] - vp[ 6], vp[11] - vp[10], vp[15] - vp[14] ],16);
-	normalize(16);
-
-	//front
-	planes.set( [ vp[ 3] + vp[ 2], vp[ 7] + vp[ 6], vp[11] + vp[10], vp[15] + vp[14] ],20);
-	normalize(20);
-
-	this._planes_data = planes;
-	if(!this._frustrum_planes)
-		this._frustrum_planes = [ planes.subarray(0,4),planes.subarray(4,8),planes.subarray(8,12),planes.subarray(12,16),planes.subarray(16,20),planes.subarray(20,24) ];
-
-	function normalize(pos)
-	{
-		var N = planes.subarray(pos,pos+3);
-		var l = vec3.length(N);
-		if(!l === 0.0)
-			return;
-		l = 1.0 / l;
-		planes[pos] *= l;
-		planes[pos+1] *= l;
-		planes[pos+2] *= l;
-		planes[pos+3] *= l;
-	}
-}
-
-var CLIP_INSIDE = RD.CLIP_INSIDE = 0;
-var CLIP_OUTSIDE = RD.CLIP_OUTSIDE = 1;
-var CLIP_OVERLAP = RD.CLIP_OVERLAP = 2;
-
-
-Camera.prototype.testMesh = (function(){ 
-	if(!global.BBox) //no litegl installed
-		return;
-
-	var aabb = BBox.create();
-	var center = aabb.subarray(0,3);
-	var halfsize = aabb.subarray(3,6);
-
-	return function( mesh, matrix )
-	{
-		//convert oobb to aabb
-		var bounding = mesh.bounding;
-		if(!bounding)
-			return CLIP_INSIDE;
-		BBox.transformMat4(aabb, bounding, matrix);
-		return this.testBox(center,halfsize);
-	}
-})();
-/**
-* test if box is inside frustrum (you must call camera.extractPlanes() previously to update frustrum planes)
-* @method testBox
-* @param {vec3} center center of the box
-* @param {vec3} halfsize halfsize of the box (vector from center to corner)
-* @return {number} CLIP_OUTSIDE or CLIP_INSIDE or CLIP_OVERLAP
-*/
-Camera.prototype.testBox = function(center, halfsize)
-{
-	if(!this._frustrum_planes)
-		this.extractPlanes();
-	var planes = this._frustrum_planes;
-	var flag = 0, o = 0;
-
-	flag = planeOverlap( planes[0],center, halfsize);
-	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
-	flag =  planeOverlap( planes[1],center, halfsize);
-	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
-	flag =  planeOverlap( planes[2],center, halfsize);
-	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
-	flag =  planeOverlap( planes[3],center, halfsize);
-	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
-	flag =  planeOverlap( planes[4],center, halfsize);
-	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
-	flag =  planeOverlap( planes[5],center, halfsize);
-	if (flag == CLIP_OUTSIDE) return CLIP_OUTSIDE; o+= flag;
-
-	if (o==0) return CLIP_INSIDE;
-	else return CLIP_OVERLAP;
-}
-
-/**
-* test if sphere is inside frustrum (you must call camera.extractPlanes() previously to update frustrum planes)
-* @method testSphere
-* @param {vec3} center 
-* @param {number} radius
-* @return {number} CLIP_OUTSIDE or CLIP_INSIDE or CLIP_OVERLAP
-*/
-Camera.prototype.testSphere = function(center, radius)
-{
-	if(!this._frustrum_planes)
-		this.extractPlanes();
-	var planes = this._frustrum_planes;
-
-	var dist;
-	var overlap = false;
-
-	dist = distanceToPlane( planes[0], center );
-	if( dist < -radius )
-		return CLIP_OUTSIDE;
-	else if(dist >= -radius && dist <= radius)
-		overlap = true;
-	dist = distanceToPlane( planes[1], center );
-	if( dist < -radius )
-		return CLIP_OUTSIDE;
-	else if(dist >= -radius && dist <= radius)
-		overlap = true;
-	dist = distanceToPlane( planes[2], center );
-	if( dist < -radius )
-		return CLIP_OUTSIDE;
-	else if(dist >= -radius && dist <= radius)
-		overlap = true;
-	dist = distanceToPlane( planes[3], center );
-	if( dist < -radius )
-		return CLIP_OUTSIDE;
-	else if(dist >= -radius && dist <= radius)
-		overlap = true;
-	dist = distanceToPlane( planes[4], center );
-	if( dist < -radius )
-		return CLIP_OUTSIDE;
-	else if(dist >= -radius && dist <= radius)
-		overlap = true;
-	dist = distanceToPlane( planes[5], center );
-	if( dist < -radius )
-		return CLIP_OUTSIDE;
-	else if(dist >= -radius && dist <= radius)
-		overlap = true;
-	
-	if(overlap)
-		return CLIP_OVERLAP;
-	return CLIP_INSIDE;
-}
-
 RD.Factory = function Factory( name, parent, extra_options )
 {
 	var tpl = RD.Factory.templates[name];
@@ -3976,7 +3723,408 @@ RD.Factory.templates = {
 	floor: { mesh:"planeXZ", scaling: 10, shader: "phong" }
 };
 
+//**other useful classes
 
+//This node allows to render a mesh where vertices are changing constantly
+function DynamicMeshNode(o)
+{
+	this._ctor();
+	if(o)
+		this.configure(o);
+}
+
+DynamicMeshNode.prototype._ctor = function()
+{
+	SceneNode.prototype._ctor.call(this);
+
+	this.vertices = [];
+	this.normals = [];
+	this.coords = [];
+	this.indices = [];
+
+	var size = 1024;
+	this._vertices_data = new Float32Array( size * 3 );
+	this._normals_data = null;
+	this._coords_data = null;
+	this._indices_data = null;
+	this._total = 0;
+	this._total_indices = 0;
+	this._mesh = GL.Mesh.load({ vertices: this._vertices_data });
+}
+
+DynamicMeshNode.prototype.updateVertices = function( vertices )
+{
+	if(vertices)
+		this.vertices = vertices;
+	this._total = this.vertices.length;
+	if( this._vertices_data.length < this.vertices.length )
+	{
+		this._vertices_data = new Float32Array( this.vertices.length * 2 );
+		this._mesh.getBuffer("vertices").data = this._vertices_data;
+	}
+	this._vertices_data.set( this.vertices );
+	this._mesh.getBuffer("vertices").upload( GL.STREAM_DRAW );
+}
+
+DynamicMeshNode.prototype.updateNormals = function( normals )
+{
+	if(normals)
+		this.normals = normals;
+	if( !this._normals_data || this._normals_data.length < this.normals.length )
+	{
+		this._normals_data = new Float32Array( this.normals.length * 2 );
+		var buffer = this._mesh.getBuffer("normals");
+		if(!buffer)
+			this._mesh.createVertexBuffer("normals",null,3,this._normals_data, GL.STREAM_DRAW);
+	}
+	this._normals_data.set( this.normals );
+	this._mesh.getBuffer("normals").upload( GL.STREAM_DRAW );
+}
+
+DynamicMeshNode.prototype.updateCoords = function( coords )
+{
+	if(coords)
+		this.coords = coords;
+	if( !this._coords_data || this._coords_data.length < this.normals.length )
+	{
+		this._coords_data = new Float32Array( this.coords.length * 2 );
+		var buffer = this._mesh.getBuffer("coords");
+		if(!buffer)
+			this._mesh.createVertexBuffer("coords",null,2,this._coords_data, GL.STREAM_DRAW);
+	}
+	this._coords_data.set( this.coords );
+	this._mesh.getBuffer("coords").upload( GL.STREAM_DRAW );
+}
+
+DynamicMeshNode.prototype.updateIndices = function( indices )
+{
+	if(indices)
+		this.indices = indices;
+	if( !this._indices_data || this._indices_data.length < this.indices.length )
+	{
+		this._indices_data = new Float32Array( this.indices.length * 2 );
+		var buffer = this._mesh.getIndexBuffer("triangles");
+		if(!buffer)
+			this._mesh.createIndicesBuffer( "triangles",this._indices_data, GL.STREAM_DRAW );
+	}
+	this._indices_data.set( this.indices );
+	this._mesh.getIndexBuffer("triangles").upload( GL.STREAM_DRAW );
+	this._total_indices = indices.length;
+}
+
+DynamicMeshNode.prototype.render = function( renderer, camera )
+{
+	if(!this._total)
+		return;
+	var shader = renderer.shaders[ this.shader || "flat" ];
+	if(!shader)
+		return;
+	renderer.setModelMatrix( this._global_matrix );
+	var mesh = this._mesh;
+	var range = this._total_indices ? this._total_indices : this._total / 3;
+	renderer.enableNodeFlags( this );
+	shader.uniforms( renderer._uniforms ).uniforms( this._uniforms ).drawRange( mesh, this.primitive === undefined ? GL.TRIANGLES : this.primitive, 0, range, this._total_indices ? "triangles" : null );
+	renderer.disableNodeFlags( this );
+}
+
+extendClass( DynamicMeshNode, SceneNode );
+RD.DynamicMeshNode = DynamicMeshNode;
+
+
+/**
+* Sprite class , inherits from SceneNode but helps to render 2D planes (in 3D Space)
+* @class Sprite
+* @constructor
+*/
+function Sprite(o)
+{
+	this._ctor();
+	if(o)
+		this.configure(o);
+}
+
+Sprite.prototype._ctor = function()
+{
+	SceneNode.prototype._ctor.call(this);
+
+	this.mesh = "plane";
+	this.size = vec2.fromValues(0,0);
+	this.sprite_pivot = RD.TOP_LEFT;
+	this.blend_mode = RD.BLEND_ALPHA;
+	this.flags.two_sided = true;
+	this.flags.flipX = false;
+	this.flags.flipY = false;
+	this.flags.pixelated = false;
+	//this.flags.depth_test = false;
+	this.shader = "texture_transform";
+	this._angle = 0;
+
+	this.frame = null;
+	this.frames = {};
+	this.texture_matrix = mat3.create();
+	
+	this._uniforms["u_texture_matrix"] = this.texture_matrix;
+}
+
+Object.defineProperty(Sprite.prototype, 'angle', {
+	get: function() { return this._angle; },
+	set: function(v) { this._angle = v; quat.setAxisAngle( this._rotation, RD.FRONT, this._angle * DEG2RAD ); this._must_update_matrix = true; },
+	enumerable: true //avoid problems
+});
+
+Sprite.prototype.setSize = function(w,h)
+{
+	this.size[0] = w;
+	this.size[1] = h;
+}
+
+//static version
+//num is the number of elements per row and column, if array then [columns,rows]
+Sprite.createFrames = function( num, names, frames )
+{
+	frames = frames || {};
+	var num_rows;
+	var num_colums;
+	if(num.constructor != Number)
+	{
+		num_columns = num[0];
+		num_rows = num[1];
+	}
+	else
+		num_rows = num_columns = num;
+
+	var x = 0;
+	var y = 0;
+	var offsetx = 1/num_columns;
+	var offsety = 1/num_rows;
+	var total = num_columns * num_rows;
+
+	if(!names)
+	{
+		names = [];
+		for(var i = 0; i < total; ++i)
+			names.push( String(i) );
+	}
+
+	for( var i = 0; i < names.length; ++i )
+	{
+		frames[ names[i] ] = { pos:[x,y], size:[offsetx,offsety], normalized: true };
+		x += offsetx;
+		if(x >= 1)
+		{
+			x = 0;
+			y += offsety;
+		}
+		if(y >= 1)
+			return frames;
+	}
+	return frames;
+}
+
+Sprite.prototype.createFrames = function(num, names)
+{
+	Sprite.createFrames(num, names, this.frames );
+}
+
+Sprite.prototype.addFrame = function(name, x,y, w,h, normalized )
+{
+	this.frames[ name ] = { pos: vec2.fromValues(x,y), size: vec2.fromValues(w,h), normalized: !!normalized };
+}
+
+Sprite.prototype.updateTextureMatrix = function( renderer )
+{
+	mat3.identity( this.texture_matrix );
+	//no texture
+	if(!this.texture)
+		return false;
+	
+	var texture = renderer.textures[ this.texture ];
+	if(!texture && renderer.autoload_assets) 
+	{
+		var that = this;
+		if(this.texture.indexOf(".") != -1)
+			renderer.loadTexture( this.texture, renderer.default_texture_settings, function(tex){
+				if(tex && that.size[0] == 0 && that.size[0] == 0 )
+					that.setSize( tex.width, tex.height );	
+			});
+		texture = gl.textures[ "white" ];
+	}
+	if(!texture) //texture not found
+		return false;
+		
+	//adapt texture matrix
+	var matrix = this.texture_matrix;
+		
+	var frame = this.current_frame = this.frames[ this.frame ];
+	
+	//frame not found
+	if(this.frame !== null && !frame)
+		return false;
+	
+	if(!frame)
+	{
+		if(this.flags.flipX)
+		{
+			temp_vec2[0] = this.flags.flipX ? 1 : 0; 
+			temp_vec2[1] = 0;
+			mat3.translate( matrix, matrix, temp_vec2 );
+			temp_vec2[0] = (this.flags.flipX ? -1 : 1); 
+			temp_vec2[1] = 1;
+			mat3.scale( matrix, matrix, temp_vec2 );
+		}
+		return true;
+	}
+	
+	if(frame.normalized)
+	{
+		temp_vec2[0] = this.flags.flipX ? frame.pos[0] + frame.size[0] : frame.pos[0]; 
+		temp_vec2[1] = 1 - frame.pos[1] - frame.size[1];
+		mat3.translate( matrix, matrix, temp_vec2 );
+		temp_vec2[0] = frame.size[0] * (this.flags.flipX ? -1 : 1); 
+		temp_vec2[1] = frame.size[1];
+		mat3.scale( matrix, matrix, temp_vec2 );
+	}
+	else
+	{
+		var tw = texture.width;
+		var th = texture.height;
+		temp_vec2[0] = (this.flags.flipX ? frame.pos[0] + frame.size[0] : frame.pos[0]) / tw; 
+		temp_vec2[1] = (th - frame.pos[1] - frame.size[1]) / th;
+		mat3.translate( matrix, matrix, temp_vec2 );
+		temp_vec2[0] = (frame.size[0] * (this.flags.flipX ? -1 : 1)) / texture.width; 
+		temp_vec2[1] = frame.size[1] / texture.height;
+		mat3.scale( matrix, matrix, temp_vec2 );
+	}
+	
+	return true;
+}
+
+Sprite.prototype.render = function(renderer, camera)
+{
+	if(!this.texture)
+		return;	
+
+	//this autoloads
+	if(!this.updateTextureMatrix(renderer)) //texture or frame not found
+		return;
+
+	var tex = renderer.textures[ this.texture ];
+	if(!tex)
+		return;
+	
+	if( this.flags.pixelated )
+	{
+		tex.bind(0);
+		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, this.flags.pixelated ? gl.NEAREST : gl.LINEAR );
+		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, this.flags.pixelated ? gl.NEAREST_MIPMAP_NEAREST : gl.LINEAR_MIPMAP_LINEAR );
+	}
+
+	if(this.billboard_mode)
+		RD.orientNodeToCamera( this.billboard_mode, this, camera, renderer );
+	if(this.size[0] == 0 && tex.ready !== false)
+		this.size[0] = tex.width;
+	if(this.size[1] == 0 && tex.ready !== false)
+		this.size[1] = tex.height;
+	var size = this.size;
+	var offsetx = 0;
+	var offsety = 0;
+	temp_mat4.set( this._global_matrix );
+
+	var normalized_size = false;
+	if(this.current_frame && this.current_frame.size)
+	{
+		size = this.current_frame.size;
+		normalized_size = this.current_frame.normalized;
+	}
+
+	if (this.sprite_pivot)
+	{
+		switch( this.sprite_pivot )
+		{
+			//case RD.CENTER: break;
+			case RD.TOP_LEFT: offsetx = 0.5; offsety = -0.5; break;
+			case RD.TOP_CENTER: offsety = -0.5; break;
+			case RD.TOP_RIGHT: offsetx = -0.5; break;
+			case RD.BOTTOM_LEFT: offsetx = 0.5; offsety = 0.5; break;
+			case RD.BOTTOM_CENTER: offsety = 0.5; break;
+			case RD.BOTTOM_RIGHT: offsetx = -0.5; offsety = 0.5; break;
+		}
+		mat4.translate( temp_mat4, temp_mat4, [offsetx * size[0], offsety * size[1], 0 ] );
+	}
+	mat4.scale( temp_mat4, temp_mat4, [size[0] * (normalized_size ? this.size[0] : 1), size[1] * (normalized_size ? this.size[1] : 1), 1 ] );
+	renderer.setModelMatrix( temp_mat4 );
+
+	renderer.renderNode( this, renderer, camera );
+}
+
+/*
+Sprite.renderSprite = function( renderer, camera, position, texture, frame_index, atlas_size, scale, billboard_mode, pivot )
+{
+	if(!texture)
+		return;	
+
+	//this autoloads
+	if(!this.updateTextureMatrix(renderer)) //texture or frame not found
+		return;
+
+	if(billboard_mode)
+		RD.orientNodeToCamera( billboard_mode, this, camera, renderer );
+
+	var offsetx = 0;
+	var offsety = 0;
+	temp_mat4.set( this._global_matrix );
+
+	if (pivot)
+	{
+		switch( pivot )
+		{
+			//case RD.CENTER: break;
+			case RD.TOP_LEFT: offsetx = 0.5; offsety = -0.5; break;
+			case RD.TOP_CENTER: offsety = -0.5; break;
+			case RD.TOP_RIGHT: offsetx = -0.5; break;
+			case RD.BOTTOM_LEFT: offsetx = 0.5; offsety = 0.5; break;
+			case RD.BOTTOM_CENTER: offsety = 0.5; break;
+			case RD.BOTTOM_RIGHT: offsetx = -0.5; offsety = 0.5; break;
+		}
+		mat4.translate( temp_mat4, temp_mat4, [offsetx * w, offsety * h, 0 ] );
+	}
+	renderer.setModelMatrix( temp_mat4 );
+	renderer.renderNode( this, renderer, camera );
+}
+*/
+
+extendClass( Sprite, SceneNode );
+RD.Sprite = Sprite;
+
+
+
+function Skybox(o)
+{
+	SceneNode.prototype._ctor.call(this,o);
+	this._ctor();
+	if(o)
+		this.configure(o);
+}
+
+Skybox.prototype._ctor = function()
+{
+	this.mesh = "cube";
+	this.shader = "skybox";
+	this.scaling = [10,10,10];
+	this.flags.depth_test = false;
+	this.flags.two_sided = true;
+}
+
+Skybox.prototype.render = function( renderer, camera )
+{
+	this.position = camera.position;
+	this.updateGlobalMatrix(true);
+	renderer.setModelMatrix( this._global_matrix );
+	renderer.renderNode( this, camera );
+}
+
+extendClass( Skybox, SceneNode );
+RD.Skybox = Skybox;
 
 
 /* used functions */
