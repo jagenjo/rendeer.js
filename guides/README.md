@@ -246,28 +246,28 @@ if( context.keys["UP"] ) ...
 
 Here is an example of an orbital camera:
 ```js
-	//input
-	renderer.context.captureMouse(true);
-	renderer.context.onmousemove = function(e)
+//input
+renderer.context.captureMouse(true);
+renderer.context.onmousemove = function(e)
+{
+	if(e.dragging)
 	{
-		if(e.dragging)
+		if(e.buttons & 4 ) //middle mouse
 		{
-			if(e.buttons & 4 ) //middle mouse
-			{
-				camera.moveLocal( [-e.deltax, e.deltay, 0], 0.1 );
-			}
-			else
-			{
-				camera.orbit( e.deltax * -0.01, [0,1,0] );
-				camera.orbit( e.deltay * -0.01, [1,0,0], null, true );
-			}
+			camera.moveLocal( [-e.deltax, e.deltay, 0], 0.1 );
+		}
+		else
+		{
+			camera.orbit( e.deltax * -0.01, [0,1,0] );
+			camera.orbit( e.deltay * -0.01, [1,0,0], null, true );
 		}
 	}
+}
 
-	renderer.context.onmousewheel = function(e)
-	{
-		camera.orbitDistanceFactor( 1 + (e.wheel / 100) * -0.1 );
-	}
+renderer.context.onmousewheel = function(e)
+{
+	camera.orbitDistanceFactor( 1 + (e.wheel / 100) * -0.1 );
+}
 ```
 
 ### Overwritting the rendering methods
