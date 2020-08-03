@@ -10,8 +10,8 @@
 	</style>
 	<script type="text/javascript" src="../external/gl-matrix-min.js"></script>
 	<script type="text/javascript" src="../external/litegl.js"></script>
-	<script type="text/javascript" src="../../litescene/src/resources/skeletalAnimation.js"></script>
 	<script type="text/javascript" src="../src/rendeer.js"></script>
+	<script type="text/javascript" src="../src/rendeer-animation.js"></script>
 	<script type="text/javascript">
 	
 	var anim = null;
@@ -49,7 +49,7 @@
 					varying vec2 v_coord;\n\
 					uniform mat4 u_model;\n\
 					uniform mat4 u_viewprojection;\n\
-					'+Skeleton.shader_code+'\n\
+					'+RD.Skeleton.shader_code+'\n\
 					void main() {\n\
 						vec3 vertex = a_vertex;\n\
 						vec3 normal = a_normal;\n\
@@ -103,14 +103,10 @@
 		floor.scale(100,100,100);
 		scene.root.addChild(floor);
 
-		anim = new SkeletalAnimation();
-		HttpRequest("data/idle.skanim", null, function(data) {
-			anim.fromData(data);
-		});
-		anim2 = new SkeletalAnimation();
-		HttpRequest("data/rumba.skanim", null, function(data) {
-			anim2.fromData(data);
-		});
+		skanim = new RD.SkeletalAnimation();
+		skanim.load( "data/idle.skanim" );
+		skanim2 = new RD.SkeletalAnimation();
+		skanim2.load("data/rumba.skanim");
 
 		//global settings
 		var bg_color = vec4.fromValues(0.0,0.0,0.0,1);
@@ -137,13 +133,13 @@
 				var person = people[i];
 				if(!person.flags.was_rendered)
 					continue;
-				if(anim.duration)
-					anim.assignTime( time + i);
-				if(anim2.duration)
-					anim2.assignTime( time + i);
-				if(anim.duration && anim2.duration )
-					Skeleton.blend( anim.skeleton, anim2.skeleton, Math.sin(time + person.phase*2*Math.PI)*0.5+0.5, anim.skeleton );
-				person.bones = anim.skeleton.computeFinalBoneMatrices( person.bones, gl.meshes[ person.mesh ] );
+				if(skanim.duration)
+					skanim.assignTime( time + i);
+				if(skanim2.duration)
+					skanim2.assignTime( time + i);
+				if(skanim.duration && skanim2.duration )
+					RD.Skeleton.blend( skanim.skeleton, skanim2.skeleton, Math.sin(time + person.phase*2*Math.PI)*0.5+0.5, skanim.skeleton );
+				person.bones = skanim.skeleton.computeFinalBoneMatrices( person.bones, gl.meshes[ person.mesh ] );
 				if(person.bones && person.bones.length)
 					person.uniforms.u_bones = person.bones;
 			}

@@ -85,8 +85,13 @@ PointCloud.prototype.render = function(renderer, camera )
 	var viewport = gl.getViewport();
 	this._uniforms.u_pointSize = this.points_size / (gl.canvas.width / viewport[2]);
 	this._uniforms.u_color = this.color;
-	this._uniforms.u_texture_info[0] = 1 / this.num_textures;
-	this._uniforms.u_texture_info[1] = this.num_textures * this.num_textures;
+	if(this.num_textures > 0)
+	{
+		this._uniforms.u_texture_info[0] = 1 / this.num_textures;
+		this._uniforms.u_texture_info[1] = this.num_textures * this.num_textures;
+	}
+	else
+		this._uniforms.u_texture_info[0] = 0;
 	
 	if(this.ignore_transform)
 	{
@@ -109,7 +114,7 @@ PointCloud.prototype.updateVertices = function(mesh)
 	for(var i = 0; i < l; i++)
 	{
 		var p = this.points[i];
-		vertices.set( p.pos, pos );
+		vertices.set( p.pos ? p.pos : p, pos );
 		extra[pos] = 1;
 		extra[pos+1] = 1;
 		if(num_textures2 > 1)

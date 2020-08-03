@@ -89,10 +89,15 @@ GL.TYPE_LENGTH[ GL.FLOAT_VEC4 ] = GL.TYPE_LENGTH[ GL.INT_VEC4 ] = GL.TYPE_LENGTH
 GL.TYPE_LENGTH[ GL.FLOAT_MAT3 ] = 9;
 GL.TYPE_LENGTH[ GL.FLOAT_MAT4 ] = 16;
 
-
 GL.SAMPLER_2D = 35678;
 GL.SAMPLER_3D = 35679;
 GL.SAMPLER_CUBE = 35680;
+GL.INT_SAMPLER_2D = 36298;
+GL.INT_SAMPLER_3D = 36299;
+GL.INT_SAMPLER_CUBE = 36300;
+GL.UNSIGNED_INT_SAMPLER_2D = 36306;
+GL.UNSIGNED_INT_SAMPLER_3D = 36307;
+GL.UNSIGNED_INT_SAMPLER_CUBE = 36308;
 
 GL.DEPTH_COMPONENT = 6402;
 GL.ALPHA = 6406;
@@ -2621,7 +2626,7 @@ Mesh.prototype.addBuffers = function( vertexbuffers, indexbuffers, stream_type )
 		if(!data) 
 			continue;
 		
-		if( data.constructor == GL.Buffer )
+		if( data.constructor == GL.Buffer || data.data ) //allows to clone meshes
 		{
 			data = data.data;
 		}
@@ -2669,7 +2674,7 @@ Mesh.prototype.addBuffers = function( vertexbuffers, indexbuffers, stream_type )
 			var data = indexbuffers[i];
 			if(!data) continue;
 
-			if( data.constructor == GL.Buffer )
+			if( data.constructor == GL.Buffer || data.data )
 			{
 				data = data.data;
 			}
@@ -3826,6 +3831,9 @@ Mesh.prototype.computeGroupsBoundingBoxes = function()
 		return false;
 
 	var groups = this.info.groups;
+	if(!groups)
+		return;
+
 	for(var i = 0; i < groups.length; ++i)
 	{
 		var group = groups[i];
@@ -4143,7 +4151,8 @@ Mesh.mergeMeshes = function( meshes, options )
 
 	for(var j in index_buffers)
 	{
-		index_buffers[j] = new Uint32Array( index_buffers[j] );
+		var datatype = current_vertex_offset < 256*256 ? Uint16Array : Uint32Array;
+		index_buffers[j] = new datatype( index_buffers[j] );
 		offsets[j] = 0;
 	}
 
@@ -4209,6 +4218,8 @@ Mesh.mergeMeshes = function( meshes, options )
 
 	function apply_offset( array, start, length, offset )
 	{
+		if(!offset)
+			return;
 		var l = start + length;
 		for(var i = start; i < l; ++i)
 			array[i] += offset;
@@ -4250,13 +4261,15 @@ Mesh.fromURL = function(url, on_complete, gl, options)
 
 	var pos = url.lastIndexOf(".");
 	var extension = url.substr(pos+1).toLowerCase();
+	if(options.extension)
+		extension = options.extension;
 	options.binary = Mesh.binary_file_formats[ extension ];
 
 	HttpRequest( url, null, function(data) {
-		mesh.parse( data, extension );
+		mesh.parse( data, extension, options );
 		delete mesh["ready"];
 		if(on_complete)
-			on_complete.call(mesh,mesh, url);
+			on_complete.call(mesh, mesh, url, options);
 	}, function(err){
 		if(on_complete)
 			on_complete(null);
@@ -4272,12 +4285,14 @@ Mesh.fromURL = function(url, on_complete, gl, options)
 * @param {String} format parser file format name (p.e. "obj")
 * @return {?} depending on the parser
 */
-Mesh.prototype.parse = function( data, format )
+Mesh.prototype.parse = function( data, format, options )
 {
+	options = options || {};
+	options.mesh = this;
 	format = format.toLowerCase();
 	var parser = GL.Mesh.parsers[ format ];
 	if(parser)
-		return parser.call(null, data, {mesh: this});
+		return parser.call(null, data, options);
 	throw("GL.Mesh.parse: no parser found for format " + format );
 }
 
@@ -5337,6 +5352,132 @@ Mesh.icosahedron = function( options, gl ) {
 
 	return new GL.Mesh.load({vertices: vertices, coords: coords, normals: normals, triangles: indices},options,gl);
 }
+
+/**
+* Returns a closed shape from a 2D closed line, it can be extruded!
+* @method Mesh.shape
+* @param {Object} options valid options: extrude, xy
+*/
+Mesh.shape = function( line, options, gl ) {
+	options = options || {};
+	if(typeof(earcut) === "undefined")
+		throw("To use GL.Mesh.shape you must download and include earcut.js (do not link it directly!): https://raw.githubusercontent.com/mapbox/earcut/master/src/earcut.js");
+	if(!line || !line.length || line.length % 2 == 1)
+		throw("GL.Mesh.shape line missing, must be an array of 2D vertices");
+	var ext = options.extrude || 0;
+	if(line[0].constructor === Array)
+		line = earcut.flatten( line );
+	var triangulation = earcut( line ).reverse();
+	console.log(triangulation);
+	var vertices = [];
+	var normals = [];
+	var uvs = [];
+
+	//bounding
+	var minmaxX = [line[0],line[1]];
+	var minmaxY = [line[0],line[1]];
+	for(var i = 0; i < line.length; i+=2)
+	{
+		minmaxX[0] = Math.min(minmaxX[0],line[i]);
+		minmaxX[1] = Math.max(minmaxX[1],line[i]);
+		minmaxY[0] = Math.min(minmaxY[0],line[i+1]);
+		minmaxY[1] = Math.max(minmaxY[1],line[i+1]);
+	}
+	var rangeX = minmaxX[1] - minmaxX[0];
+	var rangeY = minmaxY[1] - minmaxY[0];
+	var groups = [];
+	var indices = null;
+	if(ext)
+	{
+		indices = [];
+		var N = vec3.create();
+		//side
+		var num = line.length;
+		for(var i = 0; i < line.length; i+=2)
+		{
+			var x = line[i];
+			var y = line[i+1];
+			var x2 = line[(i+2)%num];
+			var y2 = line[(i+3)%num];
+			var A = vertices.length/3;
+			vertices.push(x,ext*0.5,y); //top
+			vertices.push(x,ext*-0.5,y); //bottom
+			vertices.push(x2,ext*0.5,y2); //top next
+			vertices.push(x2,ext*-0.5,y2); //bottom next
+			vec3.normalize(N,vec3.cross(N,[0,1,0],[x2-x,0,y2-y]));
+			normals.push(N[0],N[1],N[2],N[0],N[1],N[2],N[0],N[1],N[2],N[0],N[1],N[2]);
+			var u = (x - minmaxX[0]) / rangeX;
+			var v = (y - minmaxY[0]) / rangeY;
+			var u2 = (x2 - minmaxX[0]) / rangeX;
+			var v2 = (y2 - minmaxY[0]) / rangeY;
+			uvs.push(u,v,u,v,u2,v2,u2,v2);
+			indices.push(A,A+2,A+1,A+2,A+3,A+1);
+		}
+		groups.push({name:"side",start:0,length:indices.length});
+
+		//caps
+		var offset = vertices.length / 3;
+		var start = indices.length;
+		for(var i = 0; i < line.length; i+=2)
+		{
+			var x = line[i];
+			var y = line[i+1];
+			var u = (x - minmaxX[0]) / rangeX;
+			var v = (y - minmaxY[0]) / rangeY;
+			vertices.push(x,ext*0.5,y); //top
+			vertices.push(x,ext*-0.5,y); //bottom
+			normals.push(0,1,0,0,-1,0);
+			uvs.push(u,v,u,v);
+		}
+
+		for(var i = 0; i < triangulation.length; i+=3)
+		{
+			indices.push(offset+triangulation[i]*2,offset+triangulation[i+1]*2,offset+triangulation[i+2]*2);
+			indices.push(offset+triangulation[i]*2+1,offset+triangulation[i+2]*2+1,offset+triangulation[i+1]*2+1);
+		}
+		groups.push({name:"caps",start:start,length:indices.length});
+
+		options.bounding = BBox.fromCenterHalfsize( [(minmaxX[0]+minmaxX[1])*0.5,0,(minmaxY[0]+minmaxY[1])*0.5], [rangeX*0.5,ext*0.5,rangeY*0.5], vec2.len([rangeX*0.5,ext*0.5,rangeY*0.5]) );
+	}
+	else //flat
+	{
+		//cap
+		for(var i = 0; i < line.length; i+=2)
+		{
+			vertices.push(line[i],0,line[i+1]);
+			normals.push(0,1,0);
+			uvs.push( (line[i] - minmaxX[0]) / rangeX,(line[i+1] - minmaxY[0]) / rangeY );
+		}
+		indices = triangulation;
+		groups.push({name:"side",start:0,length:indices.length});
+		options.bounding = BBox.fromCenterHalfsize( [(minmaxX[0]+minmaxX[1])*0.5,0,(minmaxY[0]+minmaxY[1])*0.5], [rangeX*0.5,0,rangeY*0.5], vec2.len([rangeX*0.5,0,rangeY*0.5]) );
+	}
+
+	if(options.xy)
+	{
+		for(var i = 0; i < vertices.length; i+=3)
+		{
+			swap( vertices, i);
+			swap( normals, i);
+		}
+		if(ext)
+			options.bounding = BBox.fromCenterHalfsize( [(minmaxX[0]+minmaxX[1])*0.5,(minmaxY[0]+minmaxY[1])*0.5,0], [rangeX*0.5,rangeY*0.5,ext*0.5], vec2.len([rangeX*0.5,rangeY*0.5,ext*0.5]) );
+		else
+			options.bounding = BBox.fromCenterHalfsize( [(minmaxX[0]+minmaxX[1])*0.5,(minmaxY[0]+minmaxY[1])*0.5,0], [rangeX*0.5,rangeY*0.5,0], vec2.len([rangeX*0.5,rangeY*0.5,0]) );
+	}
+
+	options.info = { groups: groups };
+
+	return new GL.Mesh.load({vertices: vertices, coords: uvs, normals: normals, triangles: indices},options,gl);
+
+	function swap(v,pos)
+	{
+		var tmp = v[pos+1];
+		v[pos+1] = v[pos+2];
+		v[pos+2] = -tmp;
+	}
+}
+
 /**
 * @namespace GL
 */
@@ -5483,9 +5624,10 @@ global.Texture = GL.Texture = function Texture( width, height, options, gl ) {
 		return new Uint8Array( data );
 	}
 
-	//gl.TEXTURE_1D is not supported by WebGL...
+	Texture.setUploadOptions(options);
 
 	//here we create all **********************************
+	//gl.TEXTURE_1D is not supported by WebGL...
 	if(this.texture_type == GL.TEXTURE_2D)
 	{
 		//create the texture
@@ -5500,8 +5642,19 @@ global.Texture = GL.Texture = function Texture( width, height, options, gl ) {
 	}
 	else if(this.texture_type == GL.TEXTURE_CUBE_MAP)
 	{
+		var facesize = width*width*(this.format == GL.RGBA ? 4 : 3);
 		for(var i = 0; i < 6; ++i)
-			gl.texImage2D( gl.TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, this.internalFormat, this.width, this.height, 0, this.format, this.type, pixel_data ? pixel_data[i] : null );
+		{
+			var cubemap_data = pixel_data;
+			if(cubemap_data)
+			{
+				if(cubemap_data.constructor === Array) //six arrays
+					cubemap_data = cubemap_data[i];
+				else //all data mixed in a single array
+					cubemap_data.subarray(facesize*i, facesize*(i+1));
+			}
+			gl.texImage2D( gl.TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, this.internalFormat, this.width, this.height, 0, this.format, this.type, cubemap_data || null );
+		}
 	}
 	else if(this.texture_type == GL.TEXTURE_3D)
 	{
@@ -5540,7 +5693,7 @@ Texture.prototype.computeInternalFormat = function()
 	//automatic selection of internal format for depth textures to avoid problems between webgl1 and 2
 	if( this.format == GL.DEPTH_COMPONENT )
 	{
-		this.minFilter = this.magFilter = GL.NEAREST;
+		this.minFilter = GL.NEAREST; //this.magFilter = 
 
 		if( gl.webgl_version == 2 ) 
 		{
@@ -6000,13 +6153,7 @@ Texture.prototype.drawTo = function(callback, params)
 	return this;
 }
 
-/**
-* Static version of drawTo meant to be used with several buffers
-* @method drawToColorAndDepth
-* @param {Texture} color_texture
-* @param {Texture} depth_texture
-* @param {Function} callback
-*/
+/*
 Texture.drawTo = function( color_textures, callback, depth_texture )
 {
 	var w = -1,
@@ -6112,13 +6259,6 @@ Texture.drawTo = function( color_textures, callback, depth_texture )
 	gl.viewport(v[0], v[1], v[2], v[3]);
 }
 
-/**
-* Similar to drawTo but it also stores the depth in a depth texture
-* @method drawToColorAndDepth
-* @param {Texture} color_texture
-* @param {Texture} depth_texture
-* @param {Function} callback
-*/
 Texture.drawToColorAndDepth = function( color_texture, depth_texture, callback ) {
 	var gl = color_texture.gl; //static function
 
@@ -6145,7 +6285,7 @@ Texture.drawToColorAndDepth = function( color_texture, depth_texture, callback )
 
 	gl.viewport(v[0], v[1], v[2], v[3]);
 }
-
+*/
 
 
 /**
@@ -6216,7 +6356,7 @@ Texture.prototype.copyTo = function( target_texture, shader, uniforms ) {
 			var attachment_point = target_texture.format == gl.DEPTH_STENCIL ? gl.DEPTH_STENCIL_ATTACHMENT : gl.DEPTH_ATTACHMENT;
 			gl.framebufferTexture2D( gl.FRAMEBUFFER, attachment_point, gl.TEXTURE_2D, target_texture.handler, 0);
 
-			var complete = gl.checkFramebufferStatus( gl.FRAMEBUFFER );
+			var complete = gl.checkFramebufferStatus( gl.FRAMEBUFFER ); //this line is slow according to Mozilla?
 			if(complete !== gl.FRAMEBUFFER_COMPLETE)
 				throw("FBO not complete: " + complete);
 
@@ -6333,19 +6473,30 @@ Texture.prototype.toViewport = function(shader, uniforms)
 }
 
 /**
-* Fills the texture with a constant color (uses gl.clear)
+* Fills the texture with a constant color (uses gl.clear) or shader
 * @method fill
-* @param {vec4} color rgba
+* @param {vec4|GL.Shader} color rgba or shader
 * @param {boolean} skip_mipmaps if true the mipmaps wont be updated
 */
-Texture.prototype.fill = function(color, skip_mipmaps )
+Texture.prototype.fill = function(color_or_shader, skip_mipmaps )
 {
-	var old_color = gl.getParameter( gl.COLOR_CLEAR_VALUE );
-	gl.clearColor( color[0], color[1], color[2], color[3] );
-	this.drawTo( function() {
-		gl.clear( gl.COLOR_BUFFER_BIT );	
-	});
-	gl.clearColor( old_color[0], old_color[1], old_color[2], old_color[3] );
+	if(color_or_shader.constructor === GL.Shader)
+	{
+		var shader = color_or_shader;
+		this.drawTo( function() {
+			shader.toViewport();
+		});
+	}
+	else
+	{
+		var color = color_or_shader;
+		var old_color = gl.getParameter( gl.COLOR_CLEAR_VALUE );
+		gl.clearColor( color[0], color[1], color[2], color[3] );
+		this.drawTo( function() {
+			gl.clear( gl.COLOR_BUFFER_BIT );	
+		});
+		gl.clearColor( old_color[0], old_color[1], old_color[2], old_color[3] );
+	}
 
 	if (!skip_mipmaps && this.minFilter && this.minFilter != gl.NEAREST && this.minFilter != gl.LINEAR ) {
 		this.bind();
@@ -6568,6 +6719,8 @@ Texture.fromURL = function( url, options, on_complete, gl ) {
 			if(!img_data)
 				return;
 			options.texture = texture;
+			if(img_data.flipY)
+				options.no_flip = true;
 			if(img_data.format == "RGB")
 				texture.format = gl.RGB;
 			texture = GL.Texture.fromMemory( img_data.width, img_data.height, img_data.pixels, options );
@@ -6622,26 +6775,15 @@ Texture.parseTGA = function(data)
 	img.imageSize = img.width * img.height * img.bytesPerPixel;
 	img.pixels = data.subarray(18,18+img.imageSize);
 	img.pixels = new Uint8Array( img.pixels ); 	//clone
-	if(	(header[5] & (1<<4)) == 0) //hack, needs swap
+	img.flipY = ((header[5] & (1<<5)) == 0); //needs swap in Y
+	//TGA comes in BGR format so we swap it, this is slooooow
+	for(var i = 0; i < img.imageSize; i+= img.bytesPerPixel)
 	{
-		//TGA comes in BGR format so we swap it, this is slooooow
-		for(var i = 0; i < img.imageSize; i+= img.bytesPerPixel)
-		{
-			var temp = img.pixels[i];
-			img.pixels[i] = img.pixels[i+2];
-			img.pixels[i+2] = temp;
-		}
-		header[5] |= 1<<4; //mark as swaped
-		img.format = img.bpp == 32 ? "RGBA" : "RGB";
+		var temp = img.pixels[i];
+		img.pixels[i] = img.pixels[i+2];
+		img.pixels[i+2] = temp;
 	}
-	else
-		img.format = img.bpp == 32 ? "RGBA" : "RGB";
-	//some extra bytes to avoid alignment problems
-	//img.pixels = new Uint8Array( img.imageSize + 14);
-	//img.pixels.set( data.subarray(18,18+img.imageSize), 0);
-	img.flipY = true;
-	//img.format = img.bpp == 32 ? "BGRA" : "BGR";
-	//trace("TGA info: " + img.width + "x" + img.height );
+	img.format = img.bpp == 32 ? "RGBA" : "RGB";
 	return img;
 }
 
@@ -7575,6 +7717,7 @@ function FBO( textures, depth_texture, stencil, gl )
 
 	this._stencil_enabled = false;
 	this._num_binded_textures = 0;
+	this.order = null;
 
 	//assign textures
 	if((textures && textures.length) || depth_texture)
@@ -7583,7 +7726,6 @@ function FBO( textures, depth_texture, stencil, gl )
 	//save state
 	this._old_fbo_handler = null;
 	this._old_viewport = new Float32Array(4);
-	this.order = null;
 }
 
 GL.FBO = FBO;
@@ -7928,15 +8070,16 @@ FBO.testSupport = function( type, format ) {
 	return true;
 }
 
-FBO.prototype.toSingle = function()
+FBO.prototype.toSingle = function(index)
 {
+	index = index || 0;
 	if( this.color_textures.length < 2 )
 		return; //nothing to do
 	var ext = gl.extensions.WEBGL_draw_buffers;
 	if( ext )
-		ext.drawBuffersWEBGL( [ this.order[0] ] );
+		ext.drawBuffersWEBGL( [ this.order[index] ] );
 	else
-		gl.drawBuffers( [ this.order[0] ] );
+		gl.drawBuffers( [ this.order[index] ] );
 }
 
 FBO.prototype.toMulti = function()
@@ -8168,7 +8311,9 @@ Shader.prototype.extractShaderInfo = function()
 		}
 
 		//store texture samplers
-		if(data.type == gl.SAMPLER_2D || data.type == gl.SAMPLER_CUBE || data.type == GL.SAMPLER_3D)
+		if(data.type == GL.SAMPLER_2D || data.type == GL.SAMPLER_CUBE || data.type == GL.SAMPLER_3D ||
+			data.type == GL.INT_SAMPLER_2D || data.type == GL.INT_SAMPLER_CUBE || data.type == GL.INT_SAMPLER_3D ||
+			data.type == GL.UNSIGNED_INT_SAMPLER_2D || data.type == GL.UNSIGNED_INT_SAMPLER_CUBE || data.type == GL.UNSIGNED_INT_SAMPLER_3D)
 			this.samplers[ uniformName ] = data.type;
 		
 		//get which function to call when uploading this uniform
@@ -8271,6 +8416,12 @@ Shader.getUniformFunc = function( data )
 		case GL.SAMPLER_2D:
 		case GL.SAMPLER_3D:
 		case GL.SAMPLER_CUBE:
+		case GL.INT_SAMPLER_2D:
+		case GL.INT_SAMPLER_3D:
+		case GL.INT_SAMPLER_CUBE:
+		case GL.UNSIGNED_INT_SAMPLER_2D:
+		case GL.UNSIGNED_INT_SAMPLER_3D:
+		case GL.UNSIGNED_INT_SAMPLER_CUBE:
 			func = gl.uniform1i; break;
 		default: func = gl.uniform1f; break;
 	}	
@@ -8577,6 +8728,7 @@ Shader.prototype.drawBuffers = function( vertexBuffers, indexBuffer, mode, range
 	  } else {
 		gl.drawArrays(mode, offset, length);
 	  }
+	  gl.draw_calls++;
 	}
 
 	return this;
@@ -8872,8 +9024,15 @@ Shader.validateValue = function( value, uniform_info )
 		//used to validate shaders
 		case GL.INT: 
 		case GL.FLOAT: 
-		case GL.SAMPLER_2D: 
-		case GL.SAMPLER_CUBE: 
+		case GL.SAMPLER_2D:
+		case GL.SAMPLER_3D:
+		case GL.SAMPLER_CUBE:
+		case GL.INT_SAMPLER_2D:
+		case GL.INT_SAMPLER_3D:
+		case GL.INT_SAMPLER_CUBE:
+		case GL.UNSIGNED_INT_SAMPLER_2D:
+		case GL.UNSIGNED_INT_SAMPLER_3D:
+		case GL.UNSIGNED_INT_SAMPLER_CUBE:
 			return isNumber(value);
 		case GL.INT_VEC2: 
 		case GL.FLOAT_VEC2:
@@ -9482,6 +9641,7 @@ Shader.getFlatShader = function(gl)
 	return gl.shaders[":flat"] = shader;
 }
 
+
 /**
 * The global scope that contains all the classes from LiteGL and also all the enums of WebGL so you dont need to create a context to use the values.
 * @class GL
@@ -9649,6 +9809,8 @@ GL.create = function(options) {
 	gl.textures = {};
 	gl.meshes = {};
 
+	gl.draw_calls = 0;
+
 	/**
 	* sets this context as the current global gl context (in case you have more than one)
 	* @method makeCurrent
@@ -9688,6 +9850,7 @@ GL.create = function(options) {
 		var post = global.requestAnimationFrame;
 		var time = getTime();
 		var context = this;
+		var last_mouse_buttons = 0;
 
 		//loop only if browser tab visible
 		function loop() {
@@ -9699,7 +9862,8 @@ GL.create = function(options) {
 			var now = getTime();
 			var dt = (now - time) * 0.001;
 			if(context.mouse)
-				context.mouse.last_buttons = context.mouse.buttons;
+				context.mouse.last_buttons = last_mouse_buttons;
+			last_mouse_buttons = context.mouse.buttons;
 			if (context.onupdate) 
 				context.onupdate(dt);
 			LEvent.trigger( context, "update", dt);
@@ -9980,6 +10144,8 @@ GL.create = function(options) {
 		simulatedEvent.originalEvent = simulatedEvent;
 		simulatedEvent.is_touch = true;
 		first.target.dispatchEvent( simulatedEvent );
+
+		//if we block this touch (to avoid weird canvas draggings) then we are blocking the gestures
 		e.preventDefault();
 	}
 
@@ -10539,6 +10705,8 @@ GL.isMobile = function()
 	if( (navigator.userAgent.match(/iPhone/i)) || 
 		(navigator.userAgent.match(/iPod/i)) || 
 		(navigator.userAgent.match(/iPad/i)) || 
+		(navigator.userAgent.match(/SamsungBrowser/i)) || 
+		(navigator.userAgent.match(/Mobile\ VR/i)) || 
 		(navigator.userAgent.match(/Android/i))) {
 		return this.mobile = true;
 	}
@@ -12023,14 +12191,14 @@ global.planeBoxOverlap = GL.planeBoxOverlap = function planeBoxOverlap(plane, bo
 * @param {Mesh} mesh object containing vertices buffer (indices buffer optional)
 */
 
-global.Octree = GL.Octree = function Octree( mesh )
+global.Octree = GL.Octree = function Octree( mesh, start, length )
 {
 	this.root = null;
 	this.total_depth = 0;
 	this.total_nodes = 0;
 	if(mesh)
 	{
-		this.buildFromMesh(mesh);
+		this.buildFromMesh(mesh, start, length);
 		this.total_nodes = this.trim();
 	}
 }
@@ -12048,17 +12216,25 @@ Octree.ALL = 2;  //returns the all collisions
 var octree_tested_boxes = 0;
 var octree_tested_triangles = 0;
 
-Octree.prototype.buildFromMesh = function( mesh )
+Octree.prototype.buildFromMesh = function( mesh, start, length )
 {
 	this.total_depth = 0;
 	this.total_nodes = 0;
+	start = start || 0;
 
 	var vertices = mesh.getBuffer("vertices").data;
 	var triangles = mesh.getIndexBuffer("triangles");
 	if(triangles) 
 		triangles = triangles.data; //get the internal data
 
-	var root = this.computeAABB(vertices);
+	if( !length )
+		length = triangles ? triangles.length : vertices.length / 3;
+
+	var root = null;
+	if( triangles )
+		root = this.computeAABBFromIndices(vertices,triangles,start,length);
+	else
+		root = this.computeAABB(vertices);
 	this.root = root;
 	this.total_nodes = 1;
 	this.total_triangles = triangles ? triangles.length / 3 : vertices.length / 9;
@@ -12076,11 +12252,11 @@ Octree.prototype.buildFromMesh = function( mesh )
 	root.faces = [];
 	root.inside = 0;
 
-
 	//indexed
+	var end = start + length;
 	if(triangles)
 	{
-		for(var i = 0; i < triangles.length; i+=3)
+		for(var i = start; i < end; i+=3)
 		{
 			var face = new Float32Array([vertices[triangles[i]*3], vertices[triangles[i]*3+1],vertices[triangles[i]*3+2],
 						vertices[triangles[i+1]*3], vertices[triangles[i+1]*3+1],vertices[triangles[i+1]*3+2],
@@ -12090,7 +12266,7 @@ Octree.prototype.buildFromMesh = function( mesh )
 	}
 	else
 	{
-		for(var i = 0; i < vertices.length; i+=9)
+		for(var i = start*3; i < length*3; i+=9) //vertices
 		{
 			var face = new Float32Array( 10 );
 			face.set( vertices.subarray(i,i+9) );
@@ -12206,6 +12382,30 @@ Octree.prototype.computeAABB = function(vertices)
 				min[j] = vertices[i+j];
 			if(max[j] < vertices[i+j]) 
 				max[j] = vertices[i+j];
+		}
+	}
+
+	return {min: min, max: max, size: vec3.sub( vec3.create(), max, min) };
+}
+
+Octree.prototype.computeAABBFromIndices = function(vertices,indices,start,length)
+{
+	start = start || 0;
+	length = length || indices.length;
+
+	var index = indices[start];
+	var min = new Float32Array([ vertices[index*3], vertices[index*3+1], vertices[index*3+2] ]);
+	var max = new Float32Array([ vertices[index*3], vertices[index*3+1], vertices[index*3+2] ]);
+
+	for(var i = start+1; i < start+length; ++i)
+	{
+		var index = indices[i]*3;
+		for(var j = 0; j < 3; j++)
+		{
+			if(min[j] > vertices[index+j]) 
+				min[j] = vertices[index+j];
+			if(max[j] < vertices[index+j]) 
+				max[j] = vertices[index+j];
 		}
 	}
 
@@ -12845,6 +13045,298 @@ Raytracer.hitTestTriangle = function(origin, ray, a, b, c) {
 * @return {Object} mesh information (vertices, coords, normals, indices)
 */
 
+Mesh.parseOBJ = function(text, options)
+{
+	options = options || {};
+	var MATNAME_EXTENSION = options.matextension || "";//".json";
+	var support_uint = true;
+
+	//unindexed containers
+	var vertices = [];
+	var normals = [];
+	var uvs = [];
+
+	//final containers
+	var vertices_buffer_data = [];
+	var normals_buffer_data = [];
+	var uvs_buffer_data = [];
+
+	//groups
+	var group_id = 0;
+	var groups = [];
+	var current_group_materials = {};
+	var last_group_name = null;
+	var materials_found = {};
+	var mtllib = null;
+	var group = createGroup();
+
+	var indices_map = new Map();
+	var next_index = 0;
+	var s = 1; //scaling to change unit system
+	if(options.scale)
+		s = options.scale;
+
+	var V_CODE = 1;
+	var VT_CODE = 2;
+	var VN_CODE = 3;
+	var F_CODE = 4;
+	var G_CODE = 5;
+	var O_CODE = 6;
+	var USEMTL_CODE = 7;
+	var MTLLIB_CODE = 8;
+	var codes = { v: V_CODE, vt: VT_CODE, vn: VN_CODE, f: F_CODE, g: G_CODE, o: O_CODE, usemtl: USEMTL_CODE, mtllib: MTLLIB_CODE };
+
+	var x,y,z;
+
+	var lines = text.split("\n");
+	var length = lines.length;
+	for (var lineIndex = 0;  lineIndex < length; ++lineIndex) {
+
+		var line = lines[lineIndex];
+		line = line.replace(/[ \t]+/g, " ").replace(/\s\s*$/, ""); //better than trim
+
+		if(line[ line.length - 1 ] == "\\") //breakline support
+		{
+			lineIndex += 1;
+			var next_line = lines[lineIndex].replace(/[ \t]+/g, " ").replace(/\s\s*$/, ""); //better than trim
+			line = (line.substr(0,line.length - 1) + next_line).replace(/[ \t]+/g, " ").replace(/\s\s*$/, "");
+		}
+		
+		if (line[0] == "#")
+			continue;
+		if(line == "")
+			continue;
+
+		var tokens = line.split(" ");
+		var code = codes[ tokens[0] ];
+
+		if( code <= VN_CODE ) //v,vt,vn
+		{
+			x = parseFloat(tokens[1]);
+			y = parseFloat(tokens[2]);
+			if( code != VT_CODE ) //not always present
+				z = parseFloat(tokens[3]); 
+		}
+		
+		switch(code)
+		{
+			case V_CODE: 
+				x *= s; y *= s; z *= s;
+				vertices.push(x,y,z);
+				break;
+			case VT_CODE: uvs.push(x,y);	break;
+			case VN_CODE: normals.push(x,y,z);	break;
+			case F_CODE: 
+				if (tokens.length < 4)
+					continue; //faces with less that 3 vertices? nevermind
+				//get the triangle indices
+				var polygon_indices = [];
+				for(var i = 1; i < tokens.length; ++i)
+					polygon_indices.push( getIndex( tokens[i] ) );
+				group.indices.push( polygon_indices[0], polygon_indices[1], polygon_indices[2] );
+				//polygons are break intro triangles
+				for(var i = 2; i < polygon_indices.length-1; ++i)
+					group.indices.push( polygon_indices[0], polygon_indices[i], polygon_indices[i+1] );
+				break;
+			case G_CODE:  
+			case O_CODE:  //whats the difference?
+				var name = tokens[1];
+				last_group_name = name;
+				if(!group.name)
+					group.name = name;
+				else
+				{
+					current_group_materials = {};
+					group = createGroup( name );
+				}
+				break;
+			case USEMTL_CODE: 
+				changeMaterial( tokens[1] );
+				break;
+			case MTLLIB_CODE:
+				mtllib = tokens[1];
+				break;
+			default:
+		}
+	}
+
+	//generate indices
+	var indices = [];
+	var group_index = 0;
+	var final_groups = [];
+	for(var i = 0; i < groups.length; ++i)
+	{
+		var group = groups[i];
+		if(!group.indices) //already added?
+			continue;
+		group.start = group_index;
+		group.length = group.indices.length;
+		indices = indices.concat( group.indices );
+		delete group.indices; //do not store indices in JSON format!
+		group_index += group.length;
+		final_groups.push( group );
+	}
+	groups = final_groups;
+
+	//finish mesh
+	var mesh = {};
+
+	if(!vertices.length)
+	{
+		console.error("mesh without vertices");
+		return null;
+	}
+
+	if(options.flip_normals && normals_buffer_data.length)
+	{
+		var normals = normals_buffer_data;
+		for(var i = 0; i < normals.length; ++i)
+			normals[i] *= -1;
+	}
+
+	//create typed arrays
+	mesh.vertices = new Float32Array( vertices_buffer_data );
+	if ( normals_buffer_data.length )
+		mesh.normals = new Float32Array( normals_buffer_data );
+	if ( uvs_buffer_data.length )
+		mesh.coords = new Float32Array( uvs_buffer_data );
+	if ( indices && indices.length > 0 )
+		mesh.triangles = new ( support_uint && group_index > 256*256 ? Uint32Array : Uint16Array )(indices);
+
+	//extra info
+	mesh.bounding = GL.Mesh.computeBoundingBox( mesh.vertices );
+	var info = {};
+	if(groups.length > 1)
+	{
+		info.groups = groups;
+		//compute bounding of groups? //TODO: this is complicated, it is affected by indices, etc, better done afterwards
+	}
+
+	mesh.info = info;
+	if( !mesh.bounding )
+	{
+		console.log("empty mesh");
+		return null;
+	}
+
+	//if( mesh.bounding.radius == 0 || isNaN(mesh.bounding.radius))
+	//	console.log("no radius found in mesh");
+	//console.log(mesh);
+	if(options.only_data)
+		return mesh;
+
+	//creates and returns a GL.Mesh
+	var final_mesh = null;
+	final_mesh = Mesh.load( mesh, null, options.mesh );
+	//final_mesh.updateBoundingBox();
+	return final_mesh;
+
+	//this function helps reuse triplets that have been created before
+	function getIndex( str )
+	{
+		var pos,tex,nor,f;
+		var has_negative = false;
+
+		//cannot use negative indices as keys, convert them to positive
+		if(str.indexOf("-") == -1)
+		{
+			var index = indices_map.get(str);
+			if(index !== undefined)
+				return index;
+		}
+		else
+			has_negative = true;
+
+		if(!f) //maybe it was parsed before
+			f = str.split("/");
+
+		if (f.length == 1) { //unpacked
+			pos = parseInt(f[0]);
+			tex = pos;
+			nor = pos;
+		}
+		else if (f.length == 2) { //no normals
+			pos = parseInt(f[0]);
+			tex = parseInt(f[1]);
+			nor = pos;
+		}
+		else if (f.length == 3) { //all three indexed
+			pos = parseInt(f[0]);
+			tex = parseInt(f[1]);
+			nor = parseInt(f[2]);
+		}
+		else {
+			console.log("Problem parsing: unknown number of values per face");
+			return -1;
+		}
+
+		//negative indices are relative to the end
+		if(pos < 0) 
+			pos = vertices.length / 3 + pos + 1;
+		if(nor < 0)
+			nor = normals.length / 2 + nor + 1;
+		if(tex < 0)
+			tex = uvs.length / 2 + tex + 1;
+
+		//try again to see if we already have this
+		if(has_negative)
+		{
+			str = pos + "/" + tex + "/" + nor;
+			var index = indices_map.get(str);
+			if(index !== undefined)
+				return index;
+		}
+
+		//fill buffers
+		pos -= 1; tex -= 1; nor -= 1; //indices in obj start in 1, buffers in 0
+		vertices_buffer_data.push( vertices[pos*3+0], vertices[pos*3+1], vertices[pos*3+2] );
+		if(uvs.length)
+			uvs_buffer_data.push( uvs[tex*2+0], uvs[tex*2+1] );
+		if(normals.length)
+			normals_buffer_data.push( normals[nor*3+0], normals[nor*3+1], normals[nor*3+2] );
+
+		//store index
+		var index = next_index;
+		indices_map.set( str, index );
+		++next_index;
+		return index;
+	}
+
+	function createGroup( name )
+	{
+		var g = {
+			name: name || "",
+			material: "",
+			start: -1,
+			length: -1,
+			indices: []
+		};
+		groups.push(g);
+		return g;
+	}
+
+	function changeMaterial( material_name )
+	{
+		if( !group.material )
+		{
+			group.material = material_name + MATNAME_EXTENSION;
+			current_group_materials[ material_name ] = group;
+			return group;
+		}
+
+		var g = current_group_materials[ material_name ];
+		if(!g)
+		{
+			g = createGroup( last_group_name + "_" + material_name );
+			g.material = material_name + MATNAME_EXTENSION;
+			current_group_materials[ material_name ] = g;
+		}
+		group = g;
+		return g;
+	}
+}
+
+/* old 
 Mesh.parseOBJ = function( text, options )
 {
 	options = options || {};
@@ -13138,7 +13630,7 @@ Mesh.parseOBJ = function( text, options )
 		mesh.triangles = new Uint16Array(indicesArray);
 
 	var info = {};
-	if(groups.length > 1)
+	//if(groups.length > 1) //???
 		info.groups = groups;
 	mesh.info = info;
 
@@ -13151,6 +13643,7 @@ Mesh.parseOBJ = function( text, options )
 	final_mesh.updateBoundingBox();
 	return final_mesh;
 }
+//*/
 
 Mesh.parsers["obj"] = Mesh.parseOBJ;
 
@@ -13202,7 +13695,10 @@ Mesh.encoders["obj"] = function( mesh, options )
 		{
 			var group = groups[j];
 			lines.push("g " + group.name );
-			lines.push("usemtl " + (group.material || ("mat_"+j)));
+			var matname = (group.material || ("mat_"+j));
+			if(matname.indexOf(".json") != -1) //remove json from matnames or mtl name wont match
+				matname = matname.substr(0,matname.indexOf(".json"));
+			lines.push("usemtl " + matname);
 			var start = group.start;
 			var end = start + group.length;
 			for (var i = start; i < end; i+=3)

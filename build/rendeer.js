@@ -78,8 +78,30 @@ RD.BILLBOARD_PARALLEL_SPHERIC = 2;
 RD.BILLBOARD_CYLINDRIC = 3;
 RD.BILLBOARD_PARALLEL_CYLINDRIC = 4;
 
+//data types (used in animation tracks)
+RD.UNKNOWN = 0;
+RD.NUMBER = RD.SCALAR = 1;
+RD.VEC2 = 2;
+RD.VEC3 = 3;
+RD.VEC4 = 4;
+RD.QUAT = 5;
+RD.MAT3 = 6;
+RD.TRANS10 = 7;
+RD.MAT4 = 8;
+
+RD.TYPES = { "NUMBER":RD.NUMBER, "SCALAR":RD.NUMBER, "VEC2":RD.VEC2, "VEC3":RD.VEC3, "VEC4":RD.VEC4, "QUAT":RD.QUAT, "MAT3":RD.MAT3, "TRANS10":RD.TRANS10, "MAT4":RD.MAT4 };
+RD.TYPES_SIZE = [0,1,2,3,4,4,9,10,16];
+
+RD.NO_INTERPOLATION = 0;
+RD.LINEAR = 1;
+RD.CUBIC = 2;
+
 var DEG2RAD = RD.DEG2RAD = 0.0174532925;
 var RAD2DEG = RD.RAD2DEG = 57.295779578552306;
+
+//Global Containers (other containers are added from other scripts)
+RD.Materials = {};
+RD.Images = {}; //used for GLTFs embeded images
 
 RD.setup = function(o)
 {
@@ -394,7 +416,7 @@ Object.defineProperty(SceneNode.prototype, 'pivot', {
 * @property color {vec4}
 * @default [1,1,1,1]
 */
-Object.defineProperty(SceneNode.prototype, 'color', {
+Object.defineProperty( SceneNode.prototype, 'color', {
 	get: function() { return this._color; },
 	set: function(v) { this._color.set(v); },
 	enumerable: true //avoid problems
@@ -1180,6 +1202,26 @@ SceneNode.prototype.findNode = function(id)
 		if( node.id == id )
 			return node;
 		var r = node.findNode(id);
+		if(r)
+			return r;
+	}
+	return null;
+}
+
+/**
+* Searchs the node and returns the first child node with the matching name, it is a recursive search so it is slow
+* @method findNodeByName
+* @param {string} name the name of the node
+* @return {SceneNode} result node otherwise null
+*/
+SceneNode.prototype.findNodeByName = function(name)
+{
+	for(var i = 0, l = this.children.length; i < l; i++)
+	{
+		var node = this.children[i];
+		if( node.name == name )
+			return node;
+		var r = node.findNodeByName(name);
 		if(r)
 			return r;
 	}
@@ -2520,6 +2562,100 @@ Scene.prototype.toJSON = function( on_node_to_json )
 	}
 }
 
+/**
+* Material is a data container about the properties of an objects material
+* @class Material
+* @constructor
+*/
+function Material()
+{
+	this._color = vec4.fromValues(1,1,1,1);
+	this.shader_name = null;
+
+	this.uniforms = {
+		u_color: this._color
+	};
+	this.textures = {};
+
+	this.primitive = GL.TRIANGLES;
+
+	this.blend_mode = RD.BLEND_NONE;
+
+	this.flags = {
+		two_sided: false,
+		depth_test: true,
+		depth_write: true
+	};
+}
+
+Object.defineProperty( Material.prototype, "color", {
+	set: function(v){
+		this._color.set(v);
+	},
+	get: function() { return this._color; },
+	enumerable: true
+});
+
+/**
+* This number is the 4º component of color but can be accessed directly 
+* @property opacity {number}
+*/
+Object.defineProperty( Material.prototype, 'opacity', {
+	get: function() { return this._color[3]; },
+	set: function(v) { this._color[3] = v; },
+	enumerable: true //avoid problems
+});
+
+Material.prototype.render = function( renderer, model, mesh, indices_name, group_index )
+{
+	//get shader
+	var shader = gl.shaders[ this.shader_name ];
+	if (!shader)
+		shader = this.textures.color ? renderer._texture_shader : renderer._flat_shader;
+
+	//get texture
+	var slot = 0;
+	var texture = null;
+	for(var i in this.textures)
+	{
+		var texture_name = this.textures[i];
+		if(!texture_name)
+			continue;
+		var texture_uniform_name = "u_" + i + "_texture";
+
+		if( shader && !shader.samplers[ texture_uniform_name ]) //texture not used in shader
+			continue; //do not bind it
+
+		texture = gl.textures[ texture_name ];
+		if(!texture)
+		{
+			if(renderer.autoload_assets && texture_name.indexOf(".") != -1)
+				renderer.loadTexture( texture_name, renderer.default_texture_settings );
+			texture = gl.textures[ "white" ];
+		}
+
+		this.uniforms[ texture_uniform_name ] = texture.bind( slot++ );
+	}
+
+	//flags
+	renderer.enableItemFlags( this );
+
+	shader.uniforms( renderer._uniforms ); //globals
+	shader.uniforms( this.uniforms ); //locals
+
+	var group = null;
+	if( group_index != null && mesh.info && mesh.info.groups && mesh.info.groups[ group_index ] )
+		group = mesh.info.groups[ group_index ];
+
+	if(group)
+		shader.drawRange( mesh, this.primitive, group.start, group.length, indices_name );
+	else
+		shader.draw( mesh, this.primitive, indices_name );
+
+	renderer.disableItemFlags( this );
+}
+
+RD.Material = Material;
 
 /**
 * Renderer in charge of rendering a Scene
@@ -2604,7 +2740,7 @@ Object.defineProperty( Renderer.prototype, "color", {
 	set: function(v){
 		this._color.set(v);
 	},
-	get: function() { return v; },
+	get: function() { return this._color; },
 	enumerable: true
 });
 
@@ -2739,8 +2875,10 @@ Renderer.prototype.render = function(scene, camera, nodes, layers )
 		//recompute matrices
 		node.updateGlobalMatrix(true);
 		
+		if(this.onPreRenderNode)
+			this.onPreRenderNode( node, camera);
 		if(node.preRender)
-			node.preRender(this,camera);
+			node.preRender( this, camera );
 	}
 	
 	//rendering	
@@ -2770,7 +2908,12 @@ Renderer.prototype.render = function(scene, camera, nodes, layers )
 		var node = nodes[i];
 		if(node.postRender)
 			node.postRender(this,camera);
+		if(this.onPostRenderNode)
+			this.onPostRenderNode( node, camera);
 	}
+
+	if(this.onPostRender)
+		this.onPostRender( camera );
 	
 	scene.frame++;
 	this.frame++;
@@ -2872,6 +3015,29 @@ Renderer.prototype.renderNode = function(node, camera)
 				this.loadMesh( node.mesh );
 		}
 	}
+
+	//from GLTF
+	if( node.primitives )
+	{
+		if(!mesh)
+			return;
+		for(var i = 0; i < node.primitives.length; ++i)
+		{
+			var prim = node.primitives[i];
+			var material = RD.Materials[ prim.material ];
+			if(material)
+				this.renderMeshWithMaterial( node._global_matrix, mesh, material, "triangles", i );
+		}
+		return;
+	}
+
+	if(node.material)
+	{
+		var material = RD.Materials[ node.material ];
+		if(material)
+			this.renderMeshWithMaterial( node._global_matrix, mesh, material, node.indices, node.submesh );
+		return;
+	}
 		
 	if(!mesh)
 	{
@@ -2939,7 +3105,7 @@ Renderer.prototype.renderNode = function(node, camera)
 
 	//flags
 	if(!this.ignore_flags)
-		this.enableNodeFlags( node );
+		this.enableItemFlags( node );
 	
 	if(node.onRender)
 		node.onRender(this, camera, shader);
@@ -2978,10 +3144,10 @@ Renderer.prototype.renderNode = function(node, camera)
 	}
 
 	if(!this.ignore_flags)
-		this.disableNodeFlags( node );
+		this.disableItemFlags( node );
 }
 
-Renderer.prototype.renderMesh = function( model, mesh, texture, color, shader, mode, index_buffer_name )
+Renderer.prototype.renderMesh = function( model, mesh, texture, color, shader, mode, index_buffer_name, group_index )
 {
 	if(!mesh)
 		return;
@@ -2998,6 +3164,12 @@ Renderer.prototype.renderMesh = function( model, mesh, texture, color, shader, m
 	shader.draw( mesh, mode === undefined ? gl.TRIANGLES : mode, index_buffer_name );
 }
 
+Renderer.prototype.renderMeshWithMaterial = function( model, mesh, material, index_buffer_name, group_index )
+{
+	material.render( this, model, mesh, index_buffer_name, group_index );
+}
+
+
 Renderer.prototype.renderBounding = function(mesh, matrix)
 {
 	if(!mesh)
@@ -3010,22 +3182,22 @@ Renderer.prototype.renderBounding = function(mesh, matrix)
 	this.renderMesh( m, gl.meshes["cube"], null, [1,1,0,1], null, gl.LINES, "wireframe" );
 }
 
-Renderer.prototype.enableNodeFlags = function(node)
+Renderer.prototype.enableItemFlags = function(item)
 {
-	var ff = node.flags.flip_normals;
+	var ff = item.flags.flip_normals;
 	if(this.reverse_normals)
 		ff = !ff;
 	gl.frontFace( ff ? gl.CW : gl.CCW );
-	gl[ node.flags.depth_test === false ? "disable" : "enable"]( gl.DEPTH_TEST );
-	if( node.flags.depth_write === false )
+	gl[ item.flags.depth_test === false ? "disable" : "enable"]( gl.DEPTH_TEST );
+	if( item.flags.depth_write === false )
 		gl.depthMask( false );
-	gl[ node.flags.two_sided === true ? "disable" : "enable"]( gl.CULL_FACE );
+	gl[ item.flags.two_sided === true ? "disable" : "enable"]( gl.CULL_FACE );
 	
 	//blend
-	if(	node.blend_mode !== RD.BLEND_NONE )
+	if(	item.blend_mode !== RD.BLEND_NONE )
 	{
 		gl.enable( gl.BLEND );
-		switch( node.blend_mode )
+		switch( item.blend_mode )
 		{
 			case RD.BLEND_ALPHA: gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA ); break;
 			case RD.BLEND_ADD: gl.blendFunc( gl.SRC_ALPHA, gl.ONE ); break;
@@ -3036,13 +3208,13 @@ Renderer.prototype.enableNodeFlags = function(node)
 		gl.disable( gl.BLEND );
 }
 
-Renderer.prototype.disableNodeFlags = function(node)
+Renderer.prototype.disableItemFlags = function(item)
 {
-	if( node.flags.flip_normals ) gl.frontFace( gl.CCW );
-	if( node.flags.depth_test === false ) gl.enable( gl.DEPTH_TEST );
-	if( node.blend_mode !== RD.BLEND_NONE ) gl.disable( gl.BLEND );
-	if( node.flags.two_sided ) gl.disable( gl.CULL_FACE );
-	if( node.flags.depth_write === false )
+	if( item.flags.flip_normals ) gl.frontFace( gl.CCW );
+	if( item.flags.depth_test === false ) gl.enable( gl.DEPTH_TEST );
+	if( item.blend_mode !== RD.BLEND_NONE ) gl.disable( gl.BLEND );
+	if( item.flags.two_sided ) gl.disable( gl.CULL_FACE );
+	if( item.flags.depth_write === false )
 		gl.depthMask( true );
 }
 
@@ -3258,7 +3430,7 @@ Renderer.prototype.loadTexture = function( url, options, on_complete )
 		full_url = this.assets_folder + url;
 
 	var new_tex = null;
-
+	
 	if( url.indexOf("CUBEMAP") != -1 )
 		new_tex = GL.Texture.cubemapFromURL( full_url, this.default_cubemap_settings, inner_callback );
 	else
@@ -3823,9 +3995,9 @@ DynamicMeshNode.prototype.render = function( renderer, camera )
 	renderer.setModelMatrix( this._global_matrix );
 	var mesh = this._mesh;
 	var range = this._total_indices ? this._total_indices : this._total / 3;
-	renderer.enableNodeFlags( this );
+	renderer.enableItemFlags( this );
 	shader.uniforms( renderer._uniforms ).uniforms( this._uniforms ).drawRange( mesh, this.primitive === undefined ? GL.TRIANGLES : this.primitive, 0, range, this._total_indices ? "triangles" : null );
-	renderer.disableNodeFlags( this );
+	renderer.disableItemFlags( this );
 }
 
 extendClass( DynamicMeshNode, SceneNode );
@@ -4369,7 +4541,28 @@ Renderer.prototype.createShaders = function()
 	
 	gl.shaders["textured_phong_instancing"] = this._textured_phong_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { INSTANCING: "", TEXTURED: "" } );
 	this._textured_phong_instancing_shader.uniforms( this._phong_uniforms );
+
+	var fragment_shader = '\
+			precision highp float;\n\
+			varying vec3 v_normal;\n\
+			void main() {\n\
+				gl_FragColor = vec4( normalize(v_normal),1.0);\n\
+			}\
+	'
+	gl.shaders["normal"] = this._normal_shader = new GL.Shader( vertex_shader, fragment_shader );
+
+	var fragment_shader = '\
+			precision highp float;\n\
+			varying vec2 v_coord;\n\
+			void main() {\n\
+				gl_FragColor = vec4(v_coord,0.0,1.0);\n\
+			}\
+	'
+	gl.shaders["uvs"] = this._uvs_shader = new GL.Shader( vertex_shader, fragment_shader );
+
 }
+
+//****************************
 
 RD.orientNodeToCamera = function( mode, node, camera, renderer )
 {
@@ -4556,8 +4749,13 @@ PointCloud.prototype.render = function(renderer, camera )
 	var viewport = gl.getViewport();
 	this._uniforms.u_pointSize = this.points_size / (gl.canvas.width / viewport[2]);
 	this._uniforms.u_color = this.color;
-	this._uniforms.u_texture_info[0] = 1 / this.num_textures;
-	this._uniforms.u_texture_info[1] = this.num_textures * this.num_textures;
+	if(this.num_textures > 0)
+	{
+		this._uniforms.u_texture_info[0] = 1 / this.num_textures;
+		this._uniforms.u_texture_info[1] = this.num_textures * this.num_textures;
+	}
+	else
+		this._uniforms.u_texture_info[0] = 0;
 	
 	if(this.ignore_transform)
 	{
@@ -4580,7 +4778,7 @@ PointCloud.prototype.updateVertices = function(mesh)
 	for(var i = 0; i < l; i++)
 	{
 		var p = this.points[i];
-		vertices.set( p.pos, pos );
+		vertices.set( p.pos ? p.pos : p, pos );
 		extra[pos] = 1;
 		extra[pos+1] = 1;
 		if(num_textures2 > 1)
