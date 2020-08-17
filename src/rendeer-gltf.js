@@ -18,36 +18,84 @@ RD.GLTF = {
 
 	prefabs: {},
 
+	texture_options: { format: GL.RGBA, magFilter: GL.LINEAR, minFilter: GL.LINEAR_MIPMAP_LINEAR, wrap: GL.REPEAT },
+
 	load: function( url, callback, extension )
 	{
 		var json = null;
-		var folder = url.split("/");
-		var filename = folder.pop();
-		extension = extension || filename.split(".").pop().toLowerCase();
-		folder = folder.join("/");
+		var filename = "";
+		var folder = "";
 
-		console.log("loading gltf json...");
-		fetch(url).then(function(response) {
-			if( extension == "gltf" )
-				return response.json();
-			else
-				return response.arrayBuffer();
-		}).then(function(data){
+		//its a regular url
+		if(url.constructor === String)
+		{
+			folder = url.split("/");
+			filename = folder.pop();
+			extension = extension || filename.split(".").pop().toLowerCase();
+			folder = folder.join("/");
 
-			if( extension == "gltf" )
+			console.log("loading gltf json...");
+			fetch(url).then(function(response) {
+				if( extension == "gltf" )
+					return response.json();
+				else
+					return response.arrayBuffer();
+			}).then(function(data){
+
+				if( extension == "gltf" )
+				{
+					json = data;
+					console.log("loading gltf binaries...");
+					fetchBinaries( json.buffers.concat() );
+				}
+				else if( extension == "glb" )
+				{
+					json = RD.GLTF.parseGLB(data);
+					if(!json)
+						return;
+					onFetchComplete();
+				}
+			});
+		}
+		else //array of files already loaded
+		{
+			var files_data = url;
+			console.log(files_data);
+			filename = files_data["main"];
+			url = filename;
+			var main = files_data[ filename ];
+			if(main.extension == "glb")
 			{
-				json = data;
-				console.log("loading gltf binaries...");
-				fetchBinaries( json.buffers.concat() );
-			}
-			else if( extension == "glb" )
-			{
-				json = RD.GLTF.parseGLB(data);
+				json = RD.GLTF.parseGLB(main.data);
 				if(!json)
 					return;
 				onFetchComplete();
+				return;
 			}
-		});
+			json = main.data;
+
+			//gltf
+			for(var i = 0; i < json.buffers.length; ++i)
+			{
+				var buffer = json.buffers[i];
+				var data = null;
+				if( buffer.uri.substr(0,5) == "data:")
+					buffer.data = _base64ToArrayBuffer( buffer.uri.substr(37) );
+				else
+				{
+					var file = files_data[ buffer.uri ];
+					buffer.data = file.data;
+				}
+
+				buffer.dataview = new Uint8Array( buffer.data );
+				/*
+				if(data.byteLength != buffer.byteLength)
+					console.warn("gltf binary doesnt match json size hint");
+				*/
+			}
+			onFetchComplete();
+
+		}
 
 		function fetchBinaries( list )
 		{
@@ -271,9 +319,14 @@ RD.GLTF = {
 
 		//extract primitives
 		var meshes = [];
+		var prims = [];
+		var start = 0;
 		for(var i = 0; i < mesh_info.primitives.length; ++i)
 		{
 			var prim = this.parsePrimitive( mesh_info, i, json );
+			prim.start = start;
+			start += prim.length;
+			prims.push(prim);
 			var mesh_primitive = { vertexBuffers: {}, indexBuffers:{} };
 			for(var j in prim.buffers)
 				if( j == "indices" || j == "triangles" )
@@ -288,20 +341,30 @@ RD.GLTF = {
 		if(meshes.length > 1)
 			mesh = GL.Mesh.mergeMeshes( meshes );
 		else
-			mesh = new GL.Mesh( meshes[0].mesh.vertexBuffers, meshes[0].mesh.indexBuffers );
+		{
+			var mesh_data = meshes[0].mesh;
+			mesh = new GL.Mesh( mesh_data.vertexBuffers, mesh_data.indexBuffers );
+			if( mesh.info && mesh_data.info)
+				mesh.info = mesh_data.info;
+		}
 
 		for(var i = 0; i < mesh_info.primitives.length; ++i)
 		{
 			var g = mesh.info.groups[i];
 			if(!g)
 				mesh.info.groups[i] = g = {};
-			g.material = mesh_info.primitives[i].material;
-			g.mode = mesh_info.primitives[i].mode;
+			var prim = mesh_info.primitives[i];
+			g.material = prim.material;
+			g.mode = prim.mode;
+			g.start = prims[i].start;
+			g.length = prims[i].length;
 		}
 
 		mesh.name = mesh_info.name || "mesh_" + index;
 		//mesh.material = primitive.material;
 		//mesh.primitive = mesh_info.mode;
+		mesh.updateBoundingBox();
+		mesh.computeGroupsBoundingBoxes();
 		meshes_container[ mesh.name ] = mesh;
 		return mesh;
 	},
@@ -314,6 +377,11 @@ RD.GLTF = {
 		var buffers = primitive.buffers;
 
 		var primitive_info = mesh_info.primitives[ index ];
+		if(primitive_info.extensions)
+		{
+			throw("mesh data is compressed, this importer does not support it yet");
+			return null;
+		}
 
 		if(!primitive_info.attributes.POSITION == null)
 			console.warn("gltf mesh without positions");
@@ -337,6 +405,8 @@ RD.GLTF = {
 
 		primitive.mode = primitive_info.mode;
 		primitive.material = primitive_info.material;
+		primitive.start = 0;
+		primitive.length = buffers.triangles ? buffers.triangles.length : buffers.vertices.length / 3;
 		return primitive;
 	},
 
@@ -430,33 +500,40 @@ RD.GLTF = {
 		//material.shader_name = "phong";
 
 		if(info.alphaMode != null)
-			material.blendMode = info.alphaMode;
-		if(info.alphaCutoff != null)
-			material.alphaCutoff = info.alphaCutoff;
+			material.alphaMode = info.alphaMode;
+		material.alphaCutoff = info.alphaCutoff != null ? info.alphaCutoff : 0.5;
 		if(info.doubleSided != null)
-			material.doubleSided = info.doubleSided;
+			material.flags.two_sided = info.doubleSided;
 
 		if(info.pbrMetallicRoughness)
 		{
 			material.model = "pbrMetallicRoughness";
+
+			//default values
+			material.color.set([1,1,1]);
+			material.opacity = 1;
+			material.metallicFactor = 1;
+			material.roughnessFactor = 1;
+
 			if(info.pbrMetallicRoughness.baseColorFactor != null)
 				material.color = info.pbrMetallicRoughness.baseColorFactor;
+			if(info.pbrMetallicRoughness.baseColorTexture)
+				material.textures.albedo = this.parseTexture( info.pbrMetallicRoughness.baseColorTexture, json );
 			if(info.pbrMetallicRoughness.metallicFactor != null)
 				material.metallicFactor = info.pbrMetallicRoughness.metallicFactor;
 			if(info.pbrMetallicRoughness.roughnessFactor != null)
 				material.roughnessFactor = info.pbrMetallicRoughness.roughnessFactor;
-			if(info.pbrMetallicRoughness.baseColorTexture)
-				material.textures.color = this.parseTexture( info.pbrMetallicRoughness.baseColorTexture.index, json );
-			if(info.pbrMetallicRoughness.metallicRoughnessTexture)
-				material.textures.metallicRoughness = this.parseTexture( info.pbrMetallicRoughness.metallicRoughnessTexture.index, json );
+			//GLTF do not support metallic or roughtness in individual textures
+			if(info.pbrMetallicRoughness.metallicRoughnessTexture) //RED: Occlusion, GREEN: Roughtness, BLUE: Metalness
+				material.textures.metallicRoughness = this.parseTexture( info.pbrMetallicRoughness.metallicRoughnessTexture, json );
 		}
 
 		if(info.occlusionTexture)
-			material.textures.occlusion = this.parseTexture( info.occlusionTexture.index, json );
+			material.textures.occlusion = this.parseTexture( info.occlusionTexture, json );
 		if(info.normalTexture)
-			material.textures.normalmap = this.parseTexture( info.normalTexture.index, json );
+			material.textures.normal = this.parseTexture( info.normalTexture, json );
 		if(info.emissiveTexture)
-			material.textures.emissive = this.parseTexture( info.emissiveTexture.index, json );
+			material.textures.emissive = this.parseTexture( info.emissiveTexture, json );
 		if(info.emissiveFactor)
 			material.emissive = info.emissiveFactor;
 
@@ -464,28 +541,58 @@ RD.GLTF = {
 		return material;
 	},
 
-	parseTexture: function( index, json )
+	parseTexture: function( mat_tex_info, json )
 	{
-		var info = json.textures[index];
+		var info = json.textures[ mat_tex_info.index ];
 		if(!info)
 		{
 			console.warn("gltf texture not found");
 			return null;
 		}
 
+		//source
 		var source = json.images[ info.source ];
-		var image_name = json.url.replace(/[\/\.\:]/gi,"_") + "_image_" + index;// + ".png";
-		image_name += "." + (source.mimeType.split("/").pop());
-		var image = RD.Images[ image_name ];
-		if( image )
-			return image;
+		var extension = "";
+		var image_name = null;
+		if(source.uri)
+		{
+			image_name = source.uri;
+			extension = image_name.split(".").pop();
+		}
+		else
+		{
+			image_name = json.url.replace(/[\/\.\:]/gi,"_") + "_image_" + mat_tex_info.index;// + ".png";
+			if( source.mimeType )
+				extension = (source.mimeType.split("/").pop());
+			else
+				extension = "png"; //defaulting
+			image_name += "." + extension;
+		}
+		var tex = gl.textures[ image_name ];
+		if( tex )
+			return image_name;
 
-		var image_data = {};
+		var result = {};
 
 		if(source.uri) //external image file
 		{
 			var filename = source.uri;
-			image_data.filename = json.folder + "/" + filename;
+			if(filename.substr(0,5) == "data:")
+			{
+				var start = source.uri.indexOf(",");
+				var mimeType = source.uri.substr(5,start);
+				var extension = mimeType.split("/").pop().toLowerCase();
+				var image_name = json.folder + "/" + filename + "image_" + mat_tex_info.index + "." + extension;
+				var image_bytes = _base64ToArrayBuffer( source.uri.substr(start+1) );
+				var image_url = URL.createObjectURL( new Blob([image_bytes],{ type : mimeType }) );
+				//var img = new Image(); img.src = image_url; document.body.appendChild(img); //debug
+				var texture = GL.Texture.fromURL( image_url, this.texture_options );
+				texture.name = image_name;
+				gl.textures[ image_name ] = texture;
+
+			}
+			else
+				result.filename = json.folder + "/" + filename;
 		}
 		else if(source.bufferView != null) //embeded image file
 		{
@@ -494,22 +601,29 @@ RD.GLTF = {
 				bufferView.byteOffset = 0;
 			var buffer = json.buffers[ bufferView.buffer ];
 			var image_bytes = buffer.data.slice( bufferView.byteOffset, bufferView.byteOffset + bufferView.byteLength );
-
 			var image_url = URL.createObjectURL( new Blob([image_bytes],{ type : source.mimeType }) );
-			var texture = GL.Texture.fromURL( image_url );
+			//var img = new Image(); img.src = image_url; document.body.appendChild(img); //debug
+			var texture = GL.Texture.fromURL( image_url, this.texture_options );
 			texture.name = image_name;
 			gl.textures[ image_name ] = texture;
 		}
 
-		if(info.sampler)
+		result.texture = image_name;
+
+		//sampler
+		if(info.sampler != null)
 		{
 			var sampler = json.samplers[ info.sampler ];
-			image_data.magFilter = sampler.magFilter;
-			image_data.minFilter = sampler.minFilter;
+			if(sampler.magFilter != null)
+				result.magFilter = sampler.magFilter;
+			if(sampler.minFilter != null)
+				result.minFilter = sampler.minFilter;
 		}
 
-		//return image_data;
-		return image_name;
+		if( mat_tex_info.texCoord )
+			result.uv_channel = mat_tex_info.texCoord;
+
+		return result;
 	},
 
 	parseSkin: function( index, json )
@@ -596,14 +710,62 @@ RD.GLTF = {
 	{
 		//search for .GLTF
 		//...
-		var file = files[0];
-		var url = URL.createObjectURL( file );
-		var t = file.name.split(".");
-		var extension = t[ t.length - 1 ].toLowerCase();
-		this.load(url,function(node){
-			if(callback)
-				callback(node);
-		},extension);
+		var files_data = {};
+		var pending = files.length;
+		var that = this;
+		var bins = [];
+
+		for(var i = 0; i < files.length; ++i)
+		{
+			var file = files[i];
+			var reader = new FileReader();
+			var t = file.name.split(".");
+			var extension = t[ t.length - 1 ].toLowerCase();
+			reader.onload = inner;
+			reader.filename = file.name;
+			reader.extension = extension;
+			if(extension == "gltf")
+				reader.readAsText(file);
+			else
+				reader.readAsArrayBuffer(file);
+		}
+
+		function inner(e)
+		{
+			var data = e.target.result;
+			var extension = this.extension;
+			if(extension == "gltf")
+			{
+				data = JSON.parse(data);
+				files_data["main"] = this.filename;
+			}
+			else if(extension == "glb")
+				files_data["main"] = this.filename;
+			else if(extension == "bin")
+				bins.push(this.filename);
+			else if(extension == "jpeg" || extension == "jpg" || extension == "png")
+			{
+				var image_url = URL.createObjectURL( new Blob([data],{ type : e.target.mimeType }) );
+				var texture = GL.Texture.fromURL( image_url, { wrap: gl.REPEAT, extension: extension } );				
+				texture.name = this.filename;
+				gl.textures[ texture.name ] = texture;
+			}
+
+			files_data[ this.filename ] = { 
+				filename: this.filename,
+				data: data,
+				extension: this.extension
+			};
+			pending--;
+			if(pending == 0)
+			{
+				files_data["binaries"] = bins;
+				that.load( files_data, function(node) {
+					if(callback)
+						callback(node);
+				});
+			}
+		}
 	}
 };
 

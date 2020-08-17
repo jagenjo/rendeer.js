@@ -542,7 +542,8 @@ global.extendClass = GL.extendClass = function extendClass( target, origin ) {
 global.HttpRequest = GL.request = function HttpRequest( url, params, callback, error, options )
 {
 	var async = true;
-	if(options && options.async !== undefined)
+	options = options || {};
+	if(options.async !== undefined)
 		async = options.async;
 
 	if(params)
@@ -557,6 +558,7 @@ global.HttpRequest = GL.request = function HttpRequest( url, params, callback, e
 
 	var xhr = new XMLHttpRequest();
 	xhr.open('GET', url, async);
+	xhr.responseType = options.responseType || "text";
 	xhr.onload = function(e)
 	{
 		var response = this.response;
@@ -869,8 +871,44 @@ global.hexColorToRGBA = (function() {
 	color[1] = parseInt(result[2], 16) / 255;
 	color[2] = parseInt(result[3], 16) / 255;
 	return color;
-	}
-})();
+}})();
+
+global.toHalfFloat = (function() {
+
+  var floatView = new Float32Array(1);
+  var int32View = new Int32Array(floatView.buffer);
+
+  return function toHalfFloat( fval ) {
+    floatView[0] = fval;
+    var fbits = int32View[0];
+    var sign  = (fbits >> 16) & 0x8000;          // sign only
+    var val   = ( fbits & 0x7fffffff ) + 0x1000; // rounded value
+
+    if( val >= 0x47800000 ) {             // might be or become NaN/Inf
+      if( ( fbits & 0x7fffffff ) >= 0x47800000 ) {
+                                          // is or must become NaN/Inf
+        if( val < 0x7f800000 ) {          // was value but too large
+          return sign | 0x7c00;           // make it +/-Inf
+        }
+        return sign | 0x7c00 |            // remains +/-Inf or NaN
+            ( fbits & 0x007fffff ) >> 13; // keep NaN (and Inf) bits
+      }
+      return sign | 0x7bff;               // unrounded not quite Inf
+    }
+    if( val >= 0x38800000 ) {             // remains normalized value
+      return sign | val - 0x38000000 >> 13; // exp - 127 + 15
+    }
+    if( val < 0x33000000 )  {             // too small for subnormal
+      return sign;                        // becomes +/-0
+    }
+    val = ( fbits & 0x7fffffff ) >> 23;   // tmp exp for subnormal calc
+    return sign | ( ( fbits & 0x7fffff | 0x800000 ) // add subnormal bit
+         + ( 0x800000 >>> val - 102 )     // round depending on cut off
+         >> 126 - val );                  // div by 2^(1-(exp-127+15)) and >> 13 | exp=0
+}}());
+
+
+
 
 /**
  * @fileoverview dds - Utilities for loading DDS texture files
@@ -5747,6 +5785,10 @@ Texture.prototype.computeInternalFormat = function()
 				console.warn("webgl 1 does not use HALF_FLOAT, converting to HALF_FLOAT_OES")
 				this.type = GL.HALF_FLOAT_OES;
 			}
+			else if( this.type == GL.FLOAT )
+			{
+				//this.internalFormat = this.format == GL.RGB ? GL.RGB32F : GL.RGBA32F;
+			}
 		}
 	}
 }
@@ -7807,7 +7849,8 @@ FBO.prototype.update = function( skip_disable )
 
 	var w = -1,
 		h = -1,
-		type = null;
+		type = null,
+		format = null;
 
 	var color_textures = this.color_textures;
 	var depth_texture = this.depth_texture;
@@ -7827,8 +7870,11 @@ FBO.prototype.update = function( skip_disable )
 				h = t.height;
 			else if(h != t.height)
 				throw("Cannot bind textures with different dimensions");
-			if(type == null) //first one defines the type
+			if(type == null) //first one defines the type: UNSIGNED_BYTE, etc
+			{
 				type = t.type;
+				format = t.format;
+			}
 			else if (type != t.type)
 				throw("Cannot bind textures to a FBO with different pixel formats");
 			if (t.texture_type != gl.TEXTURE_2D)
@@ -7960,7 +8006,11 @@ FBO.prototype.update = function( skip_disable )
 	//check completion
 	var complete = gl.checkFramebufferStatus( target );
 	if(complete !== gl.FRAMEBUFFER_COMPLETE) //36054: GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT
+	{
+		if( format == GL.RGB && (type == GL.FLOAT || type == GL.HALF_FLOAT_OES))
+			console.error("Tip: Firefox does not support RGB channel float/half_float textures, you must use RGBA");
 		throw("FBO not complete: " + complete);
+	}
 
 	//restore state
 	gl.bindTexture(gl.TEXTURE_2D, null);
@@ -9547,6 +9597,7 @@ Shader.FXAA_FUNC = "\n\
 	#define FXAA_SPAN_MAX     8.0\n\
 	\n\
 	/* from mitsuhiko/webgl-meincraft based on the code on geeks3d.com */\n\
+	/* fragCoord MUST BE IN PIXELS */\n\
 	vec4 applyFXAA(sampler2D tex, vec2 fragCoord)\n\
 	{\n\
 		vec4 color = vec4(0.0);\n\
@@ -9579,7 +9630,7 @@ Shader.FXAA_FUNC = "\n\
 		vec3 rgbB = rgbA * 0.5 + 0.25 * (texture2D(tex, fragCoord * u_iViewportSize + dir * -0.5).xyz + \n\
 			texture2D(tex, fragCoord * u_iViewportSize + dir * 0.5).xyz);\n\
 		\n\
-		return vec4(rgbA,1.0);\n\
+		//return vec4(rgbA,1.0);\n\
 		float lumaB = dot(rgbB, luma);\n\
 		if ((lumaB < lumaMin) || (lumaB > lumaMax))\n\
 			color = vec4(rgbA, 1.0);\n\

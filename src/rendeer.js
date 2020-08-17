@@ -214,6 +214,7 @@ SceneNode.prototype._ctor = function()
 	this._color = vec4.fromValues(1,1,1,1);
 	this._uniforms = { u_color: this._color, u_color_texture: 0 };
 	this.primitive = GL.TRIANGLES;
+	this.primitives = []; //in case this object has multimaterial this will contain { index: submesh index, material: material name, mode: render primitive };
 	this.draw_range = null;
 	this._instances = null; //array of mat4 with the model for every instance
 
@@ -665,8 +666,15 @@ SceneNode.prototype.serialize = function()
 		position: [ this._position[0], this._position[1], this._position[2] ],
 		rotation: [ this._rotation[0], this._rotation[1], this._rotation[2], this._rotation[3] ],
 		scale: [ this._scale[0], this._scale[1], this._scale[2] ],
-		children: []
+		children: [],
 	};
+
+	if(this.primitives)
+		r.primitives = this.primitives.concat();
+	if(this.mesh)
+		r.mesh = this.mesh;
+	if(this.material)
+		r.material = this.material;
 
 	if(this.children)
 	for(var i = 0, l = this.children.length; i < l; i++)
@@ -715,6 +723,9 @@ SceneNode.prototype.configure = function(o)
 				else
 					this.setTextureTiling(o[i][0],o[i][1],o[i][2],o[i][3]);
 				continue;
+			case "mesh":
+			case "primitives":
+			case "material":
 			case "ref":
 			case "draw_range":
 			case "submesh":
@@ -1363,7 +1374,7 @@ SceneNode.prototype.testRay = (function(){
 	var inv = mat4.create();
 	var local_collision = mat4.create();
 
-	return function( ray, result, max_dist, layers, test_against_mesh )
+	return function( ray, result, max_dist, layers, test_against_mesh, test_primitives )
 	{
 		max_dist = max_dist === undefined ? Number.MAX_VALUE : max_dist;
 		if(layers === undefined)
@@ -1380,8 +1391,12 @@ SceneNode.prototype.testRay = (function(){
 
 		//test with this node mesh 
 		var collided = null;
-		if( (this.layers & layers) && this.mesh && !this.flags.ignore_collisions )
-			collided = this.testRayWithMesh( ray, collision_point, max_dist, layers, test_against_mesh );
+
+		if( (this.layers & layers) && !this.flags.ignore_collisions )
+		{
+			if( this.mesh )
+				collided = this.testRayWithMesh( ray, collision_point, max_dist, layers, test_against_mesh, test_primitives );
+		}
 
 		//update closest point if there was a collision
 		if(collided)
@@ -1419,28 +1434,26 @@ SceneNode.prototype.testRay = (function(){
 	}
 })();
 
+var last_ray_distance = -1;
 
 /**
 * Tests if the ray collides with the mesh in this node
 * @method testRayWithMesh
 * @param { GL.Ray } ray the object containing origin and direction of the ray
-* @param { vec3 } result where to store the collision point
+* @param { vec3 } coll_point where to store the collision point
 * @param { Number } max_dist the max distance of the ray
 * @param { Number } layers the layers where you want to test
 * @param { Boolean } test_against_mesh if true it will test collision with mesh, otherwise only bounding
 * @return { Boolean } true if it collided
 */
 SceneNode.prototype.testRayWithMesh = (function(){ 
-	var temp = vec3.create();
 	var origin = vec3.create();
 	var direction = vec3.create();
 	var end = vec3.create();
 	var inv = mat4.create();
 
-	return function( ray, result, max_dist, layers, test_against_mesh )
+	return function( ray, coll_point, max_dist, layers, test_against_mesh, test_primitives )
 	{
-		max_dist = max_dist === undefined ? Number.MAX_VALUE : max_dist;
-
 		if( !this.mesh )
 			return false;
 
@@ -1448,27 +1461,7 @@ SceneNode.prototype.testRayWithMesh = (function(){
 		if( !mesh ) //mesh not loaded
 			return false;
 
-		var bb = null;
-		var subgroup = mesh;
-
-		if(this.submesh == null)
-			bb = mesh.getBoundingBox();
-		else
-		{
-			subgroup = mesh.info.groups[ this.submesh ];
-			bb = subgroup.bounding;
-			if(!bb)
-			{
-				mesh.computeGroupsBoundingBoxes();
-				bb = subgroup.bounding;
-			}
-		}
-
-		if(!bb) //mesh has no vertices
-			return false;
-
-		if(!max_dist)
-			max_dist = 10000000;
+		var group_index = this.submesh == null ? -1 : this.submesh;
 
 		//ray to local
 		var model = this._global_matrix;
@@ -1479,49 +1472,92 @@ SceneNode.prototype.testRayWithMesh = (function(){
 		vec3.sub( direction, end, origin );
 		vec3.normalize( direction, direction );
 
-		//test against object oriented bounding box
-		var r = geo.testRayBBox( origin, direction, bb, null, temp );
-		if(!r) //collided with OOBB
-			return false;
-
-		vec3.transformMat4( result, temp, model );
-		var distance = vec3.distance( ray.origin, result );
-
-		//there was a collision but too far
-		if( distance > max_dist )
-			return false; 
-		
-		//test agains mesh
-		if( !test_against_mesh )
-			return true;
-
-		//create mesh octree
-		if(!subgroup._octree)
+		if( this.primitives && test_primitives )
 		{
-			if( subgroup == mesh )
-				subgroup._octree = new GL.Octree( mesh );
-			else
-				subgroup._octree = new GL.Octree( mesh, subgroup.start, subgroup.length );
+			for(var i = 0; i < this.primitives.length; ++i)
+			{
+				var info = this.primitives[i];
+				var test = SceneNode.testRayMesh( ray, origin, direction, mesh, info.index, coll_point, max_dist, layers, test_against_mesh, true );
+			}
 		}
-
-		//ray test agains octree
-		var hit_test = subgroup._octree.testRay( origin, direction, 0, max_dist, this.flags.two_sided );
-
-		//collided the OOBB but not the mesh, so its a not
-		if( !hit_test ) 
-			return false;
-
-		//compute global hit point
-		result.set( hit_test.hit );
-		vec3.transformMat4( result, result, model );
-		var distance = vec3.distance( ray.origin, result );
-
-		//there was a collision but too far
-		if( distance > max_dist )
-			return false; 
-		return true;
+		else
+			return SceneNode.testRayMesh( ray, origin, direction, model, mesh, group_index, coll_point, max_dist, layers, test_against_mesh, this.flags.two_sided );
 	}
 })();
+
+//internal function to reuse computations
+SceneNode.testRayMesh = function( ray, local_origin, local_direction, model, mesh, group_index, result, max_dist, layers, test_against_mesh, two_sided )
+{
+	max_dist = max_dist === undefined ? Number.MAX_VALUE : max_dist;
+
+	var bb = null;
+	var subgroup = null;
+
+	if( group_index == -1 )
+	{
+		bb = mesh.getBoundingBox();
+		subgroup = mesh;
+	}
+	else
+	{
+		subgroup = mesh.info.groups[ group_index ];
+		bb = subgroup.bounding;
+		if(!bb)
+		{
+			mesh.computeGroupsBoundingBoxes();
+			bb = subgroup.bounding;
+		}
+	}
+
+	if(!bb) //mesh has no vertices
+		return false;
+
+	if(!max_dist)
+		max_dist = 10000000;
+
+	//test against object oriented bounding box
+	var r = geo.testRayBBox( local_origin, local_direction, bb, null, temp_vec3 );
+	if(!r) //collided with OOBB
+		return false;
+
+	vec3.transformMat4( result, temp_vec3, model );
+	var distance = last_ray_distance = vec3.distance( ray.origin, result );
+
+	//there was a collision but too far
+	if( distance > max_dist )
+		return false; 
+	
+	//test agains mesh
+	if( !test_against_mesh )
+		return true;
+
+	//create mesh octree
+	if(!subgroup._octree)
+	{
+		if( subgroup == mesh )
+			subgroup._octree = new GL.Octree( mesh );
+		else
+			subgroup._octree = new GL.Octree( mesh, subgroup.start, subgroup.length );
+	}
+
+	//ray test agains octree
+	var hit_test = subgroup._octree.testRay( local_origin, local_direction, 0, max_dist, two_sided );
+
+	//collided the OOBB but not the mesh, so its a not
+	if( !hit_test ) 
+		return false;
+
+	//compute global hit point
+	result.set( hit_test.hit );
+	vec3.transformMat4( result, result, model );
+	distance = last_ray_distance = vec3.distance( ray.origin, result );
+
+	//there was a collision but too far
+	if( distance > max_dist )
+		return false; 
+	return true;
+}
+
 
 /**
 * adjust the rendering range so it renders one specific submesh of the mesh
@@ -1665,21 +1701,12 @@ function Camera( options )
 		u_projection_matrix: this._projection_matrix,
 		u_viewprojection_matrix: this._viewprojection_matrix,
 		u_camera_front: this._front,
-		u_camera_position: this._position
+		u_camera_position: this._position,
+		u_camera_planes: vec2.fromValues(0.1,1000),
 	};
 
 	if(options)
-	{
-		if(options.type != null) this.type = options.type;
-		if(options.position) this._position.set(options.position);
-		if(options.target) this._target.set(options.target);
-		if(options.up) this._up.set(options.up);
-		if(options.near) this.near = options.near;
-		if(options.far) this.far = options.far;
-		if(options.fov) this.fov = options.fov;
-		if(options.aspect) this.aspect = options.aspect;
-	}
-	
+		this.configure( options );
 
 	this.updateMatrices();
 }
@@ -1688,6 +1715,34 @@ RD.Camera = Camera;
 
 Camera.PERSPECTIVE = 1;
 Camera.ORTHOGRAPHIC = 2;
+
+Camera.prototype.configure = function(o)
+{
+	if(o.type != null) this.type = o.type;
+	if(o.position) this._position.set(o.position);
+	if(o.target) this._target.set(o.target);
+	if(o.up) this._up.set(o.up);
+	if(o.near) this.near = o.near;
+	if(o.far) this.far = o.far;
+	if(o.fov) this.fov = o.fov;
+	if(o.aspect) this.aspect = o.aspect;
+}
+
+Camera.prototype.serialize = function()
+{
+	var o = {
+		type: this.type,
+		position: [ this.position[0],this.position[1],this.position[2] ],
+		target: [ this.target[0],this.target[1],this.target[2] ],
+		up: this.up,
+		fov: this.fov,
+		near: this.near,
+		far: this.far,
+		aspect: this.aspect
+	};
+	return o;
+}
+
 
 /**
 * Position where the camera eye is located
@@ -1741,13 +1796,19 @@ Object.defineProperty(Camera.prototype, 'frustum_size', {
 
 Object.defineProperty(Camera.prototype, 'near', {
 	get: function() { return this._near; },
-	set: function(v) { this._near = v; this._must_update_matrix = true; },
+	set: function(v) { 
+		this._near = this.uniforms.u_camera_planes[0] = v; 
+		this._must_update_matrix = true;
+	},
 	enumerable: false //avoid problems
 });
 
 Object.defineProperty(Camera.prototype, 'far', {
 	get: function() { return this._far; },
-	set: function(v) { this._far = v; this._must_update_matrix = true; },
+	set: function(v) { 
+		this._far = this.uniforms.u_camera_planes[1] = v;
+		this._must_update_matrix = true;
+	},
 	enumerable: false //avoid problems
 });
 
@@ -1876,6 +1937,9 @@ Camera.prototype.updateMatrices = function( force )
 	mat4.rotateVec3( this._front, this._model_matrix, RD.FRONT );
 
 	this.distance = vec3.distance(this._position, this._target);
+
+	this.uniforms.u_camera_planes[0] = this._near;
+	this.uniforms.u_camera_planes[1] = this._far;
 }
 
 Camera.prototype.getModel = function(m)
@@ -1971,6 +2035,8 @@ Camera.prototype.move = function(v, scalar)
 */
 Camera.prototype.moveLocal = function(v, scalar)
 {
+	if(	this._must_update_matrix )
+		this.updateMatrices();
 	var delta = mat4.rotateVec3(temp_vec3, this._model_matrix, v);
 	if(scalar !== undefined)
 		vec3.scale( delta, delta, scalar );
@@ -2002,6 +2068,8 @@ Camera.prototype.rotate = function(angle, axis)
 */
 Camera.prototype.rotateLocal = function(angle, axis)
 {
+	if(	this._must_update_matrix )
+		this.updateMatrices();
 	var local_axis = mat4.rotateVec3(temp_vec3b, this._model_matrix, axis);
 	var R = quat.setAxisAngle( temp_quat, local_axis, angle );
 	var front = vec3.subtract( temp_vec3, this._target, this._position );
@@ -2024,7 +2092,11 @@ Camera.prototype.orbit = function(angle, axis, center, axis_in_local)
 
 	center = center || this._target;
 	if(axis_in_local)
+	{
+		if(	this._must_update_matrix )
+			this.updateMatrices();
 		axis = mat4.rotateVec3(temp_vec3b, this._model_matrix, axis);
+	}
 	var R = quat.setAxisAngle( temp_quat, axis, angle );
 	var front = vec3.subtract( temp_vec3, this._position, this._target );
 	vec3.transformQuat(front, front, R );
@@ -2475,7 +2547,7 @@ Object.defineProperty(Scene.prototype, 'root', {
 Scene.prototype.testRay = function( ray, result, max_dist, layers, test_against_mesh  )
 {
 	layers = layers === undefined ? 0xFF : layers;
-	Scene._ray_tested_objects = 0;
+	RD.Scene._ray_tested_objects = 0;
 	if(!result)
 		result = temp_vec3;
 
@@ -2587,6 +2659,8 @@ function Material()
 	};
 }
 
+Material.default_shader_name = "texture";
+
 Object.defineProperty( Material.prototype, "color", {
 	set: function(v){
 		this._color.set(v);
@@ -2608,9 +2682,13 @@ Object.defineProperty( Material.prototype, 'opacity', {
 Material.prototype.render = function( renderer, model, mesh, indices_name, group_index )
 {
 	//get shader
-	var shader = gl.shaders[ this.shader_name ];
+	var shader_name = this.shader_name || renderer.default_shader_name || RD.Material.default_shader_name;
+	var shader = gl.shaders[ shader_name ];
 	if (!shader)
-		shader = this.textures.color ? renderer._texture_shader : renderer._flat_shader;
+	{
+		var color_texture = this.textures.color || this.textures.albedo;
+		shader = color_texture ? renderer._texture_shader : renderer._flat_shader;
+	}
 
 	//get texture
 	var slot = 0;
@@ -2620,6 +2698,8 @@ Material.prototype.render = function( renderer, model, mesh, indices_name, group
 		var texture_name = this.textures[i];
 		if(!texture_name)
 			continue;
+		if( texture_name.constructor === Object ) //in case it has properties for this channel
+			texture_name = texture_name.texture;
 		var texture_uniform_name = "u_" + i + "_texture";
 
 		if( shader && !shader.samplers[ texture_uniform_name ]) //texture not used in shader
@@ -2639,6 +2719,7 @@ Material.prototype.render = function( renderer, model, mesh, indices_name, group
 	//flags
 	renderer.enableItemFlags( this );
 
+	renderer._uniforms.u_model.set( model );
 	shader.uniforms( renderer._uniforms ); //globals
 	shader.uniforms( this.uniforms ); //locals
 
@@ -2652,6 +2733,7 @@ Material.prototype.render = function( renderer, model, mesh, indices_name, group
 		shader.draw( mesh, this.primitive, indices_name );
 
 	renderer.disableItemFlags( this );
+	renderer.draw_calls += 1;
 }
 
 RD.Material = Material;
@@ -2865,50 +2947,58 @@ Renderer.prototype.render = function(scene, camera, nodes, layers )
 		nodes.sort( RD.Renderer._sort_by_dist_func );
 	
 	//pre rendering
+	if(this.onPreRender)
+		this.onPreRender( camera );
+
 	if(scene._root.preRender)
-		scene._root.preRender(this,camera);
-	for (var i = 0; i < nodes.length; ++i)
+		scene._root.preRender( this, camera );
+
+	if( this.pipeline )
+		this.pipeline.render( nodes, camera, scene );
+	else
 	{
-		var node = nodes[i];
+		for (var i = 0; i < nodes.length; ++i)
+		{
+			var node = nodes[i];
+			
+			//recompute matrices
+			node.updateGlobalMatrix(true);
+			
+			if(this.onPreRenderNode)
+				this.onPreRenderNode( node, camera);
+			if(node.preRender)
+				node.preRender( this, camera );
+		}
 		
-		//recompute matrices
-		node.updateGlobalMatrix(true);
+		//rendering	
+		for (var i = 0; i < nodes.length; ++i)
+		{
+			var node = nodes[i];
+			node.flags.was_rendered = false;
+			if(node.flags.visible === false || !(node.layers & layers) )
+				continue;
+			if(this.mustRenderNode && this.mustRenderNode(node, camera) === false)
+				continue;
+			node.flags.was_rendered = true;
+			this.setModelMatrix( node._global_matrix );
+			
+			if(node.render)
+				node.render(this, camera);
+			else
+				this.renderNode(node, camera);
+		}
 		
-		if(this.onPreRenderNode)
-			this.onPreRenderNode( node, camera);
-		if(node.preRender)
-			node.preRender( this, camera );
-	}
-	
-	//rendering	
-	for (var i = 0; i < nodes.length; ++i)
-	{
-		var node = nodes[i];
-		node.flags.was_rendered = false;
-		if(node.flags.visible === false || !(node.layers & layers) )
-			continue;
-		if(this.mustRenderNode && this.mustRenderNode(node, camera) === false)
-			continue;
-		node.flags.was_rendered = true;
-		this.setModelMatrix( node._global_matrix );
-		
-		if(node.render)
-			node.render(this, camera);
-		else
-			this.renderNode(node, camera);
-		this.draw_calls += 1;
-	}
-	
-	//post rendering
-	if(scene._root.postRender)
-		scene._root.postRender(this,camera);
-	for (var i = 0; i < nodes.length; ++i)
-	{
-		var node = nodes[i];
-		if(node.postRender)
-			node.postRender(this,camera);
-		if(this.onPostRenderNode)
-			this.onPostRenderNode( node, camera);
+		//post rendering
+		if(scene._root.postRender)
+			scene._root.postRender(this,camera);
+		for (var i = 0; i < nodes.length; ++i)
+		{
+			var node = nodes[i];
+			if(node.postRender)
+				node.postRender(this,camera);
+			if(this.onPostRenderNode)
+				this.onPostRenderNode( node, camera);
+		}
 	}
 
 	if(this.onPostRender)
@@ -3016,7 +3106,7 @@ Renderer.prototype.renderNode = function(node, camera)
 	}
 
 	//from GLTF
-	if( node.primitives )
+	if( node.primitives && node.primitives.length )
 	{
 		if(!mesh)
 			return;
@@ -3034,8 +3124,15 @@ Renderer.prototype.renderNode = function(node, camera)
 	{
 		var material = RD.Materials[ node.material ];
 		if(material)
-			this.renderMeshWithMaterial( node._global_matrix, mesh, material, node.indices, node.submesh );
-		return;
+		{
+			if(material.render)
+			{
+				this.renderMeshWithMaterial( node._global_matrix, mesh, material, node.indices, node.submesh );
+				return;
+			}
+			else
+				node.color = material.color;
+		}
 	}
 		
 	if(!mesh)
@@ -3073,9 +3170,12 @@ Renderer.prototype.renderNode = function(node, camera)
 		var texture_name = node.textures[i];
 		if(!texture_name)
 			continue;
+		if( texture_name.constructor === Object ) //in case it has properties for this channel
+			texture_name = texture_name.texture;
+
 		var texture_uniform_name = "u_" + i + "_texture";
 
-		if(shader && !shader.samplers[texture_uniform_name]) //texture not used in shader
+		if(shader && !shader.samplers[ texture_uniform_name ]) //texture not used in shader
 			continue; //do not bind it
 
 		texture = gl.textures[ texture_name ];
@@ -3144,6 +3244,8 @@ Renderer.prototype.renderNode = function(node, camera)
 
 	if(!this.ignore_flags)
 		this.disableItemFlags( node );
+
+	this.draw_calls += 1;
 }
 
 Renderer.prototype.renderMesh = function( model, mesh, texture, color, shader, mode, index_buffer_name, group_index )
@@ -3161,11 +3263,13 @@ Renderer.prototype.renderMesh = function( model, mesh, texture, color, shader, m
 		this._uniforms.u_texture = texture.bind(0);
 	shader.uniforms(this._uniforms);
 	shader.draw( mesh, mode === undefined ? gl.TRIANGLES : mode, index_buffer_name );
+	this.draw_calls += 1;
 }
 
 Renderer.prototype.renderMeshWithMaterial = function( model, mesh, material, index_buffer_name, group_index )
 {
-	material.render( this, model, mesh, index_buffer_name, group_index );
+	if(material.render)
+		material.render( this, model, mesh, index_buffer_name, group_index );
 }
 
 
@@ -3193,7 +3297,7 @@ Renderer.prototype.enableItemFlags = function(item)
 	gl[ item.flags.two_sided === true ? "disable" : "enable"]( gl.CULL_FACE );
 	
 	//blend
-	if(	item.blend_mode !== RD.BLEND_NONE )
+	if(	item.blend_mode !== RD.BLEND_NONE)
 	{
 		gl.enable( gl.BLEND );
 		switch( item.blend_mode )
@@ -3205,6 +3309,14 @@ Renderer.prototype.enableItemFlags = function(item)
 	}
 	else
 		gl.disable( gl.BLEND );
+
+	//PBR Materials
+	if(item.alphaMode == "BLEND")
+	{
+		gl.enable( gl.BLEND );
+		gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
+		gl.depthMask( false );
+	}
 }
 
 Renderer.prototype.disableItemFlags = function(item)
@@ -3215,6 +3327,12 @@ Renderer.prototype.disableItemFlags = function(item)
 	if( item.flags.two_sided ) gl.disable( gl.CULL_FACE );
 	if( item.flags.depth_write === false )
 		gl.depthMask( true );
+
+	if(item.alphaMode == "BLEND")
+	{
+		gl.depthMask( true );
+		gl.disable( gl.BLEND );
+	}
 }
 
 Renderer.prototype.setPointSize = function(v)
@@ -3506,6 +3624,8 @@ Renderer.prototype.loadShaders = function(url, on_complete, extra_macros)
 	if(url.indexOf("://") == -1)
 		url = this.assets_folder + url;
 
+	url += "?nocache=" + Math.random();
+
 	this.loading_shaders = true;
 	
 	//load shaders code from a files atlas
@@ -3629,6 +3749,39 @@ Renderer.prototype.setShadersFromFile = function( file_data )
 	this.compileShadersFromAtlas( files );
 }
 
+Renderer.cubemap_info = [ 
+	{ front: [ 1.0,  0.0,  0.0], up: [0.0, -1.0,  0.0] }, //POSX
+	{ front: [-1.0,  0.0,  0.0], up: [0.0, -1.0,  0.0] }, //NEGX
+	{ front: [ 0.0,  1.0,  0.0], up: [0.0,  0.0,  1.0] }, //POSY
+	{ front: [ 0.0, -1.0,  0.0], up: [0.0,  0.0, -1.0] }, //NEGY
+	{ front: [ 0.0,  0.0,  1.0], up: [0.0, -1.0,  0.0] }, //POSZ
+	{ front: [ 0.0,  0.0, -1.0], up: [0.0, -1.0,  0.0] } //NEGZ
+];
+
+Renderer.prototype.renderToCubemap = function( cubemap, scene, position, nodes, layers, near, far )
+{
+	var camera = Renderer.cubemap_camera;
+	if(!camera)
+		Renderer.cubemap_camera = camera = new RD.Camera();
+
+	near = near || 0.1;
+	far = far || 1000;
+
+	camera.perspective(90,1,near,far);
+	var front = vec3.create();
+	var that = this;
+
+	cubemap.drawTo(function(tex,i){
+		var side = Renderer.cubemap_info[i];
+		vec3.add( front, position, side.front );
+		camera.lookAt( position, front, side.up );
+		that.clear();
+		that.render(scene, camera, nodes, layers );
+	});
+
+	return cubemap;
+}
+
 Renderer.prototype.drawSphere3D = function( pos, radius, color )
 {
 	if(!gl.meshes["sphere"])
@@ -3642,6 +3795,7 @@ Renderer.prototype.drawSphere3D = function( pos, radius, color )
 	mat4.scale(m,m,[radius,radius,radius]);
 	shader.setUniform("u_model",m);
 	shader.draw( gl.meshes[ "sphere" ] );
+	this.draw_calls += 1;
 }
 
 
@@ -3660,6 +3814,7 @@ Renderer.prototype.drawCircle2D = function( x,y, radius, color, fill )
 	mat4.scale(m,m,[radius*2,radius*2,radius*2]);
 	shader.setUniform("u_model",m);
 	shader.draw( gl.meshes[ fill ? "circle" : "ring" ] );
+	this.draw_calls += 1;
 }
 
 Renderer.prototype.drawLine2D = function( x,y, x2,y2, width, color, shader )
@@ -3681,6 +3836,7 @@ Renderer.prototype.drawLine2D = function( x,y, x2,y2, width, color, shader )
 	mat4.scale(m,m,[f,dist,f]);
 	shader.setUniform("u_model",m);
 	shader.draw( mesh );
+	this.draw_calls += 1;
 }
 
 

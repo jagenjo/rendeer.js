@@ -30,12 +30,13 @@
 		//create the rendering context
 		var context = GL.create({width: window.innerWidth, height:window.innerHeight});
 		renderer = new RD.Renderer(context);
+		renderer.sort_by_distance = true;
 		document.body.appendChild(renderer.canvas); //attach
 
 		//create camera
 		camera = new RD.Camera();
 		camera.perspective( 45, gl.canvas.width / gl.canvas.height, 1, 1000 );
-		camera.lookAt( [100,100,100],[0,0,0],[0,1,0] );
+		camera.lookAt( [10,10,10],[0,0,0],[0,1,0] );
 
 		var floor = new RD.SceneNode();
 		floor.color = [0.6,0.6,0.6,1];
@@ -52,7 +53,23 @@
 
 		//var url = "data/Fox/glTF/Fox.gltf";
 		//var url = "data/Buggy.glb";
-		var url = "data/Fox.glb";
+		var url = "data/DamagedHelmet.glb";
+
+		var default_shader = new GL.Shader( renderer._vertex_shader, '\
+		precision highp float;\
+		varying vec2 v_coord;\
+		uniform vec4 u_color;\
+		uniform sampler2D u_albedo_texture;\
+		uniform float u_global_alpha_clip;\
+		void main() {\
+			vec4 color = u_color * texture2D(u_albedo_texture, v_coord);\n\
+			if(color.w < u_global_alpha_clip)\n\
+				discard;\n\
+			gl_FragColor = color;\
+		}\
+		');
+		gl.shaders["gltf"] = default_shader;
+		renderer.default_shader_name = "gltf";
 
 		RD.GLTF.load(url, function(node){
 			if(!node)
@@ -65,7 +82,7 @@
 		});
 
 		//global settings
-		var bg_color = vec4.fromValues(1,1,1,1);
+		var bg_color = vec4.fromValues(0.9,0.9,0.9,1);
 
 		//main render loop
 		var last = now = getTime();
@@ -104,7 +121,9 @@
 
 		renderer.context.onmousewheel = function(e)
 		{
-			camera.orbitDistanceFactor( 1 + (e.wheel / 100) * -0.1 );
+			var direction = (e.wheel > 0) ? 1 : -1;
+			var offset = 1 + direction * -0.1;
+			camera.orbitDistanceFactor( offset );
 		}
 
 		var points = [];
@@ -112,7 +131,7 @@
 		renderer.onPreRenderNode = function(node)
 		{
 			var pos = node.getGlobalPosition();
-			points.push( pos  );
+			points.push( pos );
 		}
 
 		renderer.onPostRender = function()
@@ -171,24 +190,6 @@
 			if(node.animations)
 				animation = node.animations[0];
 		});
-		/*		
-		for(var i=0; i < files.length; i++)
-		{
-			var file = files[i];
-			var reader = new FileReader();
-			var index = file.name.lastIndexOf(".");
-			var extension = file.name.substr(index+1);
-			reader.onload = function(e) { 
-				var data = e.target.result;
-				//mesh.parse( data, extension );
-				//adjustCameraToBounding(mesh);
-			};
-			if(extension == "wbin")
-				reader.readAsArrayBuffer(file);
-			else
-				reader.readAsText(file);
-		}
-		*/
 	}
 
 	</script>
