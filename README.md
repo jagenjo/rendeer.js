@@ -68,8 +68,8 @@ camera.lookAt( [100,100,100],[0,0,0],[0,1,0] );
 
 Create and register mesh
 ```js
-var cube = GL.Mesh.cube({size:5});
-renderer.meshes["cube"] = cube;
+var mesh = GL.Mesh.fromURL("data/mesh.obj");
+renderer.meshes["mymesh"] = mesh;
 ```
 
 load and register texture
@@ -88,8 +88,8 @@ Add a node to the scene
 ```js
 var node = new RD.SceneNode();
 node.color = [1,0,0,1];
-node.mesh = "cube";
-node.texture = "mytexture.jpg";
+node.mesh = "mymesh";
+node.texture = "mytexture.png";
 node.shader = "phong";
 node.position = [0,0,0];
 node.scale([10,10,10]);
