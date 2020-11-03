@@ -71,7 +71,7 @@ scene.root.addChild( node );
 
 ### The SceneNode properties
 
-We use SceneNodes to render meshes on the screen, so the three main properties of a ```RD.SceneNode``` to keep in mind are ```node.mesh```, ```node.shader``` and ```node.textures```.
+We use SceneNodes to represent objects in the scene, so the three main properties of a ```RD.SceneNode``` to keep in mind are ```node.mesh```, ```node.shader``` and ```node.textures``` (although depending on the renderer it also could be ```node.material```.
 All three store strings, although textures is an object where you can store different textures for different channels (color, specular, etc).
 
 ```javascript
@@ -105,6 +105,27 @@ node.rotate( angle_in_deg, axis ); //it accepts a vector
 ```
 
 You can  access the local matrix in ```_local_matrix``` or the global matrix in ```_global_matrix```.
+
+### The SceneNode hierarchy
+
+Every node could contain children nodes that will inherit its transformation, useful to nest items.
+
+Children are stored in an array called ```children``` similar to how DOM nodes work.
+
+To access a children of a node:
+
+```js
+var num_child = node.children.length;
+var first_child = node.children[0];
+node.addChild( another_node );
+node.removeChild( another_node );
+```
+
+Or if you want to find a node by its given name:
+```js
+var child_node = node.findNode( id ); //search by node.id
+var child_node = node.findNodeByName( id ); //search by node.name
+```
 
 ### The Camera
 
