@@ -131,11 +131,11 @@
 
 	}
 
-	HDREImage.prototype.FlipY = function() {
+	HDREImage.prototype.flipY = function() {
 
 	}
 
-	HDREImage.prototype.ToTexture = function(flip_Y_sides) {
+	HDREImage.prototype.toTexture = function() {
 		
 		if(!window.GL)
 			throw("this function requires to use litegl.js");
@@ -147,11 +147,20 @@
 		// Get base enviroment texture
 		var tex_type = GL.FLOAT;
 		var data = _envs[0].data;
+		var w = this.width;
 
 		if(this.type === Uint16Array) // HALF FLOAT
 			tex_type = GL.HALF_FLOAT_OES;
 		else if(this.type === Uint8Array) 
 			tex_type = GL.UNSIGNED_BYTE;
+
+		
+		var flip_Y_sides = false;
+
+		// "true" for using old environments
+        // (not standard flipY)
+		if(this.version < 3.0)
+		flip_Y_sides = true;
 
 		if(flip_Y_sides)
 		{
@@ -165,10 +174,7 @@
 			type: tex_type,
 			minFilter: gl.LINEAR_MIPMAP_LINEAR,
 			texture_type: GL.TEXTURE_CUBE_MAP,
-			no_flip: !flip_Y_sides
 		};
-
-		var w = this.width;
 
 		GL.Texture.disable_deprecated = true;
 
@@ -189,15 +195,22 @@
 			if(level_info)
 			{
 				var pixels = level_info.data;
+
 				if(flip_Y_sides && i > 0)
 				{
 					var tmp = pixels[2];
 					pixels[2] = pixels[3];
 					pixels[3] = tmp;
 				}
+
 				for(var f = 0; f < 6; ++f)
 				{
-					tex.uploadData( pixels[f], { no_flip: !flip_Y_sides, cubemap_face: f, mipmap_level: i}, true );
+					if(!flip_Y_sides && i == 0)
+					{
+						GL.Texture.flipYData( pixels[f], w, w, this.n_channels);
+					}
+
+					tex.uploadData( pixels[f], { cubemap_face: f, mipmap_level: i}, true );
 				}
 				tex.mipmap_data[i] = pixels;
 			}
@@ -205,7 +218,7 @@
 			{
 				var zero = new Float32Array(levelsize * levelsize * this.n_channels);
 				for(var f = 0; f < 6; ++f)
-					tex.uploadData( zero, { no_flip: !flip_Y_sides, cubemap_face: f, mipmap_level: i}, true );
+					tex.uploadData( zero, { cubemap_face: f, mipmap_level: i}, true );
 			}
 		}
 
@@ -239,7 +252,7 @@
 
 	HDREBuilder.prototype._ctor = function() {
 
-		this.flip_Y_sides = false;
+		this.flip_Y_sides = true;
 		this.pool = {};
 		this.last_id = 0;
 	}
@@ -249,7 +262,7 @@
 		o = o || {};
 	}
 
-	HDREBuilder.prototype.CreateImage = function(data, size) {
+	HDREBuilder.prototype.createImage = function(data, size) {
 
 		if(!data)
 		throw("[error] cannot create HDRE image");
@@ -259,7 +272,7 @@
 
 		//create gpu texture from file
 		if(data.constructor !== GL.Texture)
-			texture = this.CreateTexture(data, size);
+			texture = this.createTexture(data, size);
 		else
 			texture = data;
 				
@@ -279,16 +292,19 @@
 		return image;
 	}
 
-	HDREBuilder.prototype.FromFile = function(buffer, options) {
+	HDREBuilder.prototype.fromFile = function(buffer, options) {
 
 		var image = HDRE.parse(buffer, options);
 		this.pool[this.last_id++] = image;
 		console.log(this.pool);
 
+		if(options.callback)
+		options.callback(image);
+
 		return image;
 	}
 
-	HDREBuilder.prototype.FromHDR = function(filename, buffer, size) {
+	HDREBuilder.prototype.fromHDR = function(filename, buffer, size) {
 
 		var data, ext = filename.split('.').pop();
 
@@ -306,15 +322,15 @@
 		}
 
 		//add HDRE image to the pool
-		return this.CreateImage(data, size);
+		return this.createImage(data, size);
 	}
 
-	HDREBuilder.prototype.FromTexture = function(texture) {
+	HDREBuilder.prototype.fromTexture = function(texture) {
 
-		this.Filter(texture, {
+		this.filter(texture, {
 			oncomplete: (function(result) {
 				
-				this.CreateImage(result);
+				this.createImage(result);
 				
 			}).bind(this)
 		});
@@ -326,7 +342,7 @@
     * @param {Object} data 
     * @param {Number} cubemap_size
     */
-   	HDREBuilder.prototype.CreateTexture = function( data, cubemap_size, options )
+   	HDREBuilder.prototype.createTexture = function( data, cubemap_size, options )
 	{
 		if(!window.GL)
 		throw("this function requires to use litegl.js");
@@ -358,6 +374,8 @@
 			type: gl.FLOAT,
 			pixel_data: pixelData
 		};
+
+		GL.Texture.disable_deprecated = true;
 
 		// 1 image cross cubemap
 		if(is_cubemap)
@@ -433,8 +451,12 @@
 
 		if(!options.discard_spheremap)
 			gl.textures["tmp_spheremap"] = texture;
+
 		
-		return this.ToCubemap( texture, cubemap_size );
+		var result = this.toCubemap( texture, cubemap_size );
+		GL.Texture.disable_deprecated = false;
+
+		return result;
 	}
 
 	/**
@@ -443,7 +465,7 @@
 	 * @param {Texture} tex
 	 * @param {Number} cubemap_size
 	 */
-	HDREBuilder.prototype.ToCubemap = function( tex, cubemap_size )
+	HDREBuilder.prototype.toCubemap = function( tex, cubemap_size )
 	{
 		var size = cubemap_size || this.CUBE_MAP_SIZE;
 		if(!size)
@@ -502,7 +524,13 @@
 		}
 
 		for(var f = 0; f < 6; ++f)
-			cubemap_texture.uploadData( pixels[f], { no_flip: false, cubemap_face: f} );
+		{
+			if(this.flip_Y_sides)
+				GL.Texture.flipYData(pixels[f], size, size, tex.format === GL.RGBA ? 4 : 3);
+
+			cubemap_texture.uploadData( pixels[f], { cubemap_face: f} );
+		}
+			
 
 		return cubemap_texture;
 	}
@@ -513,7 +541,7 @@
 	 * @param {Texture} texture
 	 * @param {Object} options
 	 */
-	HDREBuilder.prototype.Filter = function(texture, options) {
+	HDREBuilder.prototype.filter = function(texture, options) {
 
 		if(!window.GL)
 			throw("this function requires to use litegl.js");
@@ -543,6 +571,8 @@
 			this.LOAD_STEPS += faces * blocks;
 		}
 
+		GL.Texture.disable_deprecated = true;
+
 		for( let mip = 1; mip <= mipCount; mip++ )
 		{
 			this._blur( texture, mip, mipCount, shader, (function(result) {
@@ -558,15 +588,15 @@
 
 				texture.mipmap_data[mip] = pixels;
 
-				if(this.flip_Y_sides)
+				/*if(this.flip_Y_sides)
 				{
 					var tmp = pixels[2];
 					pixels[2] = pixels[3];
 					pixels[3] = tmp;
-				}
+				}*/
 
 				for(var f = 0; f < 6; ++f)
-					texture.uploadData( pixels[f], { no_flip: !this.flip_Y_sides, cubemap_face: f, mipmap_level: mip}, true );
+					texture.uploadData( pixels[f], { cubemap_face: f, mipmap_level: mip}, true );
 
 				if(this.CURRENT_STEP == this.LOAD_STEPS)
 				{
@@ -578,6 +608,8 @@
 
 					if(options.oncomplete)
 						options.oncomplete(texture);
+
+					GL.Texture.disable_deprecated = false;
 				}
 
 			}).bind(this));
@@ -1465,7 +1497,7 @@
 			uv.x += u_ioffset;\n\
 			v_coord = uv;\n\
 			v_dir = vec3( uv - vec2(0.5), 0.5 );\n\
-			v_dir.y = -v_dir.y;\n\
+			//v_dir.y = -v_dir.y;\n\
 			gl_Position = vec4(vec3(a_coord * 2.0 - 1.0, 0.5), 1.0);\n\
 		}\n\
 	';
@@ -1503,7 +1535,6 @@
 				vec2 r_coord = vec2(i, j) / vec2(u_emsize, u_emsize);\n\
 				// Get 3d vector\n\
 				vec3 dir = vec3( r_coord - vec2(0.5), 0.5 );\n\
-				dir.y *= -1.0;\n\
 				\n\
 				// Use all faces\n\
 				for(int iface = 0; iface < 6; iface++) {\n\
@@ -1556,7 +1587,6 @@
 		vec2 getSphericalUVs(vec3 dir)\n\
 		{\n\
 			dir = normalize(dir);\n\
-			dir = -dir;\n\
 			float d = sqrt(dir.x * dir.x + dir.y * dir.y);\n\
 			float r = 0.0;\n\
 			if(d > 0.0)\n\
@@ -1567,9 +1597,10 @@
 		}\n\
 		\n\
 		void main() {\n\
-			vec2 uv = vec2( v_coord.x, 1.0 - v_coord.y );\n\
+			vec2 uv = vec2( v_coord.x, v_coord.y );\n\
 			vec3 dir = vec3( uv - vec2(0.5), 0.5 );\n\
 			dir = u_rotation * dir;\n\
+			dir = -dir;\n\
 			dir.x = -dir.x;\n\
 			vec2 spherical_uv = getSphericalUVs( dir );\n\
 			vec4 color = texture2D(u_color_texture, spherical_uv);\n\
@@ -1591,7 +1622,7 @@
 		{\n\
 			dir = normalize(dir);\n\
 			float u = 1.0 + (atan(dir.x, -dir.z) / PI);\n\
-			float v = acos(-dir.y) / PI;\n\
+			float v = acos(dir.y) / PI;\n\
 			return vec2(u/2.0, v);\n\
 		}\n\
 		\n\

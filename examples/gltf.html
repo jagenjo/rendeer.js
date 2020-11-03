@@ -55,19 +55,19 @@
 		//var url = "data/Buggy.glb";
 		var url = "data/DamagedHelmet.glb";
 
-		var default_shader = new GL.Shader( renderer._vertex_shader, '\
-		precision highp float;\
-		varying vec2 v_coord;\
-		uniform vec4 u_color;\
-		uniform sampler2D u_albedo_texture;\
-		uniform float u_global_alpha_clip;\
-		void main() {\
+		var default_shader = new GL.Shader( renderer._vertex_shader, "\n\
+		precision highp float;\n\
+		varying vec2 v_coord;\n\
+		uniform vec4 u_color;\n\
+		uniform sampler2D u_albedo_texture;\n\
+		uniform float u_global_alpha_clip;\n\
+		void main() {\n\
 			vec4 color = u_color * texture2D(u_albedo_texture, v_coord);\n\
-			if(color.w < u_global_alpha_clip)\n\
+			if(color.w < u_global_alpha_clip)\n\n\
 				discard;\n\
-			gl_FragColor = color;\
+			gl_FragColor = color;\n\
 		}\
-		');
+		");
 		gl.shaders["gltf"] = default_shader;
 		renderer.default_shader_name = "gltf";
 

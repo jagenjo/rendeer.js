@@ -220,7 +220,8 @@ RD.GLTF = {
 		if( json.scenes.length > 1 )
 			console.warn("gltf importer only supports one scene per file, skipping the rest");
 
-		var nodes_info = json.scenes[ json.scene ].nodes;
+		var scene = json.scenes[ json.scene ];
+		var nodes_info = scene.nodes;
 		this.gltf_materials = {};
 
 		var root = null;
@@ -233,9 +234,10 @@ RD.GLTF = {
 		for(var i = 0; i < nodes_info.length; ++i)
 		{
 			var info = nodes_info[i];
-			if(info.node)
-				continue;
-			var node = RD.GLTF.parseNode( null, i, json );
+			var index = info;
+			if(info.node != null)
+				index = info.node;
+			var node = RD.GLTF.parseNode( null, index, json );
 			if(!root)
 				root = node;
 			if(nodes_info.length > 1)

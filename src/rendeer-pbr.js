@@ -93,9 +93,6 @@ PBRPipeline.maps = ["albedo","metallicRoughness","occlusion","normal","emissive"
 
 PBRPipeline.prototype.render = function( nodes, camera, scene, skip_fbo )
 {
-	//prepare generic
-	this.fillGlobalUniforms( scene );
-
 	if(this.mode == PBRPipeline.FORWARD)
 		this.renderForward( nodes, camera, skip_fbo );
 	else if(this.mode == PBRPipeline.DEFERRED)
@@ -111,7 +108,7 @@ PBRPipeline.prototype.render = function( nodes, camera, scene, skip_fbo )
 }
 
 //gathers uniforms that do not change between rendered objects
-PBRPipeline.prototype.fillGlobalUniforms = function( scene )
+PBRPipeline.prototype.fillGlobalUniforms = function()
 {
 	var brdf_tex = this.getBRDFIntegratorTexture();
 	if(brdf_tex)
@@ -165,6 +162,8 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo )
 	//render skybox
 	if(this.environment_texture && this.render_skybox)
 		this.renderSkybox(camera);
+
+	this.fillGlobalUniforms();
 
 	if(this.onRenderOpaque)
 		this.onRenderOpaque( this, renderer, camera );
