@@ -216,9 +216,9 @@ RD.GLTF = {
 		for(var i = 0; i < nodes_info.length; ++i)
 		{
 			var info = nodes_info[i];
-			if(info.node)
+			if(typeof info !== "number")
 				continue;
-			var node = RD.GLTF.parseNode( null, i, json );
+			var node = RD.GLTF.parseNode( null, info, json );
 			if(!root)
 				root = node;
 			if(nodes_info.length > 1)
