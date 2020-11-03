@@ -1,6 +1,11 @@
 \shaders
 
 pbr default.vs pbr.fs
+pbr_uv2 default.vs pbr.fs { "UVS2":"" }
+nopbr default.vs nopbr.fs
+nopbr_uv2 default.vs nopbr.fs { "UVS2":"" }
+normals default.vs normals.fs
+normals_uv2 default.vs normals.fs { "UVS2":"" }
 brdf_integrator @SCREEN brdf_integrator.fs
 skybox default.vs skybox.fs
 tonemapper @SCREEN tonemapper.fs
@@ -11,10 +16,18 @@ tonemapper @SCREEN tonemapper.fs
 	attribute vec3 a_vertex;
 	attribute vec3 a_normal;
 	attribute vec2 a_coord;
+	#ifdef UVS2
+		attribute vec2 a_coord1;
+	#endif
+	#ifdef COLOR
+		attribute vec4 a_color;
+	#endif
 
 	varying vec3 v_wPosition;
 	varying vec3 v_wNormal;
 	varying vec2 v_coord;
+	varying vec2 v_coord1;
+	varying vec4 v_color;
 
 	uniform mat4 u_viewprojection;
 	uniform mat4 u_model;
@@ -27,6 +40,13 @@ tonemapper @SCREEN tonemapper.fs
 		vec4 normal4 = vec4(a_normal,0.0);
 		v_wNormal = a_normal;
 		v_coord = a_coord;
+		v_coord1 = a_coord;
+		#ifdef UVS2
+			v_coord1 = a_coord1;
+		#endif
+		#ifdef COLOR
+			v_color = a_color;
+		#endif
 
 		//vertex
 		vec4 worldpos = (u_model * vertex4);
@@ -45,7 +65,7 @@ tonemapper @SCREEN tonemapper.fs
 	#define MIN_REFLECTANCE 0.04
 	#define MIN_PERCEPTUAL_ROUGHNESS 0.045
 	#define MIN_ROUGHNESS            0.002025
-	#define MIN_METALNESS            0.01
+	#define MIN_METALNESS            0.001
 	#define MAX_CLEAR_COAT_PERCEPTUAL_ROUGHNESS 0.6
 
 	#define MEDIUMP_FLT_MAX    65504.0
@@ -321,6 +341,16 @@ tonemapper @SCREEN tonemapper.fs
 	varying vec3 v_wPosition;
 	varying vec3 v_wNormal;
 	varying vec2 v_coord;
+	#ifdef UVS2
+		varying vec2 v_coord1;
+	#else
+		vec2 v_coord1;
+	#endif
+	#ifdef COLOR
+		varying vec4 v_color;
+	#else
+		vec4 v_color;
+	#endif
 
 	uniform mat4 u_invp;
 	uniform mat4 u_invv;
@@ -329,9 +359,10 @@ tonemapper @SCREEN tonemapper.fs
 	uniform mat4 u_view;
 
 	uniform float u_skybox_mipCount;
-	uniform vec2 u_skybox_info;
+	uniform vec2 u_skybox_info; //[ rotation in rad, exposure ]
 	uniform vec3 u_camera_position;
 	uniform vec3 u_background_color;
+	uniform vec4 u_clipping_plane;
 	uniform vec4 u_viewport;
 	uniform float u_exposure;
 
@@ -369,7 +400,7 @@ tonemapper @SCREEN tonemapper.fs
 	#define OPACITYMAP 5
 	#define DISPLACEMENTMAP 6
 
-	//maps info (like uvs, if available, etc)
+	//maps info (tells if a texture is available and which uv set to use)
 	uniform int u_maps_info[8];
 
 	uniform sampler2D u_albedo_texture;
@@ -386,6 +417,7 @@ tonemapper @SCREEN tonemapper.fs
 	#import "matrixOp.inc"
 
 	// Environment textures
+	uniform bool u_use_environment_texture;
 	uniform samplerCube u_SpecularEnvSampler_texture;
 	uniform vec3 u_sh_coeffs[9];
 	SH9Color coeffs;
@@ -412,9 +444,11 @@ tonemapper @SCREEN tonemapper.fs
 
 		vec3 v = normalize(u_camera_position - v_wPosition);
 		vec3 n = normalize( v_wNormal );
+		if( gl_FrontFacing == false )
+			n *= -1.0;
 
 		if( u_maps_info[NORMALMAP] != -1 ){
-			vec3 normal_map = texture2D(u_normal_texture, v_coord).xyz;
+			vec3 normal_map = texture2D(u_normal_texture, u_maps_info[NORMALMAP] == 0 ? v_coord : v_coord1 ).xyz;
 			vec3 n2 = perturbNormal( n, -v, v_coord, normal_map );
 			n = normalize(mix(n, n2, u_normalFactor));
 		}
@@ -453,19 +487,23 @@ tonemapper @SCREEN tonemapper.fs
 		
 		vec3 baseColor = u_albedo;
 		if(u_maps_info[ALBEDOMAP] != -1){
-			vec3 albedo_tex = texture2D(u_albedo_texture, v_coord).rgb;
+			vec3 albedo_tex = texture2D(u_albedo_texture, u_maps_info[ALBEDOMAP] == 0 ? v_coord : v_coord1 ).rgb;
 			albedo_tex = pow(albedo_tex, vec3(GAMMA)); //degamma
-			baseColor *= albedo_tex;
+			baseColor *= max(albedo_tex,vec3(0.01));
 		}
 
-		float metallic = max( 0.004, u_metalness );
+		#ifdef COLOR
+			baseColor *= v_color.xyz;
+		#endif
+
+		float metallic = u_metalness;
 		float roughness = u_roughness;
 		vec3 reflectance = vec3( u_reflectance );
 
 		// GET METALLIC AND ROUGHNESS PARAMS
-		if(u_maps_info[ METALLICROUGHNESSMAP ] != -1)
+		if(u_maps_info[ METALLICROUGHNESSMAP ] != -1 )
 		{
-			vec4 sampler = texture2D(u_metallicRoughness_texture, v_coord);
+			vec4 sampler = texture2D(u_metallicRoughness_texture, u_maps_info[METALLICROUGHNESSMAP] == 0 ? v_coord : v_coord1 );
 			if(u_metallicRough) {
 				roughness *= sampler.g; // roughness stored in g
 				metallic *= sampler.b; // recompute metallness using metallic-rough texture
@@ -474,7 +512,7 @@ tonemapper @SCREEN tonemapper.fs
 				roughness *= sampler.r;
 		}
 
-		metallic = max( MIN_METALNESS,metallic );
+		metallic = max( metallic, MIN_METALNESS );
 		roughness = clamp(roughness, MIN_ROUGHNESS, 1.0 );
 
 		//metallic = 0.0; roughness = 1.0; reflectance = vec3(0.0);
@@ -488,7 +526,7 @@ tonemapper @SCREEN tonemapper.fs
 		material.roughness = roughness;
 		material.linearRoughness = roughness * roughness;
 		material.f0 = f0;
-		material.diffuseColor = diffuseColor;
+		material.diffuseColor = diffuseColor; //baseColor * metallic
 		material.reflectance = reflectance;
 		material.anisotropy = u_anisotropy;
 
@@ -529,6 +567,8 @@ tonemapper @SCREEN tonemapper.fs
 	}
 
 	vec3 prem(vec3 R, float roughness, float rotation) {
+		if(u_use_environment_texture == false)
+			return u_background_color;
 
 		float 	f = roughness * u_skybox_mipCount;
 		vec3 	r = rotateVector(R, rotation);
@@ -569,11 +609,12 @@ tonemapper @SCREEN tonemapper.fs
 
 		Fd += diffuseSample * material.diffuseColor;
 		Fr += (specularSample * (specularColor * brdf.x + vec3(brdf.y)));
+		//Fr *= material.metallic;
 
 		//DEBUG
 		//Fr = vec3(0.0); 
-		//Fd = vec3( brdf, 0.0); 
-		//Fd = vec3( material.metallic );
+		//Fd = vec3( brdf, 0.0 ); 
+		//Fd = vec3( material.roughness );
 		//Fd = diffuseSample;
 	}
 
@@ -625,13 +666,28 @@ tonemapper @SCREEN tonemapper.fs
 		// Apply baked ambient oclusion 
 		if(u_maps_info[OCCLUSIONMAP] != -1)
 		{
-			indirect *= texture2D(u_occlusion_texture, v_coord).r;
+			vec3 occ = texture2D( u_occlusion_texture, u_maps_info[OCCLUSIONMAP] == 0 ? v_coord : v_coord1 ).xyz;
+			if( u_metallicRough == true )
+				occ.xyz = vec3(occ.x); //force to use only one channel
+			indirect *= pow(occ, vec3(GAMMA)); //degamma
 		}
-		
+
 		color = indirect;
 	}
 
+	#import "testClippingPlane.inc"
+
 	void main() {
+
+		#ifndef UVS2
+			v_coord1 = v_coord;
+		#endif
+		#ifndef COLOR
+			v_color = vec4(1.0);
+		#endif
+
+		if( testClippingPlane( u_clipping_plane, v_wPosition) < 0.0 )
+			discard;
         
 		vec3 color;
 		float alpha = u_alpha;
@@ -654,11 +710,14 @@ tonemapper @SCREEN tonemapper.fs
 		createMaterial( material );
 
 		if(u_maps_info[OPACITYMAP] != -1)
-			alpha *= texture2D( u_opacity_texture, v_coord ).r;
+			alpha *= texture2D( u_opacity_texture, u_maps_info[OPACITYMAP] == 0 ? v_coord : v_coord1 ).r;
 		else if(u_maps_info[ALBEDOMAP] != -1)
-			alpha *= texture2D( u_albedo_texture, v_coord ).a;
+			alpha *= texture2D( u_albedo_texture, u_maps_info[ALBEDOMAP] == 0 ? v_coord : v_coord1 ).a;
+		#ifdef COLOR
+			alpha *= v_color.a;
+		#endif
 
-		if( alpha < u_alpha_cutoff)
+		if( alpha < u_alpha_cutoff )
 			discard;
 
 		applyIndirectLighting( material, color );
@@ -666,14 +725,226 @@ tonemapper @SCREEN tonemapper.fs
 		vec3 emissive = u_emissive;	
 		if(u_maps_info[EMISSIVEMAP] != -1)
 		{
-			vec3 emissive_tex = texture2D(u_emissive_texture, v_coord).rgb;
+			vec3 emissive_tex = texture2D(u_emissive_texture, u_maps_info[EMISSIVEMAP] == 0 ? v_coord : v_coord1).rgb;
 			emissive_tex = pow(emissive_tex, vec3(GAMMA)); //degamma
 			emissive *= emissive_tex;
 		}
 		color += emissive;
 
-		gl_FragColor = vec4( vec3(color) * u_exposure, alpha);
+		//color.xyz = material.N;
+
+		gl_FragColor = vec4( vec3(color) * u_exposure, alpha );
 	}
+
+
+\nopbr.fs
+
+	#extension GL_OES_standard_derivatives : enable
+	#extension GL_EXT_shader_texture_lod : enable
+	precision highp float;
+
+	varying vec3 v_wPosition;
+	varying vec3 v_wNormal;
+	varying vec2 v_coord;
+	#ifdef UVS2
+		varying vec2 v_coord1;
+	#else
+		vec2 v_coord1;
+	#endif
+
+	uniform mat4 u_invp;
+	uniform mat4 u_invv;
+	uniform mat4 u_invvp;
+	uniform mat4 u_projection;
+	uniform mat4 u_view;
+
+	uniform vec3 u_camera_position;
+	uniform vec3 u_background_color;
+	uniform vec4 u_viewport;
+	uniform vec4 u_clipping_plane;
+	uniform float u_exposure;
+	uniform float u_tonemapper;
+
+	#define GAMMA 2.2
+
+	// Mat properties *********
+
+	uniform vec3 u_albedo;
+	uniform vec3 u_emissive;
+	uniform float u_alpha;
+	uniform float u_alpha_cutoff;
+
+	// Mat textures ****
+
+	//material maps
+	#define ALBEDOMAP 0
+	#define METALLICROUGHNESSMAP 1
+	#define OCCLUSIONMAP 2
+	#define NORMALMAP 3
+	#define EMISSIVEMAP 4
+	#define OPACITYMAP 5
+	#define DISPLACEMENTMAP 6
+
+	//maps info (like uvs, if available, etc)
+	uniform int u_maps_info[8];
+
+	uniform sampler2D u_albedo_texture;
+	uniform sampler2D u_occlusion_texture;
+	uniform sampler2D u_opacity_texture;
+	uniform sampler2D u_emissive_texture;
+	uniform sampler2D u_displacement_texture;
+
+	#import "testClippingPlane.inc"
+
+	void main() {
+       		#ifndef UVS2
+			v_coord1 = v_coord;
+		#endif
+
+		if( testClippingPlane( u_clipping_plane, v_wPosition ) < 0.0 )
+			discard;
+
+		vec3 color = u_albedo;
+		float alpha = u_alpha;
+
+		if(u_maps_info[ALBEDOMAP] != -1)
+		{
+			vec4 color4 = texture2D( u_albedo_texture, u_maps_info[ALBEDOMAP] == 0 ? v_coord : v_coord1 );
+			color4.xyz = pow(color4.xyz, vec3(GAMMA)); //degamma
+			color *= color4.xyz;
+			alpha *= color4.a;
+		}
+
+		if(u_maps_info[ OCCLUSIONMAP ] != -1)
+		{
+			vec3 occ = texture2D( u_occlusion_texture, u_maps_info[OCCLUSIONMAP] == 0 ? v_coord : v_coord1 ).xyz;
+			color *= pow(occ, vec3(GAMMA)); //degamma
+		}
+
+		if(u_maps_info[ OPACITYMAP ] != -1)
+			alpha *= texture2D( u_opacity_texture, u_maps_info[OPACITYMAP] == 0 ? v_coord : v_coord1 ).r;
+
+		vec3 emissive = u_emissive;	
+		if(u_maps_info[ EMISSIVEMAP ] != -1)
+		{
+			vec4 emissive_tex = texture2D(u_emissive_texture, u_maps_info[EMISSIVEMAP] == 0 ? v_coord : v_coord1);
+			emissive_tex.xyz = pow(emissive_tex.xyz, vec3(GAMMA)); //degamma
+			emissive *= emissive_tex.xyz;
+			alpha *= emissive_tex.a;
+		}
+		color += emissive;
+
+		if( alpha < u_alpha_cutoff)
+			discard;
+
+		color *= u_exposure;
+
+		if( u_tonemapper != 0.0 )
+			color = pow(color, vec3(1.0 / GAMMA));
+
+		gl_FragColor = vec4( color, alpha );
+	}
+
+\normals.fs
+
+	#extension GL_OES_standard_derivatives : enable
+	#extension GL_EXT_shader_texture_lod : enable
+	precision highp float;
+
+	varying vec3 v_wPosition;
+	varying vec3 v_wNormal;
+	varying vec2 v_coord;
+	#ifdef UVS2
+		varying vec2 v_coord1;
+	#else
+		vec2 v_coord1;
+	#endif
+
+	uniform mat4 u_invp;
+	uniform mat4 u_invv;
+	uniform mat4 u_invvp;
+	uniform mat4 u_projection;
+	uniform mat4 u_view;
+
+	uniform vec3 u_camera_position;
+	uniform vec4 u_viewport;
+	uniform vec4 u_clipping_plane;
+	uniform float u_normalFactor;
+
+	#define GAMMA 2.2
+
+	// Mat properties *********
+
+	uniform float u_alpha;
+	uniform float u_alpha_cutoff;
+
+	// Mat textures ****
+
+	//material maps
+	#define ALBEDOMAP 0
+	#define METALLICROUGHNESSMAP 1
+	#define OCCLUSIONMAP 2
+	#define NORMALMAP 3
+	#define EMISSIVEMAP 4
+	#define OPACITYMAP 5
+	#define DISPLACEMENTMAP 6
+
+	//maps info (like uvs, if available, etc)
+	uniform int u_maps_info[8];
+
+	uniform sampler2D u_albedo_texture;
+	uniform sampler2D u_opacity_texture;
+	uniform sampler2D u_normal_texture;
+
+	#import "perturbNormal.inc"
+
+	float testClippingPlane(vec4 plane, vec3 p)
+	{
+		if(plane.x == 0.0 && plane.y == 0.0 && plane.z == 0.0)
+			return 0.0;
+		return (dot(plane.xyz, p) - plane.w) / dot(plane.xyz,plane.xyz);
+	}
+
+	void main() {
+       		#ifndef UVS2
+			v_coord1 = v_coord;
+		#endif
+
+		if( testClippingPlane( u_clipping_plane, v_wPosition ) < 0.0 )
+			discard;
+
+		vec3 color = vec3(0.0);
+		float alpha = u_alpha;
+
+		if(u_maps_info[ALBEDOMAP] != -1)
+		{
+			vec4 color4 = texture2D( u_albedo_texture, u_maps_info[ALBEDOMAP] == 0 ? v_coord : v_coord1 );
+			alpha *= color4.a;
+		}
+
+		if(u_maps_info[ OPACITYMAP ] != -1)
+			alpha *= texture2D( u_opacity_texture, u_maps_info[OPACITYMAP] == 0 ? v_coord : v_coord1 ).r;
+
+		if( alpha < u_alpha_cutoff)
+			discard;
+
+		vec3 v = normalize(u_camera_position - v_wPosition);
+		vec3 n = normalize( v_wNormal );
+		if( gl_FrontFacing == false )
+			n *= -1.0;
+
+		if( u_maps_info[NORMALMAP] != -1 ) {
+			vec2 norm_uv = u_maps_info[NORMALMAP] == 0 ? v_coord : v_coord1;
+			vec3 normal_map = texture2D(u_normal_texture, norm_uv ).xyz;
+			vec3 n2 = perturbNormal( n, -v, norm_uv, normal_map );
+			n = normalize(mix(n, n2, u_normalFactor));
+		}
+
+		color = abs(n);
+
+		gl_FragColor = vec4( color, alpha );
+	}
+
 
 \brdf_integrator.fs
 
@@ -753,7 +1024,7 @@ tonemapper @SCREEN tonemapper.fs
 	  /* return 2 / (1 + sqrt(1 + a2 * (1 - NX*NX) / (NX*NX) ) ); /* Reference function */
 	}
 	
-	 void main() {
+	void main() {
 
 		vec3 N, T, B, V;
 
@@ -816,6 +1087,7 @@ tonemapper @SCREEN tonemapper.fs
 
 	uniform samplerCube u_color_texture;
 	uniform bool u_is_rgbe;
+	uniform float u_exposure;
 
 	mat4 rotationMatrix(vec3 a, float angle) {
 
@@ -842,6 +1114,7 @@ tonemapper @SCREEN tonemapper.fs
 		if(u_is_rgbe)
 			color = vec4(color.rgb * pow(2.0, color.a * 255.0 - 128.0), 1.0);
 
+		color.xyz *= u_exposure;
 		gl_FragColor = color;
 	}
 
@@ -902,6 +1175,16 @@ tonemapper @SCREEN tonemapper.fs
 		mat3 TBN = cotangent_frame(N, V, texcoord);
 		return normalize(TBN * normal_pixel);
 	}
+
+\testClippingPlane.inc
+
+float testClippingPlane(vec4 plane, vec3 p)
+{
+	if(plane.x == 0.0 && plane.y == 0.0 && plane.z == 0.0)
+		return 0.0;
+	return (dot(plane.xyz, p) - plane.w) / dot(plane.xyz,plane.xyz);
+}
+
 
 \fresnel.inc
 	

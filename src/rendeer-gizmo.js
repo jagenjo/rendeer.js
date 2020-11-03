@@ -9,6 +9,7 @@ function Gizmo(o)
 	this.targets = null;
 	this.size = 150; //in pixels
 	this.mode = Gizmo.DEFAULT;
+	this.coordinates = Gizmo.WORLD_SPACE;
 	this.layers = 0xFF;
 	this.grid_size = 0;
 	this.allow_duplicating = true; //allow to duplicate selected nodes by shift drag
@@ -95,6 +96,9 @@ Gizmo.MOVEROTATESCALE = Gizmo.MOVEAXIS | Gizmo.MOVEPLANAR | Gizmo.ROTATEALL | Gi
 Gizmo.ALL = Gizmo.MOVEAXIS | Gizmo.MOVEPLANAR | Gizmo.ROTATEALL | Gizmo.SCALEALL;
 
 Gizmo.DEFAULT = Gizmo.PLANAR;
+
+Gizmo.OBJECT_SPACE = 1;
+Gizmo.WORLD_SPACE = 2;
 
 var axisX = mat4.create();
 var axisY = mat4.create();
@@ -202,8 +206,10 @@ Gizmo.prototype.updateGizmo = function()
 		return;
 	}
 	this.resetTransform();
-	if(this.targets.length == 1 && this.coord_system )
+	if(this.targets.length == 1 && this.coordinates == RD.Gizmo.OBJECT_SPACE )
+	{
 		this.transform = this.targets[0].transform;
+	}
 	else
 		this.position = this.computeCenter(this.targets);
 }
@@ -1219,6 +1225,10 @@ Gizmo.prototype.renderOutline = function( renderer, scene, camera, objects )
 	{
 		this._selection_buffer = new GL.Texture( w, h, { magFilter: gl.NEAREST});
 	}
+
+	if(!Gizmo.outline_material)
+		Gizmo.outline_material = new RD.Material({shader_name:"flat"});
+
 	var shadername = this.shader;
 	this._selection_buffer.drawTo(function(){
 		gl.clearColor(0,0,0,1);
@@ -1226,9 +1236,16 @@ Gizmo.prototype.renderOutline = function( renderer, scene, camera, objects )
 		renderer.shader_overwrite = shadername;
 		var tmp = renderer.onNodeShaderUniforms;
 		renderer.onNodeShaderUniforms = function(node,shader) { shader.setUniform("u_color",[1,1,1,1]); };
+		var tmp2 = renderer.pipeline;
+		renderer.pipeline = null;
+
+		renderer.overwrite_material = RD.Gizmo.outline_material;
+
 		renderer.render( scene, camera, objects );
 		renderer.shader_overwrite = null;
 		renderer.onNodeShaderUniforms = tmp;
+		renderer.pipeline = tmp2;
+		renderer.overwrite_material = null;
 	});
 	var outline_shader = gl.shaders["outline"];
 	if(!outline_shader)
@@ -1241,6 +1258,7 @@ Gizmo.prototype.renderOutline = function( renderer, scene, camera, objects )
 			vec3 outline = abs(color.xyz - colorU) * 0.3 + abs(color.xyz - colorL) * 0.3;\n\
 			outline += (abs(color.xyz - colorUL) + abs(color.xyz - colorDL) + abs(color.xyz - colorUR)) * 0.1;\n\
 			color = vec4( clamp(outline,vec3(0.0),vec3(1.0)),1.0 );\n\
+			//color = texture2D(u_texture, uv);\n\
 		","uniform vec2 u_res;\n");
 
 	gl.blendFunc(gl.ONE,gl.ONE);

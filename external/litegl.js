@@ -1540,10 +1540,13 @@ if(typeof(glMatrix) == "undefined")
 	throw("You must include glMatrix on your project");
 
 Math.clamp = function(v,a,b) { return (a > v ? a : (b < v ? b : v)); }
+Math.lerp =  function(a,b,f) { return a * (1 - f) + b * f; }
+Math.lerp01 =  function(a,b,f) { return Math.clamp(a * (1 - f) + b * f,0,1); }
+Math.iLerp =  function(a,b,v) { return (v - a) / (b - a); }
+Math.remap =  function(v,min,max,min2,max2) { return Math.lerp(min2,max2, Math.iLerp(min,max,v)); }
 
 var V3 = vec3.create;
 var M4 = vec3.create;
-
 
 vec3.ZERO = vec3.fromValues(0,0,0);
 vec3.FRONT = vec3.fromValues(0,0,-1);
@@ -5787,6 +5790,8 @@ Texture.prototype.computeInternalFormat = function()
 			}
 			else if( this.type == GL.FLOAT )
 			{
+				//if(gl.extensions.WEBGL_color_buffer_float)
+				//	this.internalFormat = this.format == GL.RGB ? gl.extensions.WEBGL_color_buffer_float.RGB32F_EXT : gl.extensions.WEBGL_color_buffer_float.RGBA32F_EXT;
 				//this.internalFormat = this.format == GL.RGB ? GL.RGB32F : GL.RGBA32F;
 			}
 		}
@@ -5909,17 +5914,43 @@ Texture.setUploadOptions = function(options, gl)
 {
 	gl = gl || global.gl;
 
-	if(options) //options that are not stored in the texture should be passed again to avoid reusing unknown state
+	//FIREFOX throws a warning because this cannot be used with arraybuffers as you are in charge or applying it manually...
+	if(!Texture.disable_deprecated)
 	{
-		gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, !!(options.premultiply_alpha) );
-		gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, !(options.no_flip) );
+		if(options) //options that are not stored in the texture should be passed again to avoid reusing unknown state
+		{
+			gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, !!(options.premultiply_alpha) );
+			gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, !(options.no_flip) );
+		}
+		else
+		{
+			gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false );
+			gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true );
+		}
 	}
-	else
-	{
-		gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false );
-		gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true );
-	}
+
 	gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+}
+
+//flips image data in Y in place
+Texture.flipYData = function( data, width, height, numchannels )
+{
+	var temp = new data.constructor( width * numchannels );
+	var pos = 0;
+	var lastpos = width * (height-1) * numchannels;
+	var l = Math.floor(height*0.5); //middle
+	for(var i = 0; i < l; ++i)
+	{
+		var row = data.subarray(pos, pos + width*numchannels);
+		var row2 = data.subarray(lastpos, lastpos + width*numchannels);
+		temp.set( row );
+		row.set( row2 );
+		row2.set( temp );
+		pos += width * numchannels;
+		lastpos -= width * numchannels;
+		if(pos > lastpos)
+			break;
+	}
 }
 
 /**
@@ -9790,6 +9821,12 @@ GL.create = function(options) {
 
 	//get some common extensions for webgl 1
 	gl.extensions = {};
+
+	var available_extensions = gl.getSupportedExtensions();
+	for(var i = 0; i < available_extensions.length; ++i)
+		gl.extensions[ available_extensions[i] ] = gl.getExtension( available_extensions[i] );
+
+	/*
 	gl.extensions["OES_standard_derivatives"] = gl.derivatives_supported = gl.getExtension('OES_standard_derivatives') || false;
 	gl.extensions["WEBGL_depth_texture"] = gl.getExtension("WEBGL_depth_texture") || gl.getExtension("WEBKIT_WEBGL_depth_texture") || gl.getExtension("MOZ_WEBGL_depth_texture");
 	gl.extensions["OES_element_index_uint"] = gl.getExtension("OES_element_index_uint");
@@ -9812,6 +9849,7 @@ GL.create = function(options) {
 	gl.extensions["OES_texture_half_float_linear"] = gl.getExtension("OES_texture_half_float_linear");
 	if(gl.extensions["OES_texture_half_float_linear"])
 		gl.extensions["OES_texture_half_float"] = gl.getExtension("OES_texture_half_float");
+	*/
 
 	if( gl.webgl_version == 1 )
 		gl.HIGH_PRECISION_FORMAT = gl.extensions["OES_texture_half_float"] ? GL.HALF_FLOAT_OES : (gl.extensions["OES_texture_float"] ? GL.FLOAT : GL.UNSIGNED_BYTE); //because Firefox dont support half float

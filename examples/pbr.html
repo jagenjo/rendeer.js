@@ -60,7 +60,7 @@
 
 		var url = "data/DamagedHelmet.glb";
 
-		if(url && 1)
+		if(url && 0)
 		RD.GLTF.load(url, function(node){
 			if(!node)
 				return;
@@ -123,8 +123,14 @@
 		renderer.context.captureKeys(true);
 		renderer.context.onkey = function(e)
 		{
+			if(e.type != "keydown")
+				return;
+
 			if(e.code == "KeyR") //reload shaders
+			{
+				console.log("reloading shaders...");
 				renderer.loadShaders("../src/pbr-shaders.glsl");
+			}
 			if(e.code == "KeyC") //capture
 				pbrpipeline.captureEnvironment( scene, [0,1,0] );
 			if(e.code == "KeyH") //environment
@@ -181,15 +187,22 @@
 
 		var files = evt.dataTransfer.files;
 		var count = files.length;
-		RD.GLTF.loadFromFiles(files, function(node){
-			if(gltf_node)
-				scene.root.removeChild(gltf_node);
-			gltf_node = node;
-			scene.root.addChild(gltf_node);
-			console.log(node);
-			if(node.animations)
-				animation = node.animations[0];
-		});
+		var ext = files[0].name.split(".").pop().toLowerCase();
+		if(ext == "hdre")
+		{
+			var url = URL.createObjectURL(files[0]);
+			pbrpipeline.loadEnvironment(url);
+		}
+		else
+			RD.GLTF.loadFromFiles(files, function(node){
+				if(gltf_node)
+					scene.root.removeChild(gltf_node);
+				gltf_node = node;
+				scene.root.addChild(gltf_node);
+				console.log(node);
+				if(node.animations)
+					animation = node.animations[0];
+			});
 	}
 
 	</script>

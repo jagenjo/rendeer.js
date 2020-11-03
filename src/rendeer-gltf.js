@@ -20,7 +20,7 @@ RD.GLTF = {
 
 	texture_options: { format: GL.RGBA, magFilter: GL.LINEAR, minFilter: GL.LINEAR_MIPMAP_LINEAR, wrap: GL.REPEAT },
 
-	load: function( url, callback, extension )
+	load: function( url, callback, extension, callback_progress )
 	{
 		var json = null;
 		var filename = "";
@@ -35,27 +35,27 @@ RD.GLTF = {
 			folder = folder.join("/");
 
 			console.log("loading gltf json...");
-			fetch(url).then(function(response) {
-				if( extension == "gltf" )
-					return response.json();
-				else
-					return response.arrayBuffer();
-			}).then(function(data){
 
-				if( extension == "gltf" )
-				{
-					json = data;
-					console.log("loading gltf binaries...");
-					fetchBinaries( json.buffers.concat() );
-				}
-				else if( extension == "glb" )
-				{
-					json = RD.GLTF.parseGLB(data);
-					if(!json)
-						return;
-					onFetchComplete();
-				}
-			});
+			var xhr = new XMLHttpRequest();
+			xhr.onload = function() {
+				//console.log("Loaded: ",xhr.status,xhr.response );
+				onData(xhr.response);
+			};
+
+			xhr.onerror = function() { // only triggers if the request couldn't be made at all
+			  console.error("Network Error");
+			  if(callback)
+				  callback(null);
+			};
+
+			if(callback_progress)
+				xhr.onprogress = function(event) { // triggers periodically
+				  callback_progress(url, event.loaded, event.total);
+				};
+
+			xhr.responseType = extension == "gltf" ? "json" : "arraybuffer";
+			xhr.open('GET', url);
+			xhr.send();
 		}
 		else //array of files already loaded
 		{
@@ -94,7 +94,6 @@ RD.GLTF = {
 				*/
 			}
 			onFetchComplete();
-
 		}
 
 		function fetchBinaries( list )
@@ -117,8 +116,8 @@ RD.GLTF = {
 				var buffer = this.buffer;
 				buffer.data = data;
 				buffer.dataview = new Uint8Array(data);
-				if(data.byteLength != buffer.byteLength)
-					console.warn("gltf binary doesnt match json size hint");
+				//if(data.byteLength != buffer.byteLength) //it is always different ??
+				//	console.warn("gltf binary doesnt match json size hint");
 				if(list.length)
 					fetchBinaries( list );
 				else
@@ -136,6 +135,23 @@ RD.GLTF = {
 			RD.GLTF.prefabs[ url ] = node.serialize();
 			if(callback)
 				callback(node);
+		}
+
+		function onData(data)
+		{
+			if( extension == "gltf" )
+			{
+				json = data;
+				console.log("loading gltf binaries...");
+				fetchBinaries( json.buffers.concat() );
+			}
+			else if( extension == "glb" )
+			{
+				json = RD.GLTF.parseGLB(data);
+				if(!json)
+					return;
+				onFetchComplete();
+			}
 		}
 	},
 
@@ -205,6 +221,7 @@ RD.GLTF = {
 			console.warn("gltf importer only supports one scene per file, skipping the rest");
 
 		var nodes_info = json.scenes[ json.scene ].nodes;
+		this.gltf_materials = {};
 
 		var root = null;
 		if(nodes_info.length > 1) //multiple root nodes
@@ -246,6 +263,7 @@ RD.GLTF = {
 			}
 		}
 
+		root.materials = this.gltf_materials;
 		return root;
 	},
 
@@ -264,7 +282,17 @@ RD.GLTF = {
 				case "name": node.name = v; break;
 				case "translation": node.position = v; break;
 				case "rotation": node.rotation = v; break;
-				case "scale": node.scaling = v; break;
+				case "scale": node.scaling = v;
+					var numneg = 0; //GLTFs and negative scales are pain in the ass
+					if (node.scaling[0] < 0)
+						numneg++;
+					if (node.scaling[1] < 0)
+						numneg++;
+					if (node.scaling[2] < 0)
+						numneg++;
+					if( numneg%2 == 1)
+						node.flags.frontFace = GL.CW; //reverse
+					break;
 				case "matrix": 
 					node.fromMatrix( v );
 					break;
@@ -277,10 +305,12 @@ RD.GLTF = {
 						for(var j = 0; j < mesh.info.groups.length; ++j)
 						{
 							var group = mesh.info.groups[j];
-							var material = this.parseMaterial( group.material, json );
+							var material = null;
+							if(group.material != null)
+								material = this.parseMaterial( group.material, json );
 							node.primitives.push({
 								index: j, 
-								material: material.name,
+								material: material ? material.name : null, //meshes without material can exists
 								mode: group.mode
 							});
 						}
@@ -300,8 +330,10 @@ RD.GLTF = {
 						}
 					}
 					break;
+				case "extras":
+					break;
 				default:
-					console.log("feature skipped",j);
+					console.log("gltf node info ignored:",i,info[i]);
 					break;
 			}
 		}
@@ -355,7 +387,7 @@ RD.GLTF = {
 				mesh.info.groups[i] = g = {};
 			var prim = mesh_info.primitives[i];
 			g.material = prim.material;
-			g.mode = prim.mode;
+			g.mode = prim.mode != null ? prim.mode : 4; //GL.TRIANGLES
 			g.start = prims[i].start;
 			g.length = prims[i].length;
 		}
@@ -389,6 +421,8 @@ RD.GLTF = {
 			buffers.vertices = this.parseAccessor( primitive_info.attributes.POSITION, json );
 		if(primitive_info.attributes.NORMAL != null)
 			buffers.normals = this.parseAccessor( primitive_info.attributes.NORMAL, json );
+		if(primitive_info.attributes.COLOR_0 != null)
+			buffers.colors = this.parseAccessor( primitive_info.attributes.COLOR_0, json );
 		if(primitive_info.attributes.TEXCOORD_0 != null)
 			buffers.coords = this.parseAccessor( primitive_info.attributes.TEXCOORD_0, json, this.flip_uv );
 		if(primitive_info.attributes.TEXCOORD_1 != null)
@@ -504,6 +538,7 @@ RD.GLTF = {
 		material.alphaCutoff = info.alphaCutoff != null ? info.alphaCutoff : 0.5;
 		if(info.doubleSided != null)
 			material.flags.two_sided = info.doubleSided;
+		material.normalmapFactor = 1.0;
 
 		if(info.pbrMetallicRoughness)
 		{
@@ -518,7 +553,18 @@ RD.GLTF = {
 			if(info.pbrMetallicRoughness.baseColorFactor != null)
 				material.color = info.pbrMetallicRoughness.baseColorFactor;
 			if(info.pbrMetallicRoughness.baseColorTexture)
+			{
 				material.textures.albedo = this.parseTexture( info.pbrMetallicRoughness.baseColorTexture, json );
+				if( material.alphaMode == "MASK" && gl.extensions.EXT_texture_filter_anisotropic ) //force anisotropy
+				{
+					var tex = gl.textures[ material.textures.albedo.texture ];
+					if(tex)
+					{
+						tex.bind(0);
+						gl.texParameteri( gl.TEXTURE_2D, gl.extensions.EXT_texture_filter_anisotropic.TEXTURE_MAX_ANISOTROPY_EXT, 8 );
+					}
+				}
+			}
 			if(info.pbrMetallicRoughness.metallicFactor != null)
 				material.metallicFactor = info.pbrMetallicRoughness.metallicFactor;
 			if(info.pbrMetallicRoughness.roughnessFactor != null)
@@ -538,6 +584,8 @@ RD.GLTF = {
 			material.emissive = info.emissiveFactor;
 
 		RD.Materials[ material.name ] = material;
+		this.gltf_materials[ material.name ] = material;
+
 		return material;
 	},
 
@@ -568,47 +616,50 @@ RD.GLTF = {
 				extension = "png"; //defaulting
 			image_name += "." + extension;
 		}
-		var tex = gl.textures[ image_name ];
-		if( tex )
-			return image_name;
+
 
 		var result = {};
 
-		if(source.uri) //external image file
+		var tex = gl.textures[ image_name ];
+		if( !tex )
 		{
-			var filename = source.uri;
-			if(filename.substr(0,5) == "data:")
+			if(source.uri) //external image file
 			{
-				var start = source.uri.indexOf(",");
-				var mimeType = source.uri.substr(5,start);
-				var extension = mimeType.split("/").pop().toLowerCase();
-				var image_name = json.folder + "/" + filename + "image_" + mat_tex_info.index + "." + extension;
-				var image_bytes = _base64ToArrayBuffer( source.uri.substr(start+1) );
-				var image_url = URL.createObjectURL( new Blob([image_bytes],{ type : mimeType }) );
+				var filename = source.uri;
+				if(filename.substr(0,5) == "data:")
+				{
+					var start = source.uri.indexOf(",");
+					var mimeType = source.uri.substr(5,start);
+					var extension = mimeType.split("/").pop().toLowerCase();
+					var image_name = json.folder + "/" + filename + "image_" + mat_tex_info.index + "." + extension;
+					var image_bytes = _base64ToArrayBuffer( source.uri.substr(start+1) );
+					var image_url = URL.createObjectURL( new Blob([image_bytes],{ type : mimeType }) );
+					//var img = new Image(); img.src = image_url; document.body.appendChild(img); //debug
+					var texture = GL.Texture.fromURL( image_url, this.texture_options );
+					texture.name = image_name;
+					gl.textures[ image_name ] = texture;
+
+				}
+				else
+					result.texture = json.folder + "/" + filename;
+			}
+			else if(source.bufferView != null) //embeded image file
+			{
+				var bufferView = json.bufferViews[ source.bufferView ];
+				if(bufferView.byteOffset == null)
+					bufferView.byteOffset = 0;
+				var buffer = json.buffers[ bufferView.buffer ];
+				var image_bytes = buffer.data.slice( bufferView.byteOffset, bufferView.byteOffset + bufferView.byteLength );
+				var image_url = URL.createObjectURL( new Blob([image_bytes],{ type : source.mimeType }) );
 				//var img = new Image(); img.src = image_url; document.body.appendChild(img); //debug
 				var texture = GL.Texture.fromURL( image_url, this.texture_options );
 				texture.name = image_name;
 				gl.textures[ image_name ] = texture;
-
 			}
-			else
-				result.filename = json.folder + "/" + filename;
-		}
-		else if(source.bufferView != null) //embeded image file
-		{
-			var bufferView = json.bufferViews[ source.bufferView ];
-			if(bufferView.byteOffset == null)
-				bufferView.byteOffset = 0;
-			var buffer = json.buffers[ bufferView.buffer ];
-			var image_bytes = buffer.data.slice( bufferView.byteOffset, bufferView.byteOffset + bufferView.byteLength );
-			var image_url = URL.createObjectURL( new Blob([image_bytes],{ type : source.mimeType }) );
-			//var img = new Image(); img.src = image_url; document.body.appendChild(img); //debug
-			var texture = GL.Texture.fromURL( image_url, this.texture_options );
-			texture.name = image_name;
-			gl.textures[ image_name ] = texture;
 		}
 
-		result.texture = image_name;
+		if(!result.texture)
+			result.texture = image_name;
 
 		//sampler
 		if(info.sampler != null)

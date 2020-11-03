@@ -611,7 +611,7 @@ SpritesBatch.prototype.renderSprites = function( texture, camera, size, atlas_si
 	shader.setUniform("u_size", [size, size / aspect] );
 	shader.setUniform("u_top", top );
 	shader.setUniform("u_right", right );
-	shader.setUniform( "u_atlas", this._atlas_size );
+	shader.setUniform( "u_atlas", atlas_size );
 	shader.setUniform( "u_texture", texture.bind(0) );
 	shader.setUniform( "u_itexsize", [ 1 / texture.width, 1 / texture.height ] );
 	shader.setUniform( "u_viewport", gl.viewport_data );

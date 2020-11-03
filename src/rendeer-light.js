@@ -62,15 +62,31 @@
 		vec3.normalize(this._vector, this._vector);
 	}
 
-	Light.prototype.setUniforms = function( shader )
+	Light.prototype.setUniforms = function( shader_or_uniforms )
 	{
 		this.shadowmap.uniforms.u_shadowbias = this.shadowmap.bias;
 		this.uniforms.u_light_color.set( this._color );
 		vec3.scale( this.uniforms.u_light_color, this.uniforms.u_light_color, this.intensity );
-		shader.uniforms(this.uniforms);
-		shader.uniforms(this.shadowmap.uniforms);
-		if(this._castShadows)
-			this.shadowmap.texture.bind(this.shadowmap.uniforms.u_shadowmap_texture);
+
+		if(shader_or_uniforms.constructor === GL.Shader )
+		{
+			var shader = shader_or_uniforms;
+			shader.uniforms(this.uniforms);
+			if(this._castShadows)
+			{
+				shader.uniforms(this.shadowmap.uniforms);
+				this.shadowmap.texture.bind(this.shadowmap.uniforms.u_shadowmap_texture);
+			}
+		}
+		else
+		{
+			var uniforms = shader_or_uniforms;
+			for(var i in this.uniforms)
+				uniforms[i] = this.uniforms[i];
+			if(this._castShadows)
+				for(var i in this.shadowmap.uniforms)
+					uniforms[i] = this.shadowmap.uniforms[i];
+		}
 	}
 
 	Light.prototype.lookAt = function(eye, center, up) {

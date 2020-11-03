@@ -1,2 +1,8 @@
 ../src/rendeer.js
 ../src/rendeer-extended.js
+../src/rendeer-gizmo.js
+../src/rendeer-gltf.js
+../src/rendeer-pbr.js
+../src/rendeer-light.js
+../src/rendeer-animation.js
+

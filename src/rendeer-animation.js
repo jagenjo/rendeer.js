@@ -1,5 +1,5 @@
 //This file contains two animation methods, one for single track animations (used in GLTF)
-//and one for a full skeletal animation (which is more efficient)
+//and one for a full skeletal animation (which is more efficient when working with skeletal characters)
 
 (function(global){
 

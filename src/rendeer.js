@@ -669,12 +669,21 @@ SceneNode.prototype.serialize = function()
 		children: [],
 	};
 
-	if(this.primitives)
+	if(this.name)
+		r.name = this.name;
+	if(this.primitives && this.primitives.length)
 		r.primitives = this.primitives.concat();
 	if(this.mesh)
 		r.mesh = this.mesh;
 	if(this.material)
 		r.material = this.material;
+	if(this.submesh != null)
+		r.submesh = this.submesh;
+	if(this.extra)
+		r.extra = this.extra;
+
+	if(this.onSerialize)
+		this.onSerialize(r);
 
 	if(this.children)
 	for(var i = 0, l = this.children.length; i < l; i++)
@@ -1226,6 +1235,9 @@ SceneNode.prototype.findNode = function(id)
 */
 SceneNode.prototype.findNodeByName = function(name)
 {
+	if(name == null)
+		return null;
+
 	for(var i = 0, l = this.children.length; i < l; i++)
 	{
 		var node = this.children[i];
@@ -1392,7 +1404,7 @@ SceneNode.prototype.testRay = (function(){
 		//test with this node mesh 
 		var collided = null;
 
-		if( (this.layers & layers) && !this.flags.ignore_collisions )
+		if( (this.layers & layers) && !this.flags.ignore_collisions && this.flags.visible )
 		{
 			if( this.mesh )
 				collided = this.testRayWithMesh( ray, collision_point, max_dist, layers, test_against_mesh, test_primitives );
@@ -1402,7 +1414,7 @@ SceneNode.prototype.testRay = (function(){
 		if(collided)
 		{
 			var distance = vec3.distance( ray.origin, collision_point );
-			if( distance < max_dist)
+			if( max_dist == null || distance < max_dist)
 			{
 				max_dist = distance;
 				result.set( collision_point );
@@ -1411,21 +1423,24 @@ SceneNode.prototype.testRay = (function(){
 		}
 
 		//if no children, then return current collision
-		if( !this.children && !this.children.length )
+		if( !this.children || !this.children.length )
 			return node;
+
+		//cannot externalize
+		var local_result = vec3.create();
 
 		//test against children
 		for(var i = 0 ; i < this.children.length; ++ i )
 		{
 			var child = this.children[i];
-			var child_collided = child.testRay( ray, collision_point2, max_dist, layers, test_against_mesh );
+			var child_collided = child.testRay( ray, local_result, max_dist, layers, test_against_mesh );
 			if(!child_collided)
 				continue;
-			var distance = vec3.distance( ray.origin, collision_point2 );
+			var distance = vec3.distance( ray.origin, local_result );
 			if( distance < max_dist )
 			{
 				max_dist = distance;
-				result.set( collision_point );
+				result.set( local_result );
 				node = child_collided;
 			}
 		}
@@ -1458,7 +1473,7 @@ SceneNode.prototype.testRayWithMesh = (function(){
 			return false;
 
 		var mesh = gl.meshes[ this.mesh ];
-		if( !mesh ) //mesh not loaded
+		if( !mesh || mesh.ready === false) //mesh not loaded
 			return false;
 
 		var group_index = this.submesh == null ? -1 : this.submesh;
@@ -1478,6 +1493,7 @@ SceneNode.prototype.testRayWithMesh = (function(){
 			{
 				var info = this.primitives[i];
 				var test = SceneNode.testRayMesh( ray, origin, direction, mesh, info.index, coll_point, max_dist, layers, test_against_mesh, true );
+				//TODO!
 			}
 		}
 		else
@@ -1488,7 +1504,7 @@ SceneNode.prototype.testRayWithMesh = (function(){
 //internal function to reuse computations
 SceneNode.testRayMesh = function( ray, local_origin, local_direction, model, mesh, group_index, result, max_dist, layers, test_against_mesh, two_sided )
 {
-	max_dist = max_dist === undefined ? Number.MAX_VALUE : max_dist;
+	max_dist = max_dist == null ? Number.MAX_VALUE : max_dist;
 
 	var bb = null;
 	var subgroup = null;
@@ -2638,7 +2654,7 @@ Scene.prototype.toJSON = function( on_node_to_json )
 * @class Material
 * @constructor
 */
-function Material()
+function Material(o)
 {
 	this._color = vec4.fromValues(1,1,1,1);
 	this.shader_name = null;
@@ -2657,6 +2673,9 @@ function Material()
 		depth_test: true,
 		depth_write: true
 	};
+
+	if(o)
+		this.configure(o);
 }
 
 Material.default_shader_name = "texture";
@@ -2678,6 +2697,47 @@ Object.defineProperty( Material.prototype, 'opacity', {
 	set: function(v) { this._color[3] = v; },
 	enumerable: true //avoid problems
 });
+
+//because color and albedo is the same
+Object.defineProperty( Material.prototype, "albedo", {
+	set: function(v){
+		this._color.set(v);
+	},
+	get: function() { return this._color; },
+	enumerable: false
+});
+
+Material.prototype.configure = function(o)
+{
+	for(var i in o)
+		this[i] = o[i];
+}
+
+Material.prototype.serialize = function()
+{
+	var o = {
+		flags: this.flags,
+		textures: this.textures
+	};
+
+	o.color = typedArrayToArray( this._color );
+	if(this.name)
+		o.name = this.name;
+	if(this.alphaMode)
+		o.alphaMode = this.alphaMode;
+	if(this.alphaCutoff != 0.5)
+		o.alphaCutoff = this.alphaCutoff;
+	if(this.model)
+	{
+		o.model = this.model;
+		o.metallicFactor = this.metallicFactor;
+		o.roughnessFactor = this.roughnessFactor;
+		if(this.emissive)
+			o.emissive = typedArrayToArray( this.emissive );
+	}
+
+	return o;
+}
 
 Material.prototype.render = function( renderer, model, mesh, indices_name, group_index )
 {
@@ -2781,6 +2841,8 @@ function Renderer( context, options )
 		u_color: this._color,
 		u_texture_matrix: this._texture_matrix
 	};
+
+	this.global_uniforms_containers = [ this._uniforms ];
 	
 	//set some default stuff
 	global.gl = this.gl;
@@ -2910,7 +2972,7 @@ Renderer.prototype.render = function(scene, camera, nodes, layers )
 		scene._root.getVisibleChildren( this._nodes, layers );
 	nodes = nodes || this._nodes;
 
-	if(!nodes.length)
+	if(!nodes.length && 0)//even if no nodes in the scene, somebody may want to render something using the callbacks
 	{
 		scene.frame++;
 		this.frame++;
@@ -3113,16 +3175,16 @@ Renderer.prototype.renderNode = function(node, camera)
 		for(var i = 0; i < node.primitives.length; ++i)
 		{
 			var prim = node.primitives[i];
-			var material = RD.Materials[ prim.material ];
+			var material = this.overwrite_material || RD.Materials[ prim.material ];
 			if(material)
 				this.renderMeshWithMaterial( node._global_matrix, mesh, material, "triangles", i );
 		}
 		return;
 	}
 
-	if(node.material)
+	if(mesh && (node.material || this.overwrite_material) )
 	{
-		var material = RD.Materials[ node.material ];
+		var material = this.overwrite_material || RD.Materials[ node.material ];
 		if(material)
 		{
 			if(material.render)
@@ -3151,10 +3213,13 @@ Renderer.prototype.renderNode = function(node, camera)
 	var shader_name = node.shader;
 	if (this.on_getShader)
 		shader = this.on_getShader( node, camera );
-	if (!shader && node.shader)
-		shader = gl.shaders[ shader_name ];
-	if(this.shader_overwrite)
-		shader = gl.shaders[this.shader_overwrite];
+	else
+	{
+		if (!shader && node.shader)
+			shader = gl.shaders[ shader_name ];
+		if(this.shader_overwrite)
+			shader = gl.shaders[this.shader_overwrite];
+	}
 	if (!shader)
 		shader = node.textures.color ? this._texture_shader : this._flat_shader;
 
@@ -3208,13 +3273,14 @@ Renderer.prototype.renderNode = function(node, camera)
 	
 	if(node.onRender)
 		node.onRender(this, camera, shader);
-	
-	shader.uniforms( this._uniforms ); //globals
+
+	//allows to have several global uniforms containers
+	for(var i = 0; i < this.global_uniforms_containers.length; ++i)
+		shader.uniforms( this.global_uniforms_containers[i] ); //globals
 	if(!this.skip_node_uniforms)
 		shader.uniforms( node._uniforms ); //node specifics
 	if(node.onShaderUniforms) //in case the node wants to add extra shader uniforms that need to be computed at render time
 		node.onShaderUniforms(this, shader);
-
 	if(this.onNodeShaderUniforms) //in case the node wants to add extra shader uniforms that need to be computed at render time
 		this.onNodeShaderUniforms(this, shader, node );
 
@@ -3617,7 +3683,7 @@ Renderer.prototype.loadTextureAtlas = function(data, url, on_complete)
 * @param {Function} on_complete callback
 * @param {Object} extra_macros object containing macros that must be included in all
 */
-Renderer.prototype.loadShaders = function(url, on_complete, extra_macros)
+Renderer.prototype.loadShaders = function( url, on_complete, extra_macros )
 {
 	var that = this;
 	
@@ -3629,7 +3695,7 @@ Renderer.prototype.loadShaders = function(url, on_complete, extra_macros)
 	this.loading_shaders = true;
 	
 	//load shaders code from a files atlas
-	GL.loadFileAtlas( url, function(files){
+	GL.loadFileAtlas( url, function( files ){
 		that.compileShadersFromAtlas( files, extra_macros );
 		that.loading_shaders = false;
 		if(on_complete)
@@ -3640,12 +3706,14 @@ Renderer.prototype.loadShaders = function(url, on_complete, extra_macros)
 Renderer.prototype.compileShadersFromAtlas = function(files, extra_macros)
 {
 	var info = files["shaders"];
-	 if(!info)
-	 {
+	if(!info)
+	{
 		console.warn("No 'shaders' found in shaders file atlas, check documentation");
 		return;
-	 }
+	}
 	 
+	this.shader_files = files;
+
 	//expand #imports "..."
 	for(var i in files)
 		files[i] = GL.Shader.expandImports( files[i], files );
@@ -4176,7 +4244,7 @@ Sprite.prototype._ctor = function()
 	SceneNode.prototype._ctor.call(this);
 
 	this.mesh = "plane";
-	this.size = vec2.fromValues(0,0);
+	this.size = vec2.fromValues(0,0); //size of the 
 	this.sprite_pivot = RD.TOP_LEFT;
 	this.blend_mode = RD.BLEND_ALPHA;
 	this.flags.two_sided = true;
@@ -4377,9 +4445,14 @@ Sprite.prototype.render = function(renderer, camera)
 			case RD.BOTTOM_CENTER: offsety = 0.5; break;
 			case RD.BOTTOM_RIGHT: offsetx = -0.5; offsety = 0.5; break;
 		}
-		mat4.translate( temp_mat4, temp_mat4, [offsetx * size[0], offsety * size[1], 0 ] );
+		mat4.translate( temp_mat4, temp_mat4, [offsetx * this.size[0], offsety * this.size[1], 0 ] );
 	}
-	mat4.scale( temp_mat4, temp_mat4, [size[0] * (normalized_size ? this.size[0] : 1), size[1] * (normalized_size ? this.size[1] : 1), 1 ] );
+	
+	//mat4.scale( temp_mat4, temp_mat4, [size[0] * (normalized_size ? this.size[0] : 1), size[1] * (normalized_size ? this.size[1] : 1), 1 ] );
+	if(normalized_size)
+		mat4.scale( temp_mat4, temp_mat4, [this.size[0] * size[0], this.size[1] * size[1], 1 ] );
+	else
+		mat4.scale( temp_mat4, temp_mat4, [this.size[0], this.size[1], 1 ] );
 	renderer.setModelMatrix( temp_mat4 );
 
 	renderer.renderNode( this, renderer, camera );
