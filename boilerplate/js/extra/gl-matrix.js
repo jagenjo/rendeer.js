@@ -4312,4 +4312,4 @@ if(typeof(exports) !== 'undefined') {
 
 
   })(shim.exports);
-})(this);
+})(typeof(window) != "undefined" ? window : (typeof(self) != "undefined" ? self : global ));

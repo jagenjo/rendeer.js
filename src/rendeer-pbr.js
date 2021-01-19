@@ -755,4 +755,4 @@ RenderCall.prototype.computeRenderPriority = function( point )
 RD.PBRPipeline = PBRPipeline;
 RD.RenderCall = RenderCall;
 
-})(this);
+})(typeof(window) != "undefined" ? window : (typeof(self) != "undefined" ? self : global ));
