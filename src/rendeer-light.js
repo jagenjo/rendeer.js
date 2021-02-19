@@ -164,4 +164,4 @@
 
 	RD.Light = Light;
 
-})(this);
+})(typeof(window) != "undefined" ? window : (typeof(self) != "undefined" ? self : global ));

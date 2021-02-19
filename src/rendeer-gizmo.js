@@ -1294,4 +1294,4 @@ extendClass( Gizmo, RD.SceneNode );
 RD.Gizmo = Gizmo;
 
 
-})(this);
+})(typeof(window) != "undefined" ? window : (typeof(self) != "undefined" ? self : global ));
