@@ -402,9 +402,10 @@ tonemapper @SCREEN tonemapper.fs
 	#define EMISSIVEMAP 4
 	#define OPACITYMAP 5
 	#define DISPLACEMENTMAP 6
+	#define DETAILMAP 7
 
 	//maps info (tells if a texture is available and which uv set to use)
-	uniform int u_maps_info[8];
+	uniform int u_maps_info[10];
 
 	uniform sampler2D u_albedo_texture;
 	uniform sampler2D u_metallicRoughness_texture;
@@ -413,6 +414,7 @@ tonemapper @SCREEN tonemapper.fs
 	uniform sampler2D u_normal_texture;
 	uniform sampler2D u_emissive_texture;
 	uniform sampler2D u_displacement_texture;
+	uniform sampler2D u_detail_texture;
 
 	#import "sh.inc"
 	#import "perturbNormal.inc"
@@ -513,6 +515,12 @@ tonemapper @SCREEN tonemapper.fs
 	void createMaterial (inout PBRMat material) {
 		
 		vec3 baseColor = u_albedo;
+
+		if(u_maps_info[DETAILMAP] != -1){
+			vec3 detail_tex = texture2D(u_detail_texture, getUV( u_maps_info[DETAILMAP] ) * 10.0 ).rgb;
+			baseColor *= detail_tex;
+		}
+
 		if(u_maps_info[ALBEDOMAP] != -1){
 			vec3 albedo_tex = texture2D(u_albedo_texture, getUV( u_maps_info[ALBEDOMAP] ) ).rgb;
 			albedo_tex = pow(albedo_tex, vec3(GAMMA)); //degamma
@@ -826,6 +834,11 @@ tonemapper @SCREEN tonemapper.fs
 		vec3 color = u_albedo * v_color.xyz;
 		float alpha = u_alpha;
 
+		if(u_maps_info[DETAILMAP] != -1){
+			vec3 detail_tex = texture2D(u_detail_texture, getUV( u_maps_info[DETAILMAP] ) * 10.0 ).rgb;
+			color *= detail_tex;
+		}
+
 		if(u_maps_info[ALBEDOMAP] != -1)
 		{
 			vec4 color4 = texture2D( u_albedo_texture, getUV(u_maps_info[ALBEDOMAP]) );
@@ -928,6 +941,7 @@ tonemapper @SCREEN tonemapper.fs
 	#define EMISSIVEMAP 4
 	#define OPACITYMAP 5
 	#define DISPLACEMENTMAP 6
+	#define DETAILMAP 7
 
 	//maps info (like uvs, if available, etc)
 	uniform int u_maps_info[8];
@@ -935,6 +949,7 @@ tonemapper @SCREEN tonemapper.fs
 	uniform sampler2D u_albedo_texture;
 	uniform sampler2D u_opacity_texture;
 	uniform sampler2D u_normal_texture;
+	uniform sampler2D u_detail_texture;
 
 	#import "perturbNormal.inc"
 

@@ -472,7 +472,7 @@ RD.GLTF = {
 			if(typeof(DracoDecoderModule) != "undefined")
 				DracoDecoderModule({}).then(function(module) {
 					that.decoderModule = module;
-					let decoder = new module.Decoder();
+					var decoder = new module.Decoder();
 					console.log('Decoder Module Initialized');
 					//that.decodeBuffer(rawBuffer, decoder);
 				});
@@ -486,12 +486,12 @@ RD.GLTF = {
 	decodeBuffer: function(rawBuffer, decoder)
 	{
 		var decoderModule = this.decoderModule;
-		const buffer = new decoderModule.DecoderBuffer();
+		var buffer = new decoderModule.DecoderBuffer();
 		buffer.Init(new Int8Array(rawBuffer), rawBuffer.byteLength);
-		const geometryType = decoder.GetEncodedGeometryType(buffer);
+		var geometryType = decoder.GetEncodedGeometryType(buffer);
 
-		let dracoGeometry = new decoderModule.Mesh();
-		let status = decoder.DecodeBufferToMesh(buffer, dracoGeometry);
+		var dracoGeometry = new decoderModule.Mesh();
+		var status = decoder.DecodeBufferToMesh(buffer, dracoGeometry);
 
 		decoderModule.destroy(buffer);
 
@@ -892,7 +892,7 @@ RD.SceneNode.prototype.loadGLTF = function( url, callback )
 
 	function inner(node)
 	{
-		that.addChildren( node );
+		that.addChild( node );
 		if(callback)
 			callback(that);
 	}

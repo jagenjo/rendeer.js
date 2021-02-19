@@ -62,7 +62,7 @@ function PBRPipeline( renderer )
 		u_metallicRough: false, //use metallic rough texture
 		u_reflectance: 0.1, //multiplied by the reflectance function
 
-		u_maps_info: new Int8Array(8), //info about channels
+		u_maps_info: new Int8Array(10), //info about channels
 
 		u_clearCoat: 0.0,
 		u_clearCoatRoughness: 0.5,
@@ -105,7 +105,7 @@ PBRPipeline.MACROS = {
 	PARALLAX_REFLECTION: 1<<2
 };
 
-PBRPipeline.maps = ["albedo","metallicRoughness","occlusion","normal","emissive","opacity","displacement"];
+PBRPipeline.maps = ["albedo","metallicRoughness","occlusion","normal","emissive","opacity","displacement","detail"];
 
 PBRPipeline.prototype.render = function( renderer, nodes, camera, scene, skip_fbo, layers )
 {
@@ -857,4 +857,4 @@ RenderCall.prototype.computeRenderPriority = function( point )
 RD.PBRPipeline = PBRPipeline;
 RD.RenderCall = RenderCall;
 
-})(typeof(window) != "undefined" ? window : (typeof(self) != "undefined" ? self : global ));
+})(this);

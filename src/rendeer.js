@@ -212,7 +212,6 @@ SceneNode.prototype._ctor = function()
 
 	this.draw_range = null;
 	this._instances = null; //array of mat4 with the model for every instance
-	this._uniforms = { u_color: this._color, u_color_texture: 0 };
 
 	this.primitive = GL.TRIANGLES;
 
@@ -244,6 +243,8 @@ SceneNode.prototype._ctor = function()
 
 	//object inside this object
 	this.children = [];
+
+	this._uniforms = { u_color: this._color, u_color_texture: 0 };
 }
 
 SceneNode.ctor = SceneNode.prototype._ctor; //helper
@@ -855,14 +856,20 @@ SceneNode.prototype.resetTransform = function()
 * @param {vec3} delta
 * @param {Boolean} local [optional] if true it will rotate the vector according to its rotation
 */
-SceneNode.prototype.translate = function( delta, orient )
+SceneNode.prototype.translate = function( delta, local )
 {
-	if(orient)
+	if(local)
 		this.getLocalVector( delta, temp_vec3 );
 	else
 		temp_vec3.set(delta);
 	vec3.add( this._position, this._position, temp_vec3 );
 	this._must_update_matrix = true;
+}
+
+SceneNode.prototype.move = SceneNode.prototype.translate;
+SceneNode.prototype.moveLocal = function( delta )
+{
+	this.translate(delta, true);
 }
 
 /**
@@ -2862,7 +2869,14 @@ Material.prototype.serialize = function()
 Material.prototype.render = function( renderer, model, mesh, indices_name, group_index )
 {
 	//get shader
-	var shader_name = this.shader_name || renderer.default_shader_name || RD.Material.default_shader_name;
+	var shader_name = this.shader_name;
+	if(!shader_name)
+	{
+		if( this.model == "pbrMetallicRoughness" )
+			shader_name = "texture_albedo";
+		else
+			shader_name = renderer.default_shader_name || RD.Material.default_shader_name;
+	}
 	var shader = gl.shaders[ shader_name ];
 	if (!shader)
 	{
@@ -5009,11 +5023,19 @@ Renderer.prototype.createShaders = function()
 	var fragment_shader = '\
 		precision highp float;\
 		varying vec2 v_coord;\
-		uniform vec4 u_color;\
-		uniform sampler2D u_color_texture;\
-		uniform float u_global_alpha_clip;\
-		void main() {\
-			vec4 color = u_color * texture2D(u_color_texture, v_coord);\n\
+		uniform vec4 u_color;\n\
+		#ifdef ALBEDO\n\
+			uniform sampler2D u_albedo_texture;\n\
+		#else\n\
+			uniform sampler2D u_color_texture;\n\
+		#endif\n\
+		uniform float u_global_alpha_clip;\n\
+		void main() {\n\
+			#ifdef ALBEDO\n\
+				vec4 color = u_color * texture2D(u_albedo_texture, v_coord);\n\
+			#else\n\
+				vec4 color = u_color * texture2D(u_color_texture, v_coord);\n\
+			#endif\n\
 			if(color.w < u_global_alpha_clip)\n\
 				discard;\n\
 			gl_FragColor = color;\
@@ -5021,7 +5043,9 @@ Renderer.prototype.createShaders = function()
 	';
 	
 	gl.shaders["texture"] = this._texture_shader = new GL.Shader( vertex_shader, fragment_shader );
+	gl.shaders["texture_albedo"] = this._texture_albedo_shader = new GL.Shader( vertex_shader, fragment_shader, { ALBEDO:"" } );
 	gl.shaders["texture_instancing"] = this._texture_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { INSTANCING:"" } );
+	gl.shaders["texture_albedo_instancing"] = this._texture_albedo_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { ALBEDO:"",INSTANCING:""  } );
 	
 	this._texture_transform_shader = new GL.Shader('\
 		precision highp float;\n\
