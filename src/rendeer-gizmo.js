@@ -13,6 +13,7 @@ function Gizmo(o)
 	this.layers = 0xFF;
 	this.grid_size = 0;
 	this.allow_duplicating = true; //allow to duplicate selected nodes by shift drag
+	this.render_move_plane = true; //render the plane where moving
 
 	this.shader = "flat"; //do not change this
 	this._last = vec3.create();
@@ -308,14 +309,20 @@ Gizmo.prototype.applyTransformToTarget = function(transmat)
 	if(!targets)
 		return;
 
+	var scaling_sign = [1,1,1];
+
 	for(var i = 0; i < targets.length; ++i)
 	{
 		var n = targets[i];
+		scaling_sign[0] = n.scaling[0] >= 0 ? 1 : -1;
+		scaling_sign[1] = n.scaling[1] >= 0 ? 1 : -1;
+		scaling_sign[2] = n.scaling[2] >= 0 ? 1 : -1;
 		n.getGlobalMatrix(m); //in global
 		mat4.multiply(m,igm,m); //local to gizmo
 		mat4.multiply(m,transmat,m);//scaled
 		mat4.multiply(m,gm,m);//back to world
 		n.fromMatrix(m,true);
+		vec3.mul( n._scale, n._scale, scaling_sign ); //in case it was flipped in one axis
 		n.position = this.applySnap( n.position );
 		if(this.grid_size) //snap
 		{
@@ -862,13 +869,14 @@ Gizmo.prototype.render = function(renderer,camera)
 		return;
 	}
 
-	if( selected_info && selected_info.normal ) //plane move
+	if( selected_info && selected_info.normal && this.render_move_plane ) //plane move
 	{
 		tmp.set(model);
+		//mat4.translate(tmp,tmp,[0,0,0]); //move it a bit to avoid zfighting with the floor
 		if( selected == "movexz" )
-			mat4.rotateX( tmp, model, Math.PI / 2 );
+			mat4.rotateX( tmp, tmp, Math.PI / 2 );
 		else if( selected == "moveyz" )
-			mat4.rotateY( tmp, model, Math.PI / 2 );
+			mat4.rotateY( tmp, tmp, Math.PI / 2 );
 		mat4.scale(tmp,tmp,[100,100,100]);
 		shader.setUniform("u_model",tmp);
 		shader.setUniform("u_color",[0.1,0.1,0.1,0.4]);

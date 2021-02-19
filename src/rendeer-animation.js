@@ -12,11 +12,22 @@ function Animation()
 {
 	this.name = "";
 	this.tracks = [];
-	this.duration = 2;
+	this.duration = 10;
 }
 
-Animation.prototype.addTrack = function(track)
+Animation.prototype.addTrack = function(track, group)
 {
+	//search similar
+	if(group)
+	for(var i = 0; i < this.tracks.length; ++i)
+	{
+		var t = this.tracks[i];
+		if( t.target_node == track.target_node )
+		{
+			this.tracks.splice(i+1,0,track);
+			return;
+		}
+	}
 	this.tracks.push(track);
 }
 
@@ -29,18 +40,98 @@ Animation.prototype.applyAnimation = function( root_node, time, interpolation )
 	}
 }
 
+Animation.prototype.serialize = function()
+{
+	var o = {
+		name: this.name,
+		duration: this.duration,
+		tracks: []
+	};
+
+	for(var i = 0; i < this.tracks.length; ++i)
+	{
+		var track = this.tracks[i];
+		o.tracks.push( track.serialize() );
+	}	
+
+	return o;
+}
+
+Animation.prototype.configure = function(o)
+{
+	this.name = o.name;
+	this.duration = o.duration;
+	this.tracks.length = 0;
+
+	for(var i = 0; i < o.tracks.length; ++i)
+	{
+		var track = new RD.Animation.Track();
+		track.configure( o.tracks[i] );
+		this.tracks.push( track );
+	}	
+
+	return o;
+}
+
+Animation.prototype.findNearestLeft = function( time )
+{
+	var nearest_time = 0;
+	for(var i = 0; i < this.tracks.length; ++i)
+	{
+		var track = this.tracks[i];
+		var index = track.findTimeIndex( time );
+		if(index == -1)
+			continue;
+		var keyframe_time = track.data[index];
+		if( keyframe_time > nearest_time )
+			nearest_time = keyframe_time;
+	}
+	return nearest_time;
+}
+
+Animation.prototype.findNearestRight = function( time )
+{
+	var nearest_time = this.duration;
+	for(var i = 0; i < this.tracks.length; ++i)
+	{
+		var track = this.tracks[i];
+		var index = track.findTimeIndex( time );
+		if(index == -1)
+			continue;
+		var keyframe_time = track.data[index + 1];
+		if( keyframe_time != null && keyframe_time < nearest_time )
+			nearest_time = keyframe_time;
+	}
+	return nearest_time;
+}
+
 RD.Animation = Animation;
 
 function Track()
 {
-	this.target_node = ""; //id of target node
+	this.enabled = true;
+	this.target_node = ""; //id of target name
 	this.target_property = ""; //name of property
-	this.type = RD.SCALAR; //num floats per keyframe is derived from this type
+	this.type = RD.SCALAR; //value_size per keyframe is derived from this type using RD.TYPES_SIZE[ type ]. 0 means an object/string/boolean
 	this.data = [];
 	this.packed_data = false;//tells if data is in Array format (easy to manipulate) or Typed Array format (faster)
+
+	this._target = null; //the object that will receive the samples
 }
 
 Animation.Track = Track;
+
+Object.defineProperty( Track.prototype, "value_size", {
+	set: function(v)
+	{
+		throw("cannot be set, use type instead");
+	},
+	get: function()
+	{
+		return RD.TYPES_SIZE[ this.type ];
+	}
+});
+
 
 /**
 * Adds a new keyframe to this track given a value
@@ -52,7 +143,7 @@ Animation.Track = Track;
 */
 Track.prototype.addKeyframe = function( time, value, skip_replace )
 {
-	var value_size = RD.TYPES_SIZE[ this.type ];
+	var value_size = this.value_size;
 	if( value_size > 1 )
 		value = new Float32Array( value ); //clone
 
@@ -221,7 +312,7 @@ Track.prototype.getSampleUnpacked = function( time, interpolation, result )
 	var data = this.data;
 	var value_size = RD.TYPES_SIZE[ this.type ];
 
-	if(!interpolation || (data.length == 1) || index_b == data.length || (index_a == 0 && this.data[0][0] > time)) //(index_b == this.data.length && !this.looped)
+	if(!interpolation || value_size == 0 || (data.length == 1) || index_b == data.length || (index_a == 0 && this.data[0][0] > time)) //(index_b == this.data.length && !this.looped)
 		return this.data[ index ][1];
 
 	var a = data[ index_a ];
@@ -356,17 +447,75 @@ Track.prototype.getSamplePacked = function( time, interpolation, result )
 	return null;
 }
 
-Track.prototype.applyTrack = function( root_node, time, interpolation )
+//it samples and applies the result to the given node
+//root can be a RD.SceneNode or a RD.Skeleton (if skeleton only mat4 work)
+Track.prototype.applyTrack = function( root, time, interpolation )
 {
+	if(!root)
+		return;
+
 	var sample = this.getSample( time, interpolation );
-	var node = null;
-	if( root_node.name == this.target_node)
-		node = root_node;
-	else
-		node = root_node.findNodeByName( this.target_node );
-	if(node)
-		node[ this.target_property ] = sample;
+
+	if( root.constructor === RD.SceneNode ) //apply to scene ierarchy
+	{
+		var node = null;
+		if( root.name == this.target_node)
+			node = root;
+		else
+			node = root.findNodeByName( this.target_node );
+		if(node)
+			node[ this.target_property ] = sample;
+	}
+	else if( root.constructor === RD.Skeleton )
+	{
+		var bone = root.getBone( this.target_node );
+		if( bone && this.type == RD.MAT4 )
+			bone.model.set( sample );
+	}
+
 	return sample;
+}
+
+Track.prototype.serialize = function()
+{
+	var o = {
+		enabled: this.enabled,
+		target_node: this.target_node, 
+		target_property: this.target_property, 
+		type: this.type,
+		data: this.data.concat(), //clone!
+		packed_data: this.packed_data
+	};
+	return o;
+}
+
+Track.prototype.configure = function(o)
+{
+	this.enabled = o.enabled;
+	this.target_node = o.target_node;
+	this.target_property = o.target_property;
+	if(o.property) //in case it comes as "nodename/propname"
+	{
+		var index = o.property.indexOf("/");
+		this.target_node = o.property.substr(0,index);
+		this.target_property = o.property.substr(index+1);
+	}
+	if(o.type != null)
+	{
+		if(o.type.constructor === String)
+			this.type = RD.TYPES[ o.type.toUpperCase() ] || 0;
+		else
+			this.type = o.type;
+	}
+	if(o.data.concat)
+		this.data = o.data.concat(); //clone!
+	else
+		this.data = new o.data.constructor( o.data );
+
+	if(o.packed_data)
+		this.packed_data = o.packed_data;
+	else
+		this.packed_data = this.data.constructor !== Array;
 }
 
 RD.interpolateLinear = function( a, b, t, result, type, value_size, track )
@@ -459,13 +608,14 @@ function Skeleton()
 {
 	this.bones = []; //array of bones
 	this.global_bone_matrices = []; //internal array of mat4
-	this.bones_by_name = new Map(); //map of nodenames and index in the bones array
+	this.bones_by_name = new Map(); //map of nodenames => index in the bones array
 }
 
 RD.Skeleton = Skeleton;
 
-//Skeleton.EXTENSION = "skanim";
+//more functions after BONE...
 
+//Skeleton.EXTENSION = "skanim";
 
 function Bone()
 {
@@ -474,8 +624,11 @@ function Bone()
 	this.parent = -1;
 	this.layer = 0;
 	this.num_children = 0;
-	this.children = new Int8Array(16);
+	this.index = -1; //index in the skeleton bones array
+	this.children = new Int8Array(16); //max 16 children
 }
+
+Skeleton.Bone = Bone;
 
 Bone.prototype.serialize = function()
 {
@@ -495,6 +648,7 @@ Bone.prototype.configure = function(o)
 	this.parent = o.parent;
 	this.layer = o.layer;
 	this.num_children = 0;
+	this.index = o.index != null ? o.index : -1;
 	if(o.children)
 	{
 		this.children.set(o.children);
@@ -506,8 +660,6 @@ Bone.prototype.configure = function(o)
 }
 
 Bone.prototype.copyFrom = Bone.prototype.configure;
-
-Skeleton.Bone = Bone;
 
 //given a bone name and matrix, it multiplies the matrix to the bone
 Skeleton.prototype.applyTransformToBones = function(root, transform)
@@ -535,6 +687,39 @@ Skeleton.prototype.getBoneMatrix = function( name, local )
 	if(local)
 		return this.bones[ index ].model;
 	return this.global_bone_matrices[ index ];
+}
+
+//imports skeleton from structure following Rendeer
+Skeleton.prototype.importSkeleton = function(root_node)
+{
+	var bones = this.bones = [];
+	var that = this;
+	inner_getChilds(root_node);
+	this.updateGlobalMatrices();
+
+	function inner_getChilds( node )
+	{
+		var bone = new Bone();
+		bone.name = node.name || node.id;
+		bone.model.set( node.model );
+		bone.index = bones.length;
+		bones.push( bone );
+		that.bones_by_name.set( bone.name, bone.index );
+		that.global_bone_matrices.push( mat4.create() );
+
+		if(node.children && node.children.length)
+		{
+			bone.num_children = node.children.length;
+			for(var i = 0; i < node.children.length; ++i)
+			{
+				var b = inner_getChilds( node.children[i] );
+				bone.children[i] = b.index;
+				b.parent = bone.index;
+			}
+		}
+
+		return bone;
+	}
 }
 
 Skeleton.temp_mat4 = mat4.create();
@@ -629,24 +814,48 @@ Skeleton.prototype.assignLayer = function(bone, layer)
 	//TODO
 }
 
-//for rendering the skeleton
-Skeleton.prototype.getVertices = function()
+//applies any transform found in the animation tracks to this skeleton
+Skeleton.prototype.applyTracksAnimation = function( animation, time )
+{
+	for(var i = 0; i < animation.tracks.length; ++i )
+	{
+		var track = animation.tracks[i];
+		var bone_index = this.bones_by_name.get( track.target_node );
+		if(bone_index == null)
+			continue;
+		var bone = this.bones[ bone_index ];
+		if( track.target_property == "model" || track.target_property == "matrix" )
+			track.getSample( time, RD.LINEAR, bone.model );
+	}
+}
+
+//for rendering the skeleton, it returns an array of pairs vertices to define lines
+//if matrix then lines have the matrix applied
+Skeleton.prototype.getVertices = function(matrix)
 {
 	if(!this.bones.length)
 		return null;
+
 	var size = (this.bones.length - 1) * 3 * 2;
 	if(!this._vertices || this._vertices.length != size)
 		this._vertices = new Float32Array( size );
 	var vertices = this._vertices;
-	for (var i = 0; i < this.bones.length - 1; ++i)
+	var iv = 0;
+	for (var i = 1; i < this.bones.length; ++i)
 	{
-		var bone = this.bones[i+1];
+		var bone = this.bones[i];
 		var parent_global_matrix = this.global_bone_matrices[ bone.parent ];
-		var global_matrix = this.global_bone_matrices[i+1];
-		var v1 = vertices.subarray(i*6,i*6+3);
-		var v2 = vertices.subarray(i*6+3,i*6+6);
+		var global_matrix = this.global_bone_matrices[i];
+		var v1 = vertices.subarray(iv,iv+3);
+		var v2 = vertices.subarray(iv+3,iv+6);
 		mat4.getTranslation( v1, global_matrix );
 		mat4.getTranslation( v2, parent_global_matrix );
+		if(matrix)
+		{
+			vec3.transformMat4(v1,v1,matrix);
+			vec3.transformMat4(v2,v2,matrix);
+		}
+		iv += 6;
 	}
 	return vertices;
 }
@@ -671,6 +880,7 @@ Skeleton.prototype.resizeBones = function(num)
 	}
 }
 
+//clones one skeleton into another
 Skeleton.prototype.copyFrom = function( skeleton )
 {
 	this.resizeBones( skeleton.bones.length );
@@ -703,11 +913,13 @@ Skeleton.prototype.configure = function(o)
 		this.bones_by_name.clear();
 	for(var i = 0; i < o.bones.length; ++i)
 	{
-		this.bones[i].copyFrom( o.bones[i] );
+		var bone = this.bones[i];
+		bone.copyFrom( o.bones[i] );
+		bone.index = i;
 		if(o.global_bone_matrices) //is an skeleton
 			this.global_bone_matrices[i].set( o.global_bone_matrices[i] );
 		else //is an object
-			this.bones_by_name[this.bones[i].name] = i;
+			this.bones_by_name.set( this.bones[i].name, i );
 	}
 }
 
@@ -805,17 +1017,20 @@ Skeleton.shader_code = '\n\
 
 //*******************************************************
 
+//This stores a series of skeleton poses, in constant intervals, this is less memory efficient but has better performance
 function SkeletalAnimation()
 {
 	this.skeleton = new Skeleton();
 
 	this.duration = 0;
-	this.samples_per_second = 0;
+	this.samples_per_second = 30;
 	this.num_animated_bones = 0;
 	this.num_keyframes = 0;
-	this.bones_map = new Uint8Array(64); //maps from keyframe data index to bone
 
-	this.keyframes = null; //mat4 array
+	//maps from keyframe data bone index to skeleton bone index because it may be that not all skeleton bones are animated
+	this.bones_map = new Uint8Array(64);  //this.bones_map[ i ] => skeleton.bones[ bone_index ]
+
+	this.keyframes = null; //bidimensional array of mat4, it contains a num.bones X num. keyframes, bones in local space
 }
 
 RD.SkeletalAnimation = SkeletalAnimation;
@@ -833,7 +1048,7 @@ SkeletalAnimation.prototype.load = function(url, callback)
 //change the skeleton to the given pose according to time
 SkeletalAnimation.prototype.assignTime = function(time, loop, interpolate, layers )
 {
-	if(!this.duration)
+	if(!this.duration || !this.samples_per_second)
 		return;
 
 	if (loop || loop === undefined)
@@ -867,6 +1082,8 @@ SkeletalAnimation.prototype.assignTime = function(time, loop, interpolate, layer
 	{
 		var bone_index = bones_map[i];
 		var bone = skeleton.bones[bone_index];
+		if(!bone)
+			throw("bone not found in skeleton");
 		var offset = i*16;
 		//if (layers != 0xFF && !(bone.layer & layers))
 		//	continue;
@@ -883,9 +1100,25 @@ SkeletalAnimation.prototype.assignTime = function(time, loop, interpolate, layer
 
 SkeletalAnimation.prototype.resize = function( num_keyframes, num_animated_bones )
 {
-	this.num_keyframes = num_keyframes;
+	this.num_keyframes = Math.floor(num_keyframes);
 	this.num_animated_bones = num_animated_bones;
 	this.keyframes = new Float32Array( num_keyframes * num_animated_bones * 16);
+}
+
+SkeletalAnimation.prototype.assignPoseToKeyframe = function( skeleton, index )
+{
+	if( index >= this.num_keyframes )
+		throw( "index is out of range, this skeletal animation doesnt have so many samples, resize first" );
+	var start_index = index * this.num_animated_bones * 16;
+
+	for(var i = 0; i < this.num_animated_bones; ++i)
+	{
+		var bone_index = this.bones_map[i];
+		var bone = skeleton.bones[bone_index];
+		if(bone == null)
+			continue;
+		this.keyframes.set( bone.model, start_index + i * 16 );
+	}
 }
 
 SkeletalAnimation.prototype.fromData = function(txt)
@@ -907,6 +1140,8 @@ SkeletalAnimation.prototype.fromData = function(txt)
 		{
 			var index = Number(t[0]);
 			var bone = this.skeleton.bones[index];
+			if(!bone)
+				throw("bone not found in skeleton"); 
 			bone.name = t[1];
 			bone.parent = Number(t[2]);
 			for(var j = 0; j < 16; ++j)
@@ -944,13 +1179,78 @@ SkeletalAnimation.prototype.fromData = function(txt)
 
 SkeletalAnimation.prototype.toData = function()
 {
-	var str = "";
-	//this is currently done from WebGLStudio in the AnimationModule exportTakeInSKANIM
-	console.error("no toData in Skeletal Animation");
-	return str;
+	var lines = [];
+	lines.push( [ this.duration.toFixed(3), this.samples_per_second, this.num_keyframes, this.skeleton.bones.length ].join(",") );
+
+	var bones = this.skeleton.bones;
+	for(var i = 0; i < bones.length; ++i)
+	{
+		var bone = bones[i];
+		lines.push( "B" + i + "," + bone.name + "," + bone.parent + "," + typedArrayToArray(bone.model) );
+	}
+
+	//write bones
+	var bones_indices = [];
+	for(var i = 0; i < this.num_animated_bones; ++i)
+		bones_indices.push( this.bones_map[i] );
+	lines.push( "@" + bones_indices.length + "," + bones_indices.join(",") );
+
+	var offset = 1/this.samples_per_second;
+
+	//write keyframes for every sample
+	for(var i = 0; i < this.num_keyframes; ++i)
+	{
+		var pos = i * 16 * this.num_animated_bones;
+
+		//get keyframe
+		var data = this.keyframes.subarray(pos, pos + 16 * this.num_animated_bones);
+		var flat_data = data;
+
+		//avoid ugly strings
+		for(var j = 0; j < flat_data.length; ++j)
+			if( Math.abs( flat_data[j] ) < 0.000001 )
+				flat_data[j] = 0;
+			
+		lines.push( "K" + (i * offset).toFixed(3) + "," + flat_data.join(",") );
+	}
+
+	return lines.join("\n");
 }
 
+//resamples the tracks to get poses over time
+SkeletalAnimation.prototype.fromTracksAnimation = function( skeleton, animation, frames_per_second )
+{
+	this.duration = animation.duration;
+	this.samples_per_second = frames_per_second;
+	this.skeleton.copyFrom( skeleton );
 
+	//count animated bones and update bones map
+	var num_animated_bones = 0;
+	for(var i = 0; i < animation.tracks.length; ++i )
+	{
+		var track = animation.tracks[i];
+		var bone_index = skeleton.bones_by_name.get( track.target_node );
+		if(bone_index == null) //track is not for a bone
+			continue;
+		//var bone = skeleton.bones[ bone_index ];
+		this.bones_map[ num_animated_bones ] = bone_index; //store to which bone is the N matrix in the keyframes
+		num_animated_bones++;
+	}
+
+	//return;
+
+	//make room for the keyframes
+	var num_frames = Math.floor(animation.duration * frames_per_second);
+	this.resize( num_frames, num_animated_bones );
+
+	//for every keyframe, sample the skeleton
+	for(var i = 0; i < this.num_keyframes; ++i) 
+	{
+		var t = i * (1/frames_per_second);
+		this.skeleton.applyTracksAnimation( animation, t );
+		this.assignPoseToKeyframe( this.skeleton, i );
+	}
+}
 
 
 

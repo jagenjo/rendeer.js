@@ -38,6 +38,13 @@ RD.GLTF = {
 
 			var xhr = new XMLHttpRequest();
 			xhr.onload = function() {
+				if(this.status != 200)
+				{
+					console.error("GLTF not found",url);
+					if(callback)
+						callback(null);
+					return;
+				}
 				//console.log("Loaded: ",xhr.status,xhr.response );
 				onData(xhr.response);
 			};
@@ -256,9 +263,10 @@ RD.GLTF = {
 				for(var i = 0; i < json.animations.length; ++i)
 				{
 					var animation = this.parseAnimation(i,json,nodes_by_id);
+					animation.id = json.filename + "::" + animation.name;
 					if(animation)
 					{
-						RD.Animations[ animation.name ] = animation;
+						RD.Animations[ animation.id ] = animation;
 						root.animations.push(animation);
 					}
 				}
@@ -413,8 +421,17 @@ RD.GLTF = {
 		var primitive_info = mesh_info.primitives[ index ];
 		if(primitive_info.extensions)
 		{
-			throw("mesh data is compressed, this importer does not support it yet");
-			return null;
+			if(primitive_info.extensions["KHR_draco_mesh_compression"])
+			{
+				if(typeof(DracoDecoderModule) == "undefined")
+					throw("mesh data is compressed using Draco, draco_decoder.js not installed.");
+				this.decompressDraco( primitive_info );
+			}
+			else
+			{
+				throw("mesh data is compressed, this importer does not support it yet");
+				return null;
+			}
 		}
 
 		if(!primitive_info.attributes.POSITION == null)
@@ -444,6 +461,41 @@ RD.GLTF = {
 		primitive.start = 0;
 		primitive.length = buffers.triangles ? buffers.triangles.length : buffers.vertices.length / 3;
 		return primitive;
+	},
+
+	decompressDraco: function( primitive_info )
+	{
+		var that = this;
+		var draco_info = primitive_info.extensions["KHR_draco_mesh_compression"];
+		if(!this.decoderModule)
+		{
+			if(typeof(DracoDecoderModule) != "undefined")
+				DracoDecoderModule({}).then(function(module) {
+					that.decoderModule = module;
+					let decoder = new module.Decoder();
+					console.log('Decoder Module Initialized');
+					//that.decodeBuffer(rawBuffer, decoder);
+				});
+			else
+				console.error("Draco3D not installed");
+		}
+		else
+			inner();
+	},
+
+	decodeBuffer: function(rawBuffer, decoder)
+	{
+		var decoderModule = this.decoderModule;
+		const buffer = new decoderModule.DecoderBuffer();
+		buffer.Init(new Int8Array(rawBuffer), rawBuffer.byteLength);
+		const geometryType = decoder.GetEncodedGeometryType(buffer);
+
+		let dracoGeometry = new decoderModule.Mesh();
+		let status = decoder.DecodeBufferToMesh(buffer, dracoGeometry);
+
+		decoderModule.destroy(buffer);
+
+		return dracoGeometry;
 	},
 
 	parseAccessor: function(index, json, flip_y)
@@ -683,7 +735,8 @@ RD.GLTF = {
 	{
 		var info = json.skins[ index ];
 		var skin = {};
-		skin.skeleton_root = json.nodes[ info.skeleton ].name;
+		if( info.skeleton != null )
+			skin.skeleton_root = json.nodes[ info.skeleton ].name;
 		skin.bindMatrices = this.splitBuffer( this.parseAccessor( info.inverseBindMatrices, json ), 16 );
 		skin.joints = [];
 		for(var i = 0; i < info.joints.length; ++i)
@@ -703,6 +756,7 @@ RD.GLTF = {
 		return result;
 	},
 
+	//parses an animation and returns it as a RD.Animation
 	parseAnimation: function(index, json, nodes_by_id )
 	{
 		var info = json.animations[index];
@@ -742,9 +796,9 @@ RD.GLTF = {
 			for(var j = 0; j < num_elements; ++j)
 			{
 				keyframes[j*(1+num_components)] = timestamps[j];
-				var value = keyframedata.subarray(j,j+num_components);
-				if(type_enum == RD.QUAT)
-					quat.identity(value,value);
+				var value = keyframedata.subarray(j*num_components,j*num_components+num_components);
+				//if(type_enum == RD.QUAT)
+				//	quat.identity(value,value);
 				keyframes.set( value, j*(1+num_components)+1 );
 			}
 			track.data = keyframes;
@@ -821,6 +875,28 @@ RD.GLTF = {
 		}
 	}
 };
+
+RD.SceneNode.prototype.loadGLTF = function( url, callback )
+{
+	var that = this;
+
+	if( RD.GLTF.prefabs[url] )
+	{
+		var node = new RD.SceneNode();
+		node.configure( RD.GLTF.prefabs[url] );
+		inner( node );
+		return;
+	}
+
+	RD.GLTF.load( url, inner);
+
+	function inner(node)
+	{
+		that.addChildren( node );
+		if(callback)
+			callback(that);
+	}
+}
 
 function _base64ToArrayBuffer(base64) {
     var binary_string = window.atob(base64);

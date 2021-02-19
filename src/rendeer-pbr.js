@@ -6,9 +6,9 @@ var RD = global.RD;
 function PBRPipeline( renderer )
 {
 	this.renderer = renderer;
-	renderer.pipeline = this;
 	this.mode = PBRPipeline.FORWARD;
 	this.fbo = null;
+	this.visible_layers = 0xFF;
 	this.bgcolor = vec4.fromValues(0.1,0.1,0.1,1.0);
 	this.environment_texture = null;
 	this.render_skybox = true;
@@ -17,7 +17,15 @@ function PBRPipeline( renderer )
 	this.environment_rotation = 180;
 	this.environment_factor = 1;
 	this.exposure = 1;
+	this.occlusion_factor = 1;
 	this.emissive_factor = 1.0; //to boost emissive
+
+	this.contrast = 1.0;
+	this.brightness = 1.0;
+
+	this.parallax_reflection = false;
+	this.parallax_reflection_matrix = mat4.create();
+	this.parallax_reflection_matrix_inv = mat4.create();
 
 	this.resolution_factor = 1;
 	this.quality = 1;
@@ -32,6 +40,7 @@ function PBRPipeline( renderer )
 	this.global_uniforms = {
 		u_brdf_texture: 0,
 		u_exposure: this.exposure,
+		u_occlusion_factor: this.occlusion_factor,
 		u_background_color: this.bgcolor.subarray(0,3),
 		u_tonemapper: 0,
 		u_SpecularEnvSampler_texture: 1,
@@ -77,8 +86,14 @@ function PBRPipeline( renderer )
 
 	this.render_calls = [];
 	this.num_render_calls = 0;
+	this.last_num_render_calls = 0;
 
-	this.compiled_shaders = new Map();
+	this.compiled_shaders = {};//new Map();
+
+	this.max_textures = gl.getParameter( gl.MAX_TEXTURE_IMAGE_UNITS );
+	this.max_texture_size = gl.getParameter( gl.MAX_TEXTURE_SIZE );
+
+	this.default_material = new RD.Material();
 }
 
 PBRPipeline.FORWARD = 1;
@@ -86,17 +101,20 @@ PBRPipeline.DEFERRED = 2;
 
 PBRPipeline.MACROS = {
 	UVS2: 1,	
-	COLOR: 1<<1
+	COLOR: 1<<1,
+	PARALLAX_REFLECTION: 1<<2
 };
 
 PBRPipeline.maps = ["albedo","metallicRoughness","occlusion","normal","emissive","opacity","displacement"];
 
-PBRPipeline.prototype.render = function( nodes, camera, scene, skip_fbo )
+PBRPipeline.prototype.render = function( renderer, nodes, camera, scene, skip_fbo, layers )
 {
+	this.renderer = renderer;
+
 	if(this.mode == PBRPipeline.FORWARD)
-		this.renderForward( nodes, camera, skip_fbo );
+		this.renderForward( nodes, camera, skip_fbo, layers );
 	else if(this.mode == PBRPipeline.DEFERRED)
-		this.renderDeferred( nodes, camera );
+		this.renderDeferred( nodes, camera, layers );
 
 	var brdf_tex = this.getBRDFIntegratorTexture();
 	if(brdf_tex && 0) //debug
@@ -131,14 +149,19 @@ PBRPipeline.prototype.fillGlobalUniforms = function()
 	this.global_uniforms.u_skybox_info[0] = this.environment_rotation * DEG2RAD;
 	this.global_uniforms.u_skybox_info[1] = this.environment_factor;
 	this.global_uniforms.u_exposure = this.exposure;
+	this.global_uniforms.u_occlusion_factor = this.occlusion_factor;
 	this.global_uniforms.u_background_color = this.bgcolor.subarray(0,3);
 }
 
-PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo )
+PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers )
 {
 	//prepare buffers
 	var w = Math.floor( gl.viewport_data[2] * this.resolution_factor );
 	var h = Math.floor( gl.viewport_data[3] * this.resolution_factor );
+
+	//avoid creating textures too big
+	w = Math.min( w, this.max_texture_size );
+	h = Math.min( h, this.max_texture_size );
 
 	//set up render buffer in case we want to apply postFX
 	if(this.use_rendertexture && !skip_fbo)
@@ -159,9 +182,13 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo )
 	gl.clearColor( this.bgcolor[0], this.bgcolor[1], this.bgcolor[2], this.bgcolor[3] );
 	gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
 
+	//set default 
+	gl.frontFace( gl.CCW );
+	gl.enable( gl.DEPTH_TEST );
+	gl.disable( gl.BLEND );
+
 	//render skybox
-	if(this.environment_texture && this.render_skybox)
-		this.renderSkybox(camera);
+	this.renderSkybox(camera);
 
 	this.fillGlobalUniforms();
 
@@ -175,7 +202,7 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo )
 	for(var i = 0; i < nodes.length; ++i)
 	{
 		var node = nodes[i];
-		this.getNodeRenderCalls( node, camera );
+		this.getNodeRenderCalls( node, camera, layers );
 	}
 
 	//sort by alpha and distance
@@ -183,6 +210,10 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo )
 	for(var i = 0; i < rcs.length; ++i)
 		rcs[i].computeRenderPriority( camera._position );
 	rcs = rcs.sort( PBRPipeline.rc_sort_function );
+
+	//group by instancing?
+	//TODO
+	//this.groupRenderCallsForInstancing();
 
 	//do the render call for every rcs
 	for(var i = 0; i < rcs.length; ++i)
@@ -217,11 +248,15 @@ PBRPipeline.prototype.renderFinalBuffer = function()
 	this.fx_uniforms.u_viewportSize[1] = this.final_texture.height;
 	this.fx_uniforms.u_iViewportSize[0] = 1/this.final_texture.width;
 	this.fx_uniforms.u_iViewportSize[1] = 1/this.final_texture.height;
+
+	this.fx_uniforms.u_contrast = this.contrast;
+	this.fx_uniforms.u_brightness = this.brightness;
+
 	this.final_texture.toViewport( gl.shaders["tonemapper"], this.fx_uniforms );
 }
 
 
-PBRPipeline.prototype.getNodeRenderCalls = function( node, camera )
+PBRPipeline.prototype.getNodeRenderCalls = function( node, camera, layers )
 {
 	//get mesh
 	var mesh = null;
@@ -234,13 +269,16 @@ PBRPipeline.prototype.getNodeRenderCalls = function( node, camera )
 			return;
 	}
 
+	if(layers === undefined)
+		layers = 0xFF;
+
 	//prepare matrix (must be done always or children wont have the right transform)
 	node.updateGlobalMatrix(true);
 
 	if(!mesh)
 		return;
 
-	if(node.flags.visible === false)
+	if(node.flags.visible === false || !(node.layers & layers) )
 		return;
 
 	//check if inside frustum
@@ -266,7 +304,11 @@ PBRPipeline.prototype.getNodeRenderCalls = function( node, camera )
 		for(var i = 0; i < node.primitives.length; ++i)
 		{
 			var prim = node.primitives[i];
-			var material = RD.Materials[ prim.material ];
+			var material = null;
+			if(!prim.material)
+				material = this.default_material;
+			else
+				material = RD.Materials[ prim.material ];
 			if(!material)
 				continue;
 
@@ -276,6 +318,7 @@ PBRPipeline.prototype.getNodeRenderCalls = function( node, camera )
 			rc.mesh = mesh;
 			rc.group_index = i;
 			rc.node = node;
+			rc._render_priority = material.render_priority || 0;
 			rc.reverse_faces = node.flags.frontFace == GL.CW;
 		}
 		return;
@@ -292,8 +335,33 @@ PBRPipeline.prototype.getNodeRenderCalls = function( node, camera )
 			rc.mesh = mesh;
 			rc.group_index = -1;
 			rc.node = node;
+			rc._render_priority = material.render_priority || 0;
+			rc.reverse_faces = node.flags.frontFace == GL.CW;
 		}
 	}
+}
+
+PBRPipeline.prototype.groupRenderCallsForInstancing = function()
+{
+	var groups = {};
+
+	for(var i = 0; i < this.num_render_calls; ++i)
+	{
+		var rc = this.render_calls[i];
+		var key = rc.mesh.name + ":" + rc.group_index + "/" + rc.material.name + (rc.reverse_faces ? "[R]" : "");
+		if(!groups[key])
+			groups[key] = [rc];
+		else
+		{
+			groups[key].push(rc);
+			//console.log("shared!",key);
+		}
+	}
+
+	for(var i in groups)
+		if( groups[i].length > 1 )
+			console.log( i, groups[i].length );
+
 }
 
 //places semitransparent meshes the last ones
@@ -302,17 +370,30 @@ PBRPipeline.rc_sort_function = function(a,b)
 	return b._render_priority - a._render_priority;
 }
 
-PBRPipeline.prototype.getPBRShader = function( macros )
+PBRPipeline.prototype.setParallaxReflectionTransform = function( transform )
 {
-	var shader = this.compiled_shaders.get( macros );
+	this.parallax_reflection_matrix.set( transform );
+	this.parallax_reflection = true;
+	this.global_uniforms.u_cube_reflection_matrix = this.parallax_reflection_matrix;
+	mat4.invert( this.parallax_reflection_matrix_inv, this.parallax_reflection_matrix );
+	this.global_uniforms.u_inv_cube_reflection_matrix = this.parallax_reflection_matrix_inv;
+}
+
+PBRPipeline.prototype.getShader = function( macros, fragment_shader_name )
+{
+	var container = this.compiled_shaders[fragment_shader_name];
+	if(!container)
+		container = this.compiled_shaders[fragment_shader_name] = new Map();
+
+	var shader = container.get( macros );
 	if(shader)
 		return shader;
 
 	if(!this.renderer.shader_files)
 		return null;
 
-	var vs = this.renderer.shader_files["default.vs"];
-	var fs = this.renderer.shader_files["pbr.fs"];
+	var vs = this.renderer.shader_files[ "default.vs" ];
+	var fs = this.renderer.shader_files[ fragment_shader_name ];
 
 	var macros_info = null;
 	if( macros )
@@ -327,7 +408,7 @@ PBRPipeline.prototype.getPBRShader = function( macros )
 	}
 
 	var shader = new GL.Shader( vs, fs, macros_info );
-	this.compiled_shaders.set(macros,shader);
+	container.set(macros,shader);
 	return shader;
 }
 
@@ -351,7 +432,15 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model, mesh, material, 
 		vec3.scale( material_uniforms.u_emissive, material_uniforms.u_emissive, this.emissive_factor );
 
 	var shader = null;
+
 	var macros = 0;
+	if(mesh.vertexBuffers.coords1)
+		macros |= PBRPipeline.MACROS.UVS2;
+	if(mesh.vertexBuffers.colors)
+		macros |= PBRPipeline.MACROS.COLOR;
+
+	if( this.parallax_reflection )
+		macros |= PBRPipeline.MACROS.PARALLAX_REFLECTION;
 
 	if( this.overwrite_shader_name )
 	{
@@ -359,22 +448,14 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model, mesh, material, 
 	}
 	else if( material.model == "pbrMetallicRoughness" && this.quality )
 	{
-		shader_name = "pbr";
 		material_uniforms.u_metalness = material.metallicFactor;
 		material_uniforms.u_roughness = material.roughnessFactor;
 		material_uniforms.u_metallicRough = Boolean( material.textures["metallicRoughness"] );
-
-		if(mesh.vertexBuffers.coords1)
-			macros |= PBRPipeline.MACROS.UVS2;
-
-		if(mesh.vertexBuffers.colors)
-			macros |= PBRPipeline.MACROS.COLOR;
-
-		shader = this.getPBRShader( macros );
+		shader = this.getShader( macros, "pbr.fs" );
 	}
 	else
 	{
-		shader = gl.shaders[ mesh.vertexBuffers.coords1 ? "nopbr_uv2" : "nopbr" ];
+		shader = this.getShader( macros, "nopbr.fs" );
 	}
 
 	if(!shader)
@@ -420,7 +501,8 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model, mesh, material, 
 			texture = gl.textures[ "white" ];
 		}
 
-		sampler_uniforms[ texture_uniform_name ] = texture.bind( slot++ );
+		var tex_slot = this.max_textures < 16 ? slot++ : i + 2;
+		sampler_uniforms[ texture_uniform_name ] = texture.bind( tex_slot );
 		if( texture_info && texture_info.uv_channel == 1 )
 			maps_info[i] = 1;
 		else
@@ -428,6 +510,8 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model, mesh, material, 
 	}
 
 	//flags
+	if( !reverse_faces )
+		gl.frontFace( GL.CCW );
 	renderer.enableItemFlags( material );
 	if( reverse_faces )
 		gl.frontFace( GL.CW );
@@ -530,11 +614,23 @@ PBRPipeline.prototype.getRenderCallFromPool = function()
 
 PBRPipeline.prototype.resetRenderCallsPool = function()
 {
+	this.last_num_render_calls = this.num_render_calls;
 	this.num_render_calls = 0;
 }
 
 PBRPipeline.prototype.renderSkybox = function( camera )
 {
+	//allows to overwrite the skybox rendering
+	if( this.onRenderSkybox )
+	{
+		if( this.onRenderSkybox( this, camera ) )
+			return;
+	}
+
+	if(!this.environment_texture || !this.render_skybox)
+		return;
+
+	//render the environment
 	var mesh = gl.meshes["cube"];
 	var shader = gl.shaders[ this.overwrite_shader_name || "skybox" ];
 	if(!shader)
@@ -736,10 +832,14 @@ function RenderCall()
 	this.index_buffer_name = "triangles";
 	this.group_index = -1;
 	this.material = null;
+	this.reverse_faces = false;
+
 	this.node = null;
 
 	this._render_priority = 0;
 }
+
+var temp_vec3 = vec3.create();
 
 RenderCall.prototype.computeRenderPriority = function( point )
 {
@@ -747,7 +847,9 @@ RenderCall.prototype.computeRenderPriority = function( point )
 	var bb = this.mesh.getBoundingBox();
 	if(!bb)
 		return;
-	this._render_priority = vec3.distance( point, bb ) * 0.001;
+	var pos = mat4.multiplyVec3( temp_vec3, this.model, bb );
+	this._render_priority = this.material.priority || 0;
+	this._render_priority += vec3.distance( point, pos ) * 0.001;
 	if(this.material.alphaMode == "BLEND")
 		this._render_priority -= 100;
 }
