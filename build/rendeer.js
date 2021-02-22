@@ -2582,7 +2582,9 @@ Scene.prototype.testRay = function( ray, result, max_dist, layers, test_against_
 	layers = layers === undefined ? 0xFF : layers;
 	RD.Scene._ray_tested_objects = 0;
 	if(!result)
-		result = temp_vec3;
+		result = ray.collision_point;
+	if(test_against_mesh === undefined)
+		test_against_mesh = true;
 
 	//TODO
 	//broad phase
@@ -2601,7 +2603,7 @@ RD.testRayWithNodes = function testRayWithNodes( ray, nodes, coll, max_dist, lay
 	layers = layers === undefined ? 0xFF : layers;
 	RD.Scene._ray_tested_objects = 0;
 	if(!coll)
-		coll = temp_vec3;
+		coll = ray.collision_point;
 
 	var local_result = vec3.create();
 
