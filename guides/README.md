@@ -333,6 +333,24 @@ renderer.context.onmousewheel = function(e)
 }
 ```
 
+## Ray Picking
+In case you want to know which node is below the mouse, Rendeer contains a basic picking system:
+
+First you need the ray:
+```js
+var ray = camera.getRay( e.canvasx, e.canvasy );
+```
+
+Then you must pass it to the scene:
+
+```js
+var node = scene.testRay( ray );
+``` 
+
+But keep in mind this method is slow as it must test agains all object in the scene.
+
+Check the picking guide in the repo to know more about this.
+
 ### Overwritting the rendering methods
 
 The SceneNode have lots of properties to tweak the rendering like to change the WebGL flags, they are at node.flags
