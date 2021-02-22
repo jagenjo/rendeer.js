@@ -206,6 +206,34 @@ When creating a shader here are some considerations:
 * Textures will have "u_" + channel_name + "_texture" (like u_color_texture)
 * Other parameters stored in node._uniforms will be passed as they are.
 
+Here is an example of a basic vertex shader:
+```glsl
+precision highp float;
+attribute vec3 a_vertex;
+attribute vec3 a_normal;
+attribute vec2 a_coord;
+varying vec3 v_pos;
+varying vec3 v_normal;
+varying vec2 v_coord;
+uniform mat4 u_model;
+uniform mat4 u_viewprojection;
+void main() {
+	v_pos = (u_model * vec4(a_vertex,1.0)).xyz;
+	v_normal = (u_model * vec4(a_normal,0.0)).xyz;
+	v_coord = a_coord;
+	gl_Position = u_viewprojection * vec4( v_pos , 1.0 );
+}
+```
+
+And a basic fragment shader:
+```glsl
+precision highp float;
+uniform vec4 u_color;
+void main() {
+  gl_FragColor = u_color;
+}
+```
+
 To compile and store shaders in the renderer you can use the old approach of compiling your own shaders manually using LiteGL and storing them in ```renderer.shaders```:
 
 ```javascript
