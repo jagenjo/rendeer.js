@@ -4948,6 +4948,23 @@ RD.parseTextConfig = function(text)
 
 Renderer.prototype.createShaders = function()
 {
+	//adds code for skinning
+	var skinning = "";
+	var skinning_vs = "";
+	if(RD.Skeleton)
+	{	
+		skinning = "\n\
+		#ifdef SKINNING\n\
+			" + RD.Skeleton.shader_code + "\n\
+		#endif\n\
+		";
+		skinning_vs = "\n\
+		#ifdef SKINNING\n\
+			computeSkinning(v_pos,v_normal);\n\
+		#endif\n\
+		";
+	}
+
 	var vertex_shader = this._vertex_shader = '\
 				precision highp float;\n\
 				attribute vec3 a_vertex;\n\
@@ -4956,6 +4973,7 @@ Renderer.prototype.createShaders = function()
 				varying vec3 v_pos;\n\
 				varying vec3 v_normal;\n\
 				varying vec2 v_coord;\n\
+				"+skinning+"\n\
 				#ifdef INSTANCING\n\
 					attribute mat4 u_model;\n\
 				#else\n\
@@ -4963,13 +4981,17 @@ Renderer.prototype.createShaders = function()
 				#endif\n\
 				uniform mat4 u_viewprojection;\n\
 				void main() {\n\
-					v_pos = (u_model * vec4(a_vertex,1.0)).xyz;\n\
-					v_normal = (u_model * vec4(a_normal,0.0)).xyz;\n\
+					v_pos = a_vertex;\n\
+					v_normal = a_normal;\n\
+					"+skinning_vs+"\n\
+					v_pos = (u_model * vec4(v_pos,1.0)).xyz;\n\
+					v_normal = (u_model * vec4(v_normal,0.0)).xyz;\n\
 					v_coord = a_coord;\n\
-					gl_Position = u_viewprojection * vec4( v_pos , 1.0 );\n\
+					gl_Position = u_viewprojection * vec4( v_pos, 1.0 );\n\
 					gl_PointSize = 2.0;\n\
 				}\
 				';
+		
 	var fragment_shader = this._flat_fragment_shader = '\
 				precision highp float;\
 				uniform vec4 u_color;\
@@ -4980,6 +5002,7 @@ Renderer.prototype.createShaders = function()
 
 	gl.shaders["flat"] = this._flat_shader = new GL.Shader( vertex_shader, fragment_shader );
 	gl.shaders["flat_instancing"] = this._flat_instancing_shader = new GL.Shader(vertex_shader, fragment_shader, { INSTANCING:"" });
+	gl.shaders["flat_skinning"] = this._flat_shader = new GL.Shader( vertex_shader, fragment_shader, {SKINNING:""} );
 	
 	this._point_shader = new GL.Shader('\
 				precision highp float;\
@@ -5048,7 +5071,10 @@ Renderer.prototype.createShaders = function()
 	gl.shaders["texture_albedo"] = this._texture_albedo_shader = new GL.Shader( vertex_shader, fragment_shader, { ALBEDO:"" } );
 	gl.shaders["texture_instancing"] = this._texture_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { INSTANCING:"" } );
 	gl.shaders["texture_albedo_instancing"] = this._texture_albedo_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { ALBEDO:"",INSTANCING:""  } );
-	
+
+	if(RD.Skeleton)
+		gl.shaders["texture_skinning"] = this._texture_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, { SKINNING:"" } );
+
 	this._texture_transform_shader = new GL.Shader('\
 		precision highp float;\n\
 		attribute vec3 a_vertex;\n\

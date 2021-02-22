@@ -995,6 +995,7 @@ Skeleton.blend = function(a, b, w, result, layer, skip_normalize )
 	}
 }
 
+//shader block to include
 Skeleton.shader_code = '\n\
 	attribute vec4 a_bone_indices;\n\
 	attribute vec4 a_weights;\n\
@@ -1014,6 +1015,36 @@ Skeleton.shader_code = '\n\
 		normal = normalize(normal);\n\
 	}\n\
 ';
+
+//example of full vertex shader that supports skinning
+Skeleton.vertex_shader_code = "\n\
+	precision highp float;\n\
+	attribute vec3 a_vertex;\n\
+	attribute vec3 a_normal;\n\
+	attribute vec2 a_coord;\n\
+	\n\
+	varying vec3 v_wPosition;\n\
+	varying vec3 v_wNormal;\n\
+	varying vec2 v_coord;\n\
+	\n\
+	uniform mat4 u_viewprojection;\n\
+	uniform mat4 u_model;\n\
+	uniform mat4 u_normal_matrix;\n\
+	\n\
+	"+Skeleton.shader_code+"\n\
+	\n\
+	void main() {\n\
+		v_wPosition = a_vertex;\n\
+		v_wNormal = (u_normal_matrix * vec4(a_normal,0.0)).xyz;\n\
+		v_coord = a_coord;\n\
+		\n\
+		computeSkinning( v_wPosition, v_wNormal);\n\
+		\n\
+		v_wPosition = (u_model * vec4(v_wPosition,1.0)).xyz;\n\
+		\n\
+		gl_Position = u_viewprojection * vec4( v_wPosition, 1.0 );\n\
+	}\n\
+";
 
 //*******************************************************
 
@@ -1252,8 +1283,16 @@ SkeletalAnimation.prototype.fromTracksAnimation = function( skeleton, animation,
 	}
 }
 
-
-
+if(RD.SceneNode)
+	RD.SceneNode.prototype.assignAnimation = function( skeletal_animation )
+	{
+		this.skeleton = skeletal_animation.skeleton;
+		var mesh = gl.meshes[ this.mesh ];
+		if(!mesh)
+			return;
+		this.bones = skeletal_animation.skeleton.computeFinalBoneMatrices( this.bones, mesh );
+		this.uniforms.u_bones = this.bones;
+	}
 
 //footer
 })( typeof(window) != "undefined" ? window : (typeof(self) != "undefined" ? self : global ) );
