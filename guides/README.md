@@ -104,7 +104,21 @@ axis = RD.UP; // RD.UP is a constant with the value [0,1,0], there are many othe
 node.rotate( angle_in_deg, axis ); //it accepts a vector
 ```
 
-You can  access the local matrix in ```_local_matrix``` or the global matrix in ```_global_matrix```.
+If you want to move a node according to where it is pointint at, you can use moveLocal:
+
+```js
+node.moveLocal( RD.FRONT ); //moves in Z according to its orientation
+```
+
+You can  access the local matrix in ```_local_matrix``` or the global matrix in ```_global_matrix``` but be careful as they could be not updated (as they use lazy update to save resources). If you are not sure that the matrix is updated, called the appropiate functions:
+
+```js
+//to update the local matrix
+node.updateLocalMatrix();
+
+//to recompute the global matrix
+node.updateGloalMatrix();
+```
 
 ### The SceneNode hierarchy
 
