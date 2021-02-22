@@ -104,7 +104,21 @@ axis = RD.UP; // RD.UP is a constant with the value [0,1,0], there are many othe
 node.rotate( angle_in_deg, axis ); //it accepts a vector
 ```
 
-You can  access the local matrix in ```_local_matrix``` or the global matrix in ```_global_matrix```.
+If you want to move a node according to where it is pointint at, you can use moveLocal:
+
+```js
+node.moveLocal( RD.FRONT ); //moves in Z according to its orientation
+```
+
+You can  access the local matrix in ```_local_matrix``` or the global matrix in ```_global_matrix``` but be careful as they could be not updated (as they use lazy update to save resources). If you are not sure that the matrix is updated, called the appropiate functions:
+
+```js
+//to update the local matrix
+node.updateLocalMatrix();
+
+//to recompute the global matrix
+node.updateGloalMatrix();
+```
 
 ### The SceneNode hierarchy
 
@@ -191,6 +205,34 @@ When creating a shader here are some considerations:
 * Node parameters: mat4 u_model
 * Textures will have "u_" + channel_name + "_texture" (like u_color_texture)
 * Other parameters stored in node._uniforms will be passed as they are.
+
+Here is an example of a basic vertex shader:
+```glsl
+precision highp float;
+attribute vec3 a_vertex;
+attribute vec3 a_normal;
+attribute vec2 a_coord;
+varying vec3 v_pos;
+varying vec3 v_normal;
+varying vec2 v_coord;
+uniform mat4 u_model;
+uniform mat4 u_viewprojection;
+void main() {
+	v_pos = (u_model * vec4(a_vertex,1.0)).xyz;
+	v_normal = (u_model * vec4(a_normal,0.0)).xyz;
+	v_coord = a_coord;
+	gl_Position = u_viewprojection * vec4( v_pos , 1.0 );
+}
+```
+
+And a basic fragment shader:
+```glsl
+precision highp float;
+uniform vec4 u_color;
+void main() {
+  gl_FragColor = u_color;
+}
+```
 
 To compile and store shaders in the renderer you can use the old approach of compiling your own shaders manually using LiteGL and storing them in ```renderer.shaders```:
 
@@ -291,7 +333,37 @@ renderer.context.onmousewheel = function(e)
 }
 ```
 
-### Overwritting the rendering methods
+## Ray Picking
+In case you want to know which node is below the mouse, Rendeer contains a basic picking system:
+
+First you need the ray:
+```js
+var ray = camera.getRay( e.canvasx, e.canvasy );
+```
+
+Then you must pass it to the scene:
+
+```js
+var node = scene.testRay( ray );
+``` 
+
+But keep in mind this method is slow as it must test agains all object in the scene.
+
+Check the picking guide in the repo to know more about this.
+
+## Materials
+
+Rendeer objects are rendered based on the properties of the node (mesh, shader, textures and uniforms), but you can redirect the rendering to a Material class
+if you prefeer to.
+
+You can assign a material name to the node.material, and have a material registered in RD.Materials that will handle the rendering.
+
+Materials should have a material.render method in charge of the rendering.
+
+Check ```Material.prototype.render = function( renderer, model, mesh, indices_name, group_index )``` to know more.
+
+
+## Overwritting the rendering methods
 
 The SceneNode have lots of properties to tweak the rendering like to change the WebGL flags, they are at node.flags
 * *node.flags.two_sided*: use cull face or not
