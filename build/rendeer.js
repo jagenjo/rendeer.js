@@ -4966,7 +4966,7 @@ Renderer.prototype.createShaders = function()
 		";
 	}
 
-	var vertex_shader = this._vertex_shader = '\
+	var vertex_shader = this._vertex_shader = "\
 				precision highp float;\n\
 				attribute vec3 a_vertex;\n\
 				attribute vec3 a_normal;\n\
@@ -4991,7 +4991,7 @@ Renderer.prototype.createShaders = function()
 					gl_Position = u_viewprojection * vec4( v_pos, 1.0 );\n\
 					gl_PointSize = 2.0;\n\
 				}\
-				';
+				";
 		
 	var fragment_shader = this._flat_fragment_shader = '\
 				precision highp float;\
