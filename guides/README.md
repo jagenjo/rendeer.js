@@ -351,7 +351,19 @@ But keep in mind this method is slow as it must test agains all object in the sc
 
 Check the picking guide in the repo to know more about this.
 
-### Overwritting the rendering methods
+## Materials
+
+Rendeer objects are rendered based on the properties of the node (mesh, shader, textures and uniforms), but you can redirect the rendering to a Material class
+if you prefeer to.
+
+You can assign a material name to the node.material, and have a material registered in RD.Materials that will handle the rendering.
+
+Materials should have a material.render method in charge of the rendering.
+
+Check ```Material.prototype.render = function( renderer, model, mesh, indices_name, group_index )``` to know more.
+
+
+## Overwritting the rendering methods
 
 The SceneNode have lots of properties to tweak the rendering like to change the WebGL flags, they are at node.flags
 * *node.flags.two_sided*: use cull face or not
