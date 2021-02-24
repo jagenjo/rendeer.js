@@ -10,6 +10,16 @@ RD.GLTF = {
 	JSON_CHUNK: 0x4E4F534A,
 	BINARY_CHUNK: 0x004E4942,
 
+	buffer_names: {
+		POSITION: "vertices",
+		NORMAL: "normals",
+		COLOR_0: "colors",
+		TEXCOORD_0: "coords",
+		TEXCOORD_1: "coords1",
+		WEIGHTS_0: "weights",
+		JOINTS_0: "bones"
+	},
+
 	numComponents: { "SCALAR":1,"VEC2":2,"VEC3":3,"VEC4":4,"MAT4":16 },
 
 	rename_animation_properties: { "translation":"position","scale":"scaling" },
@@ -366,6 +376,8 @@ RD.GLTF = {
 		for(var i = 0; i < mesh_info.primitives.length; ++i)
 		{
 			var prim = this.parsePrimitive( mesh_info, i, json );
+			if(!prim)
+				continue;
 			prim.start = start;
 			start += prim.length;
 			prims.push(prim);
@@ -382,13 +394,16 @@ RD.GLTF = {
 		var mesh = null;
 		if(meshes.length > 1)
 			mesh = GL.Mesh.mergeMeshes( meshes );
-		else
+		else if (meshes.length == 1)
 		{
 			var mesh_data = meshes[0].mesh;
 			mesh = new GL.Mesh( mesh_data.vertexBuffers, mesh_data.indexBuffers );
 			if( mesh.info && mesh_data.info)
 				mesh.info = mesh_data.info;
 		}
+
+		if(!mesh)
+			return null;
 
 		for(var i = 0; i < mesh_info.primitives.length; ++i)
 		{
@@ -416,8 +431,8 @@ RD.GLTF = {
 		var primitive = {
 			buffers: {}
 		};
-		var buffers = primitive.buffers;
 
+		var buffers = primitive.buffers;
 		var primitive_info = mesh_info.primitives[ index ];
 		if(primitive_info.extensions)
 		{
@@ -425,7 +440,7 @@ RD.GLTF = {
 			{
 				if(typeof(DracoDecoderModule) == "undefined")
 					throw("mesh data is compressed using Draco, draco_decoder.js not installed.");
-				this.decompressDraco( primitive_info );
+				buffers = primitive.buffers = this.decompressDraco( primitive_info, json );
 			}
 			else
 			{
@@ -433,28 +448,33 @@ RD.GLTF = {
 				return null;
 			}
 		}
-
-		if(!primitive_info.attributes.POSITION == null)
-			console.warn("gltf mesh without positions");
 		else
-			buffers.vertices = this.parseAccessor( primitive_info.attributes.POSITION, json );
-		if(primitive_info.attributes.NORMAL != null)
-			buffers.normals = this.parseAccessor( primitive_info.attributes.NORMAL, json );
-		if(primitive_info.attributes.COLOR_0 != null)
-			buffers.colors = this.parseAccessor( primitive_info.attributes.COLOR_0, json );
-		if(primitive_info.attributes.TEXCOORD_0 != null)
-			buffers.coords = this.parseAccessor( primitive_info.attributes.TEXCOORD_0, json, this.flip_uv );
-		if(primitive_info.attributes.TEXCOORD_1 != null)
-			buffers.coords1 = this.parseAccessor( primitive_info.attributes.TEXCOORD_1, json, this.flip_uv );
-		//skinning
-		if(primitive_info.attributes.WEIGHTS_0 != null)
-			buffers.weights = this.parseAccessor( primitive_info.attributes.WEIGHTS_0, json );
-		if(primitive_info.attributes.JOINTS_0 != null)
-			buffers.bones = this.parseAccessor( primitive_info.attributes.JOINTS_0, json );
+		{
+			if(!primitive_info.attributes.POSITION == null)
+				console.warn("gltf mesh without positions");
 
-		//indices
-		if(primitive_info.indices != null)
-			buffers.triangles = this.parseAccessor( primitive_info.indices, json );
+			for(var i in this.buffer_names)
+			{
+				var prop_name = this.buffer_names[i];
+				var flip = prop_name == "coords" || prop_name == "coords1";
+				var att_index = primitive_info.attributes[i];
+				if(att_index == null)
+					continue;
+				var data = this.parseAccessor( att_index, json, flip );
+				if(data)
+					buffers[prop_name] = data;
+			}
+
+			//indices
+			if(primitive_info.indices != null)
+				buffers.triangles = this.parseAccessor( primitive_info.indices, json );
+		}
+
+		if(!buffers.vertices)
+		{
+			console.error("primitive without vertices");
+			return null;
+		}
 
 		primitive.mode = primitive_info.mode;
 		primitive.material = primitive_info.material;
@@ -463,42 +483,146 @@ RD.GLTF = {
 		return primitive;
 	},
 
-	decompressDraco: function( primitive_info )
+	installDracoModule: function( callback )
 	{
+		var types = this.draco_data_types = {};
+
 		var that = this;
-		var draco_info = primitive_info.extensions["KHR_draco_mesh_compression"];
-		if(!this.decoderModule)
+		//fetch module
+		if(this.decoderModule)
 		{
-			if(typeof(DracoDecoderModule) != "undefined")
-				DracoDecoderModule({}).then(function(module) {
-					that.decoderModule = module;
-					var decoder = new module.Decoder();
-					console.log('Decoder Module Initialized');
-					//that.decodeBuffer(rawBuffer, decoder);
-				});
-			else
-				console.error("Draco3D not installed");
+			if(callback)
+				callback(this.decoderModule);
+			return;
 		}
+
+		if(typeof(DracoDecoderModule) != "undefined")
+			DracoDecoderModule({}).then(function(module) {
+				var draco = that.decoderModule = module;
+				types[ draco.DT_INT8	] = Int8Array;
+				types[ draco.DT_UINT8	] = Uint8Array;
+				types[ draco.DT_INT16	] = Int16Array;
+				types[ draco.DT_UINT16	] = Uint16Array;
+				types[ draco.DT_INT32	] = Int32Array;
+				types[ draco.DT_UINT32	] = Uint32Array;
+				types[ draco.DT_FLOAT32	] = Float32Array;
+				if(callback)
+					callback(module);
+			});
 		else
-			inner();
+			console.error("Draco3D not installed");
 	},
 
-	decodeBuffer: function(rawBuffer, decoder)
+	decompressDraco: function( primitive_info, json )
 	{
-		var decoderModule = this.decoderModule;
-		var buffer = new decoderModule.DecoderBuffer();
+		if(!this.draco_decoder)
+			this.draco_decoder = new this.decoderModule.Decoder();
+		var result = this.decodePrimitive( this.draco_decoder, primitive_info, json );
+		return result;
+	},
+
+	decodePrimitive: function( decoder, primitive_info, json )
+	{
+		console.log(primitive_info);
+		var ext_data = primitive_info.extensions.KHR_draco_mesh_compression;
+		var buffers = {};
+
+		//every mesh is stored in an independent buffer view
+		var bufferView = json.bufferViews[ ext_data.bufferView ];
+		var buffer = json.buffers[ bufferView.buffer ];
+		var rawBuffer = buffer.dataview.buffer;
+
+		//transform buffer view to geometry
+		var draco = this.decoderModule;
+		var buffer = new draco.DecoderBuffer();
 		buffer.Init(new Int8Array(rawBuffer), rawBuffer.byteLength);
 		var geometryType = decoder.GetEncodedGeometryType(buffer);
+		if (geometryType == draco.TRIANGULAR_MESH) {
+			//extract
+			var uncompressedDracoMesh = new draco.Mesh();
+			var status = decoder.DecodeBufferToMesh( buffer, uncompressedDracoMesh );
+			if ( !status.ok() || uncompressedDracoMesh.ptr === 0 ) {
+				throw new Error( 'GLTF Draco: Decoding failed: ' + status.error_msg() );
+			}
 
-		var dracoGeometry = new decoderModule.Mesh();
-		var status = decoder.DecodeBufferToMesh(buffer, dracoGeometry);
+			var size = uncompressedDracoMesh.num_points() * 3;
 
-		decoderModule.destroy(buffer);
+			//transform from draco geometry to my own format
+			for(var i in this.buffer_names)
+			{
+				var prop_name = this.buffer_names[i];
+				var draco_buffer_name = i;
+				if( draco_buffer_name == "COLOR_0")
+					draco_buffer_name = "COLOR";
+				else if( draco_buffer_name == "TEXCOORD_0")
+					draco_buffer_name = "TEX_COORD";
+				var flip = prop_name == "coords" || prop_name == "coords1";
+				var buff = this.decodeBuffer( uncompressedDracoMesh, draco[ draco_buffer_name ], flip, decoder );
+				if(buff)
+					buffers[prop_name] = buff.data;
+			}
 
-		return dracoGeometry;
+			//get indices
+			var numFaces = uncompressedDracoMesh.num_faces();
+			var numIndices = numFaces * 3;
+			var byteLength = numIndices * 4;
+
+			var ptr = draco._malloc( byteLength );
+			decoder.GetTrianglesUInt32Array( uncompressedDracoMesh, byteLength, ptr );
+			buffers.triangles = new Uint32Array( draco.HEAPF32.buffer, ptr, numIndices ).slice();
+			draco._free( ptr );
+		}
+
+		draco.destroy( buffer );
+		draco.destroy( uncompressedDracoMesh );
+		return buffers;
 	},
 
-	parseAccessor: function(index, json, flip_y)
+	decodeBuffer: function( uncompressedDracoMesh, index, flip, decoder )
+	{
+		if(index == null)
+			return null;
+		var draco = this.decoderModule;
+		//transform from draco geometry to my own format
+		var attId = decoder.GetAttributeId( uncompressedDracoMesh, index );
+		if(attId == -1)
+			return null;
+		var att = decoder.GetAttribute( uncompressedDracoMesh, attId );
+		var data_type = att.data_type();
+		var num_comps = att.num_components();
+		var num_points = uncompressedDracoMesh.num_points();
+		var size = att.size();
+		var total_length = num_points * num_comps;
+		var ctor = this.draco_data_types[ data_type ];
+		var bytes = total_length * ctor.BYTES_PER_ELEMENT;
+
+		//*
+		var attData = new draco.DracoFloat32Array();
+		decoder.GetAttributeFloatForAllPoints( uncompressedDracoMesh, att, attData );
+		var data = new ctor( total_length );
+		for(var i = 0; i < data.length; ++i)
+			data[i] = attData.GetValue(i);
+		//*/
+		/*
+		var ptr = draco._malloc( bytes );
+		decoder.GetAttributeDataArrayForAllPoints( uncompressedDracoMesh, att, data_type, bytes, ptr );
+		var data = new ctor( draco.HEAPF32.buffer, ptr, total_length ).slice();
+		draco._free( ptr );
+		//*/
+
+		if(flip)
+			for(var i = 1; i < data.length; i+=num_comps)
+				data[i] = 1.0 - data[i];
+
+		return {
+			num_points: num_points,
+			num_comps: num_comps,
+			data_type: data_type,
+			data: data
+		};
+	},
+
+	parseAccessor: function( index, json, flip_y, bufferView, decoder )
 	{
 		var accessor = json.accessors[index];
 		if(!accessor)
@@ -531,7 +655,9 @@ RD.GLTF = {
 				databuffer = new Float32Array( size );
 		}
 
-		var bufferView = json.bufferViews[ accessor.bufferView ];
+		if(bufferView == null)
+			bufferView = json.bufferViews[ accessor.bufferView ];
+
 		if(!bufferView)
 		{
 			console.warn("gltf bufferView not found");
@@ -563,6 +689,10 @@ RD.GLTF = {
 		//copy data to buffer
 		databufferview.set( chunk );
 
+		//decode?
+		//if(decoder)
+		//	databufferview = this.decodeBuffer( databufferview.buffer, decoder );
+
 		if(flip_y)
 			for(var i = 1; i < databuffer.length; i += components )
 				databuffer[i] = 1.0 - databuffer[i]; 
@@ -579,12 +709,14 @@ RD.GLTF = {
 			return null;
 		}
 
-		var material = RD.Materials[ info.name ];
+		var mat_name = info.name || json.filename + "::mat_" + index;
+
+		var material = RD.Materials[ mat_name ];
 		if(material)
 			return material;
 
 		material = new RD.Material();
-		material.name = info.name;
+		material.name = mat_name;
 		//material.shader_name = "phong";
 
 		if(info.alphaMode != null)
@@ -907,3 +1039,7 @@ function _base64ToArrayBuffer(base64) {
     }
     return bytes.buffer;
 }
+
+//load module
+if(typeof(DracoDecoderModule) != "undefined")
+	RD.GLTF.installDracoModule(RD.GLTF.onReady);

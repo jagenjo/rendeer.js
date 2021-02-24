@@ -3,7 +3,7 @@
 
 (function(global){
 
-var RD = global.RD;
+var RD = global.RD = global.RD || {};
 
 RD.Animations = {};
 
@@ -957,10 +957,10 @@ Skeleton.blend = function(a, b, w, result, layer, skip_normalize )
 		result.bones.length = a.bones.length;
 		for (var i = 0; i < result.bones.length; ++i)
 		{
-			var b = result.bones[i];
-			if(!b)
-				b = new Skeleton.Bone();
-			b.copyFrom(a.bones[i]);
+			var bo = result.bones[i];
+			if(!bo)
+				bo = new Skeleton.Bone();
+			bo.copyFrom(a.bones[i]);
 		}
 		result.bones_by_name = new Map(a.bones_by_name); //TODO: IMPROVE!
 	}
@@ -1284,15 +1284,21 @@ SkeletalAnimation.prototype.fromTracksAnimation = function( skeleton, animation,
 }
 
 if(RD.SceneNode)
-	RD.SceneNode.prototype.assignAnimation = function( skeletal_animation )
+{
+	RD.SceneNode.prototype.assignSkeleton = function( skeleton )
 	{
-		this.skeleton = skeletal_animation.skeleton;
 		var mesh = gl.meshes[ this.mesh ];
 		if(!mesh)
 			return;
-		this.bones = skeletal_animation.skeleton.computeFinalBoneMatrices( this.bones, mesh );
+		this.bones = skeleton.computeFinalBoneMatrices( this.bones, mesh );
 		this.uniforms.u_bones = this.bones;
 	}
+
+	RD.SceneNode.prototype.assignAnimation = function( skeletal_animation )
+	{
+		this.assignSkeleton( skeletal_animation.skeleton );
+	}
+}
 
 //footer
 })( typeof(window) != "undefined" ? window : (typeof(self) != "undefined" ? self : global ) );
