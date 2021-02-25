@@ -5002,7 +5002,7 @@ Renderer.prototype.createShaders = function()
 
 	gl.shaders["flat"] = this._flat_shader = new GL.Shader( vertex_shader, fragment_shader );
 	gl.shaders["flat_instancing"] = this._flat_instancing_shader = new GL.Shader(vertex_shader, fragment_shader, { INSTANCING:"" });
-	gl.shaders["flat_skinning"] = this._flat_shader = new GL.Shader( vertex_shader, fragment_shader, {SKINNING:""} );
+	gl.shaders["flat_skinning"] = this._flat_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, {SKINNING:""} );
 	
 	this._point_shader = new GL.Shader('\
 				precision highp float;\

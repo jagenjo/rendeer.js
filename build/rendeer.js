@@ -5003,7 +5003,7 @@ Renderer.prototype.createShaders = function()
 
 	gl.shaders["flat"] = this._flat_shader = new GL.Shader( vertex_shader, fragment_shader );
 	gl.shaders["flat_instancing"] = this._flat_instancing_shader = new GL.Shader(vertex_shader, fragment_shader, { INSTANCING:"" });
-	gl.shaders["flat_skinning"] = this._flat_shader = new GL.Shader( vertex_shader, fragment_shader, {SKINNING:""} );
+	gl.shaders["flat_skinning"] = this._flat_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, {SKINNING:""} );
 	
 	this._point_shader = new GL.Shader('\
 				precision highp float;\
@@ -10079,16 +10079,14 @@ Skeleton.prototype.getBone = function(name)
 
 Skeleton.identity = mat4.create();
 
-Skeleton.prototype.getBoneMatrix = function( name, local )
+Skeleton.prototype.getBoneMatrix = function( name, global )
 {
-	if(local === undefined)
-		local = true;
 	var index = this.bones_by_name.get(name);
 	if( index === undefined )
 		return Skeleton.identity;
-	if(local)
-		return this.bones[ index ].model;
-	return this.global_bone_matrices[ index ];
+	if(global)
+		return this.global_bone_matrices[ index ];
+	return this.bones[ index ].model;
 }
 
 //imports skeleton from structure following Rendeer
@@ -10148,7 +10146,7 @@ Skeleton.prototype.computeFinalBoneMatrices = function( bone_matrices, mesh, sim
 		for (var i = 0; i < mesh.bones.length; ++i)
 		{
 			var bone_info = mesh.bones[i];
-			mat4.multiply( temp_mat4, this.getBoneMatrix( bone_info[0], false ), bone_info[1] ); //use globals
+			mat4.multiply( temp_mat4, this.getBoneMatrix( bone_info[0], true ), bone_info[1] ); //use globals
 			mat4.transpose( temp_mat4, temp_mat4 );
 			bone_matrices.set(m43,i*12);
 		}
@@ -10158,7 +10156,7 @@ Skeleton.prototype.computeFinalBoneMatrices = function( bone_matrices, mesh, sim
 		{
 			var bone_info = mesh.bones[i];
 			var m = bone_matrices.subarray(i*16,i*16+16);
-			mat4.multiply( m, this.getBoneMatrix( bone_info[0], false ), bone_info[1] ); //use globals
+			mat4.multiply( m, this.getBoneMatrix( bone_info[0], true ), bone_info[1] ); //use globals
 		}
 
 	return bone_matrices;
@@ -10181,7 +10179,7 @@ Skeleton.prototype.computeFinalBoneMatricesAsArray = function( bone_matrices, me
 		if(!bone_matrices[i])
 			bone_matrices[i] = mat4.create();
 		var m = bone_matrices[i];
-		mat4.multiply( m, this.getBoneMatrix( bone_info[0], false ), bone_info[1] ); //use globals
+		mat4.multiply( m, this.getBoneMatrix( bone_info[0], true ), bone_info[1] ); //use globals
 		if(mesh.bind_matrix)
 			mat4.multiply( m, m, mesh.bind_matrix );
 		if(global_model)
@@ -10233,10 +10231,13 @@ Skeleton.prototype.applyTracksAnimation = function( animation, time )
 
 //for rendering the skeleton, it returns an array of pairs vertices to define lines
 //if matrix then lines have the matrix applied
-Skeleton.prototype.getVertices = function(matrix)
+Skeleton.prototype.getVertices = function( matrix, skip_update_global )
 {
 	if(!this.bones.length)
 		return null;
+
+	if(!skip_update_global)
+		this.updateGlobalMatrices();
 
 	var size = (this.bones.length - 1) * 3 * 2;
 	if(!this._vertices || this._vertices.length != size)
@@ -10356,12 +10357,12 @@ Skeleton.blend = function(a, b, w, result, layer, skip_normalize )
 
 	if (result != a) //copy bone names
 	{
-		result.bones.length = a.bones.length;
+		result.resizeBones( a.bones.length );
 		for (var i = 0; i < result.bones.length; ++i)
 		{
 			var bo = result.bones[i];
 			if(!bo)
-				bo = new Skeleton.Bone();
+				bo = result.bones[i] = new Skeleton.Bone();
 			bo.copyFrom(a.bones[i]);
 		}
 		result.bones_by_name = new Map(a.bones_by_name); //TODO: IMPROVE!
