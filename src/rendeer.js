@@ -654,7 +654,7 @@ SceneNode.prototype.getVisibleChildren = function( result, layers, layers_affect
 {
 	result = result || [];
 	if(layers === undefined)
-		layers = 0xFF;
+		layers = 0xFFFF;
 
 	if(!this.children)
 		return result;
@@ -887,6 +887,17 @@ SceneNode.prototype.rotate = function( angle_in_rad, axis, in_local )
 		quat.multiply( this._rotation, this._rotation, temp_quat );
 	else
 		quat.multiply( this._rotation, temp_quat, this._rotation );
+	this._must_update_matrix = true;
+}
+
+/**
+* Changes the rotation using euler angles
+* @method rotate
+* @param {Array} eule_angles [yaw,pitch,roll] in radians
+*/
+SceneNode.prototype.setRotationFromEuler = function( euler )
+{
+	quat.fromEuler( this._rotation, euler );
 	this._must_update_matrix = true;
 }
 
@@ -1343,7 +1354,7 @@ SceneNode.prototype.findNodeByName = function(name)
 SceneNode.prototype.findNodesByFilter = function( filter_func, layers, result )
 {
 	if(layers === undefined)
-		layers = 0xFF;
+		layers = 0xFFFF;
 	result = result || [];
 
 	for(var i = 0, l = this.children.length; i < l; i++)
@@ -1472,7 +1483,7 @@ SceneNode.prototype.testRay = (function(){
 	{
 		max_dist = max_dist === undefined ? Number.MAX_VALUE : max_dist;
 		if(layers === undefined)
-			layers = 0xFF;
+			layers = 0xFFFF;
 		result = result || vec3.create();
 
 		if(Scene._ray_tested_objects !== undefined)
@@ -1634,12 +1645,12 @@ SceneNode.prototype.setRangeFromSubmesh = function( submesh_id )
 /**
 * returns an array of nodes which center is inside the sphere
 * @method findNodesInSphere
-* @param {number} layers [optional] bitmask to filter by layer, otherwise 0xFF is used
+* @param {number} layers [optional] bitmask to filter by layer, otherwise 0xFFFF is used
 */
 SceneNode.prototype.findNodesInSphere = function( center, radius, layers, out )
 {
 	if(layers === undefined)
-		layers = 0xFF;
+		layers = 0xFFFF;
 	out = out || [];
 	for(var i = 0; i < this.children.length; ++i)
 	{
@@ -2511,12 +2522,12 @@ Scene.prototype.getNodeById = function(id)
 * 
 * @method findNodesInBBox
 * @param {BBox} box  use BBox.fromCenterHalfsize(center,halfsize) to define it
-* @param {number} layers [optional] bitmask to filter by layer, otherwise 0xFF is used
+* @param {number} layers [optional] bitmask to filter by layer, otherwise 0xFFFF is used
 */
 Scene.prototype.findNodesInBBox = function( box, layers, out )
 {
 	if(layers === undefined)
-		layers = 0xFF;
+		layers = 0xFFFF;
 	out = out || [];
 	for(var i = 0; i < this.nodes.length; ++i)
 	{
@@ -2572,13 +2583,13 @@ Object.defineProperty(Scene.prototype, 'root', {
 * @param {RD.Ray} ray
 * @param {vec3} result the collision point in case there was
 * @param {number} max_dist
-* @param {number} layers bitmask to filter by layer, otherwise 0xFF is used
+* @param {number} layers bitmask to filter by layer, otherwise 0xFFFF is used
 * @param {boolean} test_against_mesh test against every mesh
 * @return {RD.SceneNode} node collided or null
 */
 Scene.prototype.testRay = function( ray, result, max_dist, layers, test_against_mesh  )
 {
-	layers = layers === undefined ? 0xFF : layers;
+	layers = layers === undefined ? 0xFFFF : layers;
 	RD.Scene._ray_tested_objects = 0;
 	if(!result)
 		result = ray.collision_point;
@@ -2599,7 +2610,7 @@ RD.testRayWithNodes = function testRayWithNodes( ray, nodes, coll, max_dist, lay
 {
 	RD.testRayWithNodes.coll_node = null; //hack to store a temp var
 	max_dist = max_dist == null ? Number.MAX_VALUE : max_dist;
-	layers = layers === undefined ? 0xFF : layers;
+	layers = layers === undefined ? 0xFFFF : layers;
 	RD.Scene._ray_tested_objects = 0;
 	if(!coll)
 		coll = ray.collision_point;
@@ -2856,6 +2867,12 @@ Material.prototype.serialize = function()
 		o.alphaMode = this.alphaMode;
 	if(this.alphaCutoff != 0.5)
 		o.alphaCutoff = this.alphaCutoff;
+	if(this.uv_transform)
+		o.uv_transform = this.uv_transform;
+	if(this.normalFactor)
+		o.normalFactor = this.normalFactor;
+	if(this.displacementFactor)
+		o.displacementFactor = this.displacementFactor;
 	if(this.model)
 	{
 		o.model = this.model;
@@ -3081,14 +3098,14 @@ Renderer._sort_by_priority_and_dist_func = function(a,b)
 * @param {RD.Scene} scene
 * @param {RD.Camera} camera
 * @param {Array} nodes [Optional] array with nodes to render, otherwise all nodes will be rendered
-* @param {Number} layers [Optional] bit mask with which layers should be rendered, if omited then 0xFF is used (8 first layers)
+* @param {Number} layers [Optional] bit mask with which layers should be rendered, if omited then 0xFFFF is used (8 first layers)
 * @param {CustomPipeline} pipeline [Optional] allows to pass a class that will handle the rendering of the scene, check PBRPipeline from the repo for an example 
 * @param {Boolean} skip_fbo [Optional] in case you are rendering to a texture and you have already set your own FBOs (for custom pipelineS)
 */
 Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, skip_fbo )
 {
 	if(layers == null)
-		layers = 0xFF;
+		layers = 0xFFFF;
 
 	if (!scene)
 		throw("Renderer.render: scene not provided");

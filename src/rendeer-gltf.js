@@ -25,6 +25,7 @@ RD.GLTF = {
 	rename_animation_properties: { "translation":"position","scale":"scaling" },
 
 	flip_uv: true,
+	overwrite_materials: true,
 
 	prefabs: {},
 
@@ -712,11 +713,12 @@ RD.GLTF = {
 		var mat_name = info.name || json.filename + "::mat_" + index;
 
 		var material = RD.Materials[ mat_name ];
-		if(material)
+		if(material && (!this.overwrite_materials || material.from_filename == json.filename) )
 			return material;
 
 		material = new RD.Material();
 		material.name = mat_name;
+		material.from_filename = json.filename;
 		//material.shader_name = "phong";
 
 		if(info.alphaMode != null)

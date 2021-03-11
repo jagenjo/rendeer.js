@@ -1,6 +1,7 @@
 \shaders
 
 degamma_material default.vs degamma_material.fs
+degamma @SCREEN degamma.fs
 pbr default.vs pbr.fs
 pbr_uv2 default.vs pbr.fs { "UVS2":"" }
 nopbr default.vs nopbr.fs
@@ -14,6 +15,8 @@ tonemapper @SCREEN tonemapper.fs
 \default.vs
 
 	precision highp float;
+	precision highp int;
+
 	attribute vec3 a_vertex;
 	attribute vec3 a_normal;
 	attribute vec2 a_coord;
@@ -28,12 +31,30 @@ tonemapper @SCREEN tonemapper.fs
 	varying vec3 v_wNormal;
 	varying vec2 v_coord;
 	varying vec2 v_coord1;
+	varying vec2 v_coord2;
 	varying vec4 v_color;
 
 	uniform mat4 u_viewprojection;
 	uniform mat4 u_model;
 	uniform mat4 u_normal_model;
 	uniform mat4 u_view;
+	uniform mat3 u_texture_matrix;
+
+	#define DISPLACEMENTMAP 6
+	uniform sampler2D u_displacement_texture;
+	uniform int u_maps_info[10];
+	uniform float u_displacement_factor;
+
+	vec2 getUV( int index )
+	{
+		if(index == 0)
+			return v_coord;
+		if(index == 1)
+			return v_coord1;
+		if(index == 2)
+			return v_coord2;
+		return v_coord;
+	}
 
 	void main() {
 
@@ -42,12 +63,19 @@ tonemapper @SCREEN tonemapper.fs
 		v_wNormal = a_normal;
 		v_coord = a_coord;
 		v_coord1 = a_coord;
+		v_coord2 = vec2( u_texture_matrix * vec3(a_coord,1.0) ).xy;
+
 		#ifdef UVS2
 			v_coord1 = a_coord1;
 		#endif
 		#ifdef COLOR
 			v_color = a_color;
 		#endif
+
+		if( u_maps_info[DISPLACEMENTMAP] != -1 && u_displacement_factor != 0.0 ){
+			float displace = texture2D(u_displacement_texture, getUV( u_maps_info[DISPLACEMENTMAP] ) ).x;
+			vertex4.xyz += normal4.xyz * displace * u_displacement_factor;
+		}
 
 		//vertex
 		vec4 worldpos = (u_model * vertex4);
@@ -339,6 +367,7 @@ tonemapper @SCREEN tonemapper.fs
 	#extension GL_OES_standard_derivatives : enable
 	#extension GL_EXT_shader_texture_lod : enable
 	precision highp float;
+	precision highp int;
 
 	varying vec3 v_wPosition;
 	varying vec3 v_wNormal;
@@ -348,6 +377,8 @@ tonemapper @SCREEN tonemapper.fs
 	#else
 		vec2 v_coord1;
 	#endif
+	varying vec2 v_coord2;
+
 	#ifdef COLOR
 		varying vec4 v_color;
 	#else
@@ -413,7 +444,6 @@ tonemapper @SCREEN tonemapper.fs
 	uniform sampler2D u_opacity_texture;
 	uniform sampler2D u_normal_texture;
 	uniform sampler2D u_emissive_texture;
-	uniform sampler2D u_displacement_texture;
 	uniform sampler2D u_detail_texture;
 
 	#import "sh.inc"
@@ -438,14 +468,16 @@ tonemapper @SCREEN tonemapper.fs
 	uniform vec4 u_reflection_plane;
 	#endif
 
-	uniform mat3 u_texture_matrix;
-	vec2 uv_transformed;
 	vec2 getUV( int index )
 	{
-		if(index == 2)
-			return uv_transformed;
+		if(index == 0)
+			return v_coord;
 		if(index == 1)
 			return v_coord1;
+		if(index == 2)
+			return v_coord2;
+		if(index == 3)
+			return gl_FragCoord.xy / u_viewport.zw;
 		return v_coord;
 	}
 
@@ -704,6 +736,7 @@ tonemapper @SCREEN tonemapper.fs
 
 			float Fcc = F_Schlick(material.NoV, 0.04) * material.clearCoat;
 
+			/*
 			if(u_maps_info[DISPLACEMENTMAP] != -1){
 				vec3 coat_bump = texture2D( u_displacement_texture, getUV(u_maps_info[DISPLACEMENTMAP]) ).xyz;
 				coat_bump = normalize( perturbNormal( material.R, -material.V, v_coord, coat_bump ) );
@@ -714,6 +747,7 @@ tonemapper @SCREEN tonemapper.fs
 				// update reflection in clear coat mat
 				clearCoat_material.R = reflect(- material.V, coat_bump);
 			}
+			*/
 
 			getIBLContribution(clearCoat_material, Fd_clearCoat, Fr_clearCoat);
 
@@ -772,8 +806,6 @@ tonemapper @SCREEN tonemapper.fs
 			coeffs.c[8] = u_sh_coeffs[8];
 		}
 
-		uv_transformed = (u_texture_matrix * vec3( v_coord, 1.0 )).xy;
-
 		PBRMat material;
 		createMaterial( material );
 
@@ -807,6 +839,7 @@ tonemapper @SCREEN tonemapper.fs
 		//color.xyz = material.N;
 
 		gl_FragColor = vec4( vec3(color) * u_exposure, alpha );
+		//gl_FragColor.a = min(1.0,gl_FragColor.a + length( gl_FragColor.xyz ) * alpha * 0.2);
 	}
 
 
@@ -828,8 +861,6 @@ tonemapper @SCREEN tonemapper.fs
 
 		if( testClippingPlane( u_clipping_plane, v_wPosition ) < 0.0 )
 			discard;
-
-		uv_transformed = (u_texture_matrix * vec3( v_coord, 1.0 )).xy;
 
 		vec3 color = u_albedo * v_color.xyz;
 		float alpha = u_alpha;
@@ -880,10 +911,26 @@ tonemapper @SCREEN tonemapper.fs
 		gl_FragColor = vec4( color, alpha );
 	}
 
+\degamma.fs
+
+	precision highp float;
+
+	varying vec2 v_coord;
+	uniform sampler2D u_texture;
+	uniform float u_gamma;
+	uniform float u_exposure;
+	uniform vec4 u_color;
+
+	void main() {
+		vec4 color4 = u_color * texture2D( u_texture, v_coord );
+		color4.xyz = pow(color4.xyz, vec3(u_gamma)) * u_exposure; //degamma
+		gl_FragColor = color4;
+	}
 
 \degamma_material.fs
 
 	precision highp float;
+
 	varying vec2 v_coord;
 	uniform vec4 u_color;
 	uniform sampler2D u_color_texture;
@@ -903,6 +950,7 @@ tonemapper @SCREEN tonemapper.fs
 	#extension GL_OES_standard_derivatives : enable
 	#extension GL_EXT_shader_texture_lod : enable
 	precision highp float;
+	precision highp int;
 
 	varying vec3 v_wPosition;
 	varying vec3 v_wNormal;
@@ -912,6 +960,7 @@ tonemapper @SCREEN tonemapper.fs
 	#else
 		vec2 v_coord1;
 	#endif
+	varying vec2 v_coord2;
 
 	uniform mat4 u_invp;
 	uniform mat4 u_invv;
@@ -944,7 +993,7 @@ tonemapper @SCREEN tonemapper.fs
 	#define DETAILMAP 7
 
 	//maps info (like uvs, if available, etc)
-	uniform int u_maps_info[8];
+	uniform int u_maps_info[10];
 
 	uniform sampler2D u_albedo_texture;
 	uniform sampler2D u_opacity_texture;
@@ -954,11 +1003,10 @@ tonemapper @SCREEN tonemapper.fs
 	#import "perturbNormal.inc"
 
 	uniform mat3 u_texture_matrix;
-	vec2 uv_transformed;
 	vec2 getUV( int index )
 	{
 		if(index == 2)
-			return uv_transformed;
+			return v_coord2;
 		if(index == 1)
 			return v_coord1;
 		return v_coord;
@@ -978,8 +1026,6 @@ tonemapper @SCREEN tonemapper.fs
 
 		if( testClippingPlane( u_clipping_plane, v_wPosition ) < 0.0 )
 			discard;
-
-		uv_transformed = (u_texture_matrix * vec3( v_coord, 1.0 )).xy;
 
 		vec3 color = vec3(0.0);
 		float alpha = u_alpha;
@@ -1286,6 +1332,7 @@ float testClippingPlane(vec4 plane, vec3 p)
 	uniform vec4 u_color;
 	uniform float u_brightness;
 	uniform float u_contrast;
+	uniform float u_gamma;
 
 	uniform sampler2D u_color_texture;
 
@@ -1371,7 +1418,7 @@ float testClippingPlane(vec4 plane, vec3 p)
 		color.rgb = tonemapUncharted2(color.rgb);
 
 		//gamma
-		color.rgb = pow(color.rgb, vec3(1./2.2));
+		color.rgb = pow(color.rgb, vec3(1./u_gamma));
 
 		//contrast
 		color.rgb = (color.rgb - vec3(0.5)) * u_contrast + vec3(0.5);

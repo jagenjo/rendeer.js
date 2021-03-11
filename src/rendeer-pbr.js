@@ -8,7 +8,7 @@ function PBRPipeline( renderer )
 	this.renderer = renderer;
 	this.mode = PBRPipeline.FORWARD;
 	this.fbo = null;
-	this.visible_layers = 0xFF;
+	this.visible_layers = 0xFFFF;
 	this.bgcolor = vec4.fromValues(0.1,0.1,0.1,1.0);
 	this.environment_texture = null;
 	this.render_skybox = true;
@@ -22,10 +22,13 @@ function PBRPipeline( renderer )
 
 	this.contrast = 1.0;
 	this.brightness = 1.0;
+	this.gamma = 2.2;
 
 	this.parallax_reflection = false;
 	this.parallax_reflection_matrix = mat4.create();
 	this.parallax_reflection_matrix_inv = mat4.create();
+
+	this.texture_matrix = mat3.create();
 
 	this.resolution_factor = 1;
 	this.quality = 1;
@@ -35,6 +38,8 @@ function PBRPipeline( renderer )
 	this.use_rendertexture = true;
 	this.fx = null;
 
+	this.alpha_composite_target_texture = null;
+
 	//this.overwrite_shader_name = "normal";
 
 	this.global_uniforms = {
@@ -43,10 +48,12 @@ function PBRPipeline( renderer )
 		u_occlusion_factor: this.occlusion_factor,
 		u_background_color: this.bgcolor.subarray(0,3),
 		u_tonemapper: 0,
+		u_gamma: this.gamma,
 		u_SpecularEnvSampler_texture: 1,
 		u_skybox_mipCount: 5,
 		u_skybox_info: [ this.environment_rotation, this.environment_factor ],
 		u_use_environment_texture: false,
+		u_viewport: gl.viewport_data,
 		u_clipping_plane: vec4.fromValues(0,0,0,0)
     };
 
@@ -61,6 +68,8 @@ function PBRPipeline( renderer )
 		u_normalFactor: 1,
 		u_metallicRough: false, //use metallic rough texture
 		u_reflectance: 0.1, //multiplied by the reflectance function
+		u_texture_matrix: this.texture_matrix,
+		u_displacement_factor: 0.0,
 
 		u_maps_info: new Int8Array(10), //info about channels
 
@@ -94,6 +103,8 @@ function PBRPipeline( renderer )
 	this.max_texture_size = gl.getParameter( gl.MAX_TEXTURE_SIZE );
 
 	this.default_material = new RD.Material();
+
+	this.onRenderBackground = null;
 }
 
 PBRPipeline.FORWARD = 1;
@@ -188,7 +199,10 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 	gl.disable( gl.BLEND );
 
 	//render skybox
-	this.renderSkybox(camera);
+	if(this.onRenderBackground)
+		this.onRenderBackground( camera, this );
+	else
+		this.renderSkybox( camera );
 
 	this.fillGlobalUniforms();
 
@@ -215,10 +229,22 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 	//TODO
 	//this.groupRenderCallsForInstancing();
 
+	var precompose_opaque = (this.alpha_composite_callback || this.alpha_composite_target_texture) && GL.FBO.current;
+	var opaque = true;
+
 	//do the render call for every rcs
 	for(var i = 0; i < rcs.length; ++i)
 	{
 		var rc = rcs[i];
+		//store the opaque framebuffer into a separate texture
+		if( opaque && precompose_opaque && rc.material.alphaMode == "BLEND")
+		{
+			opaque = false;
+			if(this.alpha_composite_target_texture)
+				GL.FBO.current.color_textures[0].copyTo( this.alpha_composite_target_texture );
+			if( this.alpha_composite_callback )
+				this.alpha_composite_callback( GL.FBO.current, this.alpha_composite_target_texture );
+		}
 		this.renderMeshWithMaterial( rc.model, rc.mesh, rc.material, rc.index_buffer_name, rc.group_index, rc.node.extra_uniforms, rc.reverse_faces );
 	}
 
@@ -234,6 +260,7 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 		this.renderFinalBuffer();
 }
 
+//after filling the final buffer (from renderForward) it applies FX and tonemmaper
 PBRPipeline.prototype.renderFinalBuffer = function()
 {
 	this.final_fbo.unbind(0);
@@ -251,6 +278,7 @@ PBRPipeline.prototype.renderFinalBuffer = function()
 
 	this.fx_uniforms.u_contrast = this.contrast;
 	this.fx_uniforms.u_brightness = this.brightness;
+	this.fx_uniforms.u_gamma = this.gamma;
 
 	this.final_texture.toViewport( gl.shaders["tonemapper"], this.fx_uniforms );
 }
@@ -270,7 +298,7 @@ PBRPipeline.prototype.getNodeRenderCalls = function( node, camera, layers )
 	}
 
 	if(layers === undefined)
-		layers = 0xFF;
+		layers = 0xFFFF;
 
 	//prepare matrix (must be done always or children wont have the right transform)
 	node.updateGlobalMatrix(true);
@@ -465,6 +493,13 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model, mesh, material, 
 	material_uniforms.u_alpha_cutoff = -1; //disabled
 
 	material_uniforms.u_normalFactor = material.normalmapFactor != null ? material.normalmapFactor : 1.0;
+	material_uniforms.u_displacement_factor = material.displacementFactor != null ? material.displacementFactor : 1.0;
+
+	//sent as u_texture_matrix
+	if(material.uv_transform)
+		this.texture_matrix.set( material.uv_transform );
+	else
+		mat3.identity( this.texture_matrix );
 
 	//textures
 	var slot = 2; //skip 0 and 1 as are in use
@@ -503,8 +538,8 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model, mesh, material, 
 
 		var tex_slot = this.max_textures < 16 ? slot++ : i + 2;
 		sampler_uniforms[ texture_uniform_name ] = texture.bind( tex_slot );
-		if( texture_info && texture_info.uv_channel == 1 )
-			maps_info[i] = 1;
+		if( texture_info && texture_info.uv_channel != null )
+			maps_info[i] = Math.clamp( texture_info.uv_channel, 0, 3 );
 		else
 			maps_info[i] = 0;
 	}
@@ -848,7 +883,7 @@ RenderCall.prototype.computeRenderPriority = function( point )
 	if(!bb)
 		return;
 	var pos = mat4.multiplyVec3( temp_vec3, this.model, bb );
-	this._render_priority = this.material.priority || 0;
+	this._render_priority = this.material.render_priority || 0;
 	this._render_priority += vec3.distance( point, pos ) * 0.001;
 	if(this.material.alphaMode == "BLEND")
 		this._render_priority -= 100;

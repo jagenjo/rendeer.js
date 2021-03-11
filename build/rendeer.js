@@ -655,7 +655,7 @@ SceneNode.prototype.getVisibleChildren = function( result, layers, layers_affect
 {
 	result = result || [];
 	if(layers === undefined)
-		layers = 0xFF;
+		layers = 0xFFFF;
 
 	if(!this.children)
 		return result;
@@ -888,6 +888,17 @@ SceneNode.prototype.rotate = function( angle_in_rad, axis, in_local )
 		quat.multiply( this._rotation, this._rotation, temp_quat );
 	else
 		quat.multiply( this._rotation, temp_quat, this._rotation );
+	this._must_update_matrix = true;
+}
+
+/**
+* Changes the rotation using euler angles
+* @method rotate
+* @param {Array} eule_angles [yaw,pitch,roll] in radians
+*/
+SceneNode.prototype.setRotationFromEuler = function( euler )
+{
+	quat.fromEuler( this._rotation, euler );
 	this._must_update_matrix = true;
 }
 
@@ -1344,7 +1355,7 @@ SceneNode.prototype.findNodeByName = function(name)
 SceneNode.prototype.findNodesByFilter = function( filter_func, layers, result )
 {
 	if(layers === undefined)
-		layers = 0xFF;
+		layers = 0xFFFF;
 	result = result || [];
 
 	for(var i = 0, l = this.children.length; i < l; i++)
@@ -1473,7 +1484,7 @@ SceneNode.prototype.testRay = (function(){
 	{
 		max_dist = max_dist === undefined ? Number.MAX_VALUE : max_dist;
 		if(layers === undefined)
-			layers = 0xFF;
+			layers = 0xFFFF;
 		result = result || vec3.create();
 
 		if(Scene._ray_tested_objects !== undefined)
@@ -1635,12 +1646,12 @@ SceneNode.prototype.setRangeFromSubmesh = function( submesh_id )
 /**
 * returns an array of nodes which center is inside the sphere
 * @method findNodesInSphere
-* @param {number} layers [optional] bitmask to filter by layer, otherwise 0xFF is used
+* @param {number} layers [optional] bitmask to filter by layer, otherwise 0xFFFF is used
 */
 SceneNode.prototype.findNodesInSphere = function( center, radius, layers, out )
 {
 	if(layers === undefined)
-		layers = 0xFF;
+		layers = 0xFFFF;
 	out = out || [];
 	for(var i = 0; i < this.children.length; ++i)
 	{
@@ -2512,12 +2523,12 @@ Scene.prototype.getNodeById = function(id)
 * 
 * @method findNodesInBBox
 * @param {BBox} box  use BBox.fromCenterHalfsize(center,halfsize) to define it
-* @param {number} layers [optional] bitmask to filter by layer, otherwise 0xFF is used
+* @param {number} layers [optional] bitmask to filter by layer, otherwise 0xFFFF is used
 */
 Scene.prototype.findNodesInBBox = function( box, layers, out )
 {
 	if(layers === undefined)
-		layers = 0xFF;
+		layers = 0xFFFF;
 	out = out || [];
 	for(var i = 0; i < this.nodes.length; ++i)
 	{
@@ -2573,13 +2584,13 @@ Object.defineProperty(Scene.prototype, 'root', {
 * @param {RD.Ray} ray
 * @param {vec3} result the collision point in case there was
 * @param {number} max_dist
-* @param {number} layers bitmask to filter by layer, otherwise 0xFF is used
+* @param {number} layers bitmask to filter by layer, otherwise 0xFFFF is used
 * @param {boolean} test_against_mesh test against every mesh
 * @return {RD.SceneNode} node collided or null
 */
 Scene.prototype.testRay = function( ray, result, max_dist, layers, test_against_mesh  )
 {
-	layers = layers === undefined ? 0xFF : layers;
+	layers = layers === undefined ? 0xFFFF : layers;
 	RD.Scene._ray_tested_objects = 0;
 	if(!result)
 		result = ray.collision_point;
@@ -2600,7 +2611,7 @@ RD.testRayWithNodes = function testRayWithNodes( ray, nodes, coll, max_dist, lay
 {
 	RD.testRayWithNodes.coll_node = null; //hack to store a temp var
 	max_dist = max_dist == null ? Number.MAX_VALUE : max_dist;
-	layers = layers === undefined ? 0xFF : layers;
+	layers = layers === undefined ? 0xFFFF : layers;
 	RD.Scene._ray_tested_objects = 0;
 	if(!coll)
 		coll = ray.collision_point;
@@ -2857,6 +2868,12 @@ Material.prototype.serialize = function()
 		o.alphaMode = this.alphaMode;
 	if(this.alphaCutoff != 0.5)
 		o.alphaCutoff = this.alphaCutoff;
+	if(this.uv_transform)
+		o.uv_transform = this.uv_transform;
+	if(this.normalFactor)
+		o.normalFactor = this.normalFactor;
+	if(this.displacementFactor)
+		o.displacementFactor = this.displacementFactor;
 	if(this.model)
 	{
 		o.model = this.model;
@@ -3082,14 +3099,14 @@ Renderer._sort_by_priority_and_dist_func = function(a,b)
 * @param {RD.Scene} scene
 * @param {RD.Camera} camera
 * @param {Array} nodes [Optional] array with nodes to render, otherwise all nodes will be rendered
-* @param {Number} layers [Optional] bit mask with which layers should be rendered, if omited then 0xFF is used (8 first layers)
+* @param {Number} layers [Optional] bit mask with which layers should be rendered, if omited then 0xFFFF is used (8 first layers)
 * @param {CustomPipeline} pipeline [Optional] allows to pass a class that will handle the rendering of the scene, check PBRPipeline from the repo for an example 
 * @param {Boolean} skip_fbo [Optional] in case you are rendering to a texture and you have already set your own FBOs (for custom pipelineS)
 */
 Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, skip_fbo )
 {
 	if(layers == null)
-		layers = 0xFF;
+		layers = 0xFFFF;
 
 	if (!scene)
 		throw("Renderer.render: scene not provided");
@@ -7354,6 +7371,7 @@ RD.GLTF = {
 	rename_animation_properties: { "translation":"position","scale":"scaling" },
 
 	flip_uv: true,
+	overwrite_materials: true,
 
 	prefabs: {},
 
@@ -8041,11 +8059,12 @@ RD.GLTF = {
 		var mat_name = info.name || json.filename + "::mat_" + index;
 
 		var material = RD.Materials[ mat_name ];
-		if(material)
+		if(material && (!this.overwrite_materials || material.from_filename == json.filename) )
 			return material;
 
 		material = new RD.Material();
 		material.name = mat_name;
+		material.from_filename = json.filename;
 		//material.shader_name = "phong";
 
 		if(info.alphaMode != null)
@@ -8383,7 +8402,7 @@ function PBRPipeline( renderer )
 	this.renderer = renderer;
 	this.mode = PBRPipeline.FORWARD;
 	this.fbo = null;
-	this.visible_layers = 0xFF;
+	this.visible_layers = 0xFFFF;
 	this.bgcolor = vec4.fromValues(0.1,0.1,0.1,1.0);
 	this.environment_texture = null;
 	this.render_skybox = true;
@@ -8397,10 +8416,13 @@ function PBRPipeline( renderer )
 
 	this.contrast = 1.0;
 	this.brightness = 1.0;
+	this.gamma = 2.2;
 
 	this.parallax_reflection = false;
 	this.parallax_reflection_matrix = mat4.create();
 	this.parallax_reflection_matrix_inv = mat4.create();
+
+	this.texture_matrix = mat3.create();
 
 	this.resolution_factor = 1;
 	this.quality = 1;
@@ -8410,6 +8432,8 @@ function PBRPipeline( renderer )
 	this.use_rendertexture = true;
 	this.fx = null;
 
+	this.alpha_composite_target_texture = null;
+
 	//this.overwrite_shader_name = "normal";
 
 	this.global_uniforms = {
@@ -8418,10 +8442,12 @@ function PBRPipeline( renderer )
 		u_occlusion_factor: this.occlusion_factor,
 		u_background_color: this.bgcolor.subarray(0,3),
 		u_tonemapper: 0,
+		u_gamma: this.gamma,
 		u_SpecularEnvSampler_texture: 1,
 		u_skybox_mipCount: 5,
 		u_skybox_info: [ this.environment_rotation, this.environment_factor ],
 		u_use_environment_texture: false,
+		u_viewport: gl.viewport_data,
 		u_clipping_plane: vec4.fromValues(0,0,0,0)
     };
 
@@ -8436,6 +8462,8 @@ function PBRPipeline( renderer )
 		u_normalFactor: 1,
 		u_metallicRough: false, //use metallic rough texture
 		u_reflectance: 0.1, //multiplied by the reflectance function
+		u_texture_matrix: this.texture_matrix,
+		u_displacement_factor: 0.0,
 
 		u_maps_info: new Int8Array(10), //info about channels
 
@@ -8469,6 +8497,8 @@ function PBRPipeline( renderer )
 	this.max_texture_size = gl.getParameter( gl.MAX_TEXTURE_SIZE );
 
 	this.default_material = new RD.Material();
+
+	this.onRenderBackground = null;
 }
 
 PBRPipeline.FORWARD = 1;
@@ -8563,7 +8593,10 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 	gl.disable( gl.BLEND );
 
 	//render skybox
-	this.renderSkybox(camera);
+	if(this.onRenderBackground)
+		this.onRenderBackground( camera, this );
+	else
+		this.renderSkybox( camera );
 
 	this.fillGlobalUniforms();
 
@@ -8590,10 +8623,22 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 	//TODO
 	//this.groupRenderCallsForInstancing();
 
+	var precompose_opaque = (this.alpha_composite_callback || this.alpha_composite_target_texture) && GL.FBO.current;
+	var opaque = true;
+
 	//do the render call for every rcs
 	for(var i = 0; i < rcs.length; ++i)
 	{
 		var rc = rcs[i];
+		//store the opaque framebuffer into a separate texture
+		if( opaque && precompose_opaque && rc.material.alphaMode == "BLEND")
+		{
+			opaque = false;
+			if(this.alpha_composite_target_texture)
+				GL.FBO.current.color_textures[0].copyTo( this.alpha_composite_target_texture );
+			if( this.alpha_composite_callback )
+				this.alpha_composite_callback( GL.FBO.current, this.alpha_composite_target_texture );
+		}
 		this.renderMeshWithMaterial( rc.model, rc.mesh, rc.material, rc.index_buffer_name, rc.group_index, rc.node.extra_uniforms, rc.reverse_faces );
 	}
 
@@ -8609,6 +8654,7 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 		this.renderFinalBuffer();
 }
 
+//after filling the final buffer (from renderForward) it applies FX and tonemmaper
 PBRPipeline.prototype.renderFinalBuffer = function()
 {
 	this.final_fbo.unbind(0);
@@ -8626,6 +8672,7 @@ PBRPipeline.prototype.renderFinalBuffer = function()
 
 	this.fx_uniforms.u_contrast = this.contrast;
 	this.fx_uniforms.u_brightness = this.brightness;
+	this.fx_uniforms.u_gamma = this.gamma;
 
 	this.final_texture.toViewport( gl.shaders["tonemapper"], this.fx_uniforms );
 }
@@ -8645,7 +8692,7 @@ PBRPipeline.prototype.getNodeRenderCalls = function( node, camera, layers )
 	}
 
 	if(layers === undefined)
-		layers = 0xFF;
+		layers = 0xFFFF;
 
 	//prepare matrix (must be done always or children wont have the right transform)
 	node.updateGlobalMatrix(true);
@@ -8840,6 +8887,13 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model, mesh, material, 
 	material_uniforms.u_alpha_cutoff = -1; //disabled
 
 	material_uniforms.u_normalFactor = material.normalmapFactor != null ? material.normalmapFactor : 1.0;
+	material_uniforms.u_displacement_factor = material.displacementFactor != null ? material.displacementFactor : 1.0;
+
+	//sent as u_texture_matrix
+	if(material.uv_transform)
+		this.texture_matrix.set( material.uv_transform );
+	else
+		mat3.identity( this.texture_matrix );
 
 	//textures
 	var slot = 2; //skip 0 and 1 as are in use
@@ -8878,8 +8932,8 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model, mesh, material, 
 
 		var tex_slot = this.max_textures < 16 ? slot++ : i + 2;
 		sampler_uniforms[ texture_uniform_name ] = texture.bind( tex_slot );
-		if( texture_info && texture_info.uv_channel == 1 )
-			maps_info[i] = 1;
+		if( texture_info && texture_info.uv_channel != null )
+			maps_info[i] = Math.clamp( texture_info.uv_channel, 0, 3 );
 		else
 			maps_info[i] = 0;
 	}
@@ -9223,7 +9277,7 @@ RenderCall.prototype.computeRenderPriority = function( point )
 	if(!bb)
 		return;
 	var pos = mat4.multiplyVec3( temp_vec3, this.model, bb );
-	this._render_priority = this.material.priority || 0;
+	this._render_priority = this.material.render_priority || 0;
 	this._render_priority += vec3.distance( point, pos ) * 0.001;
 	if(this.material.alphaMode == "BLEND")
 		this._render_priority -= 100;
@@ -10147,6 +10201,8 @@ Skeleton.prototype.computeFinalBoneMatrices = function( bone_matrices, mesh, sim
 		{
 			var bone_info = mesh.bones[i];
 			mat4.multiply( temp_mat4, this.getBoneMatrix( bone_info[0], true ), bone_info[1] ); //use globals
+			if( mesh.bind_matrix )
+				mat4.multiply( temp_mat4, temp_mat4, mesh.bind_matrix );
 			mat4.transpose( temp_mat4, temp_mat4 );
 			bone_matrices.set(m43,i*12);
 		}
@@ -10157,6 +10213,8 @@ Skeleton.prototype.computeFinalBoneMatrices = function( bone_matrices, mesh, sim
 			var bone_info = mesh.bones[i];
 			var m = bone_matrices.subarray(i*16,i*16+16);
 			mat4.multiply( m, this.getBoneMatrix( bone_info[0], true ), bone_info[1] ); //use globals
+			if( mesh.bind_matrix )
+				mat4.multiply( m, m, mesh.bind_matrix );
 		}
 
 	return bone_matrices;
