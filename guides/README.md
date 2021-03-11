@@ -349,7 +349,7 @@ var node = scene.testRay( ray );
 
 But keep in mind this method is slow as it must test agains all object in the scene.
 
-Check the picking guide in the repo to know more about this.
+Check [the picking guide](picking.md) in the repo to know more about this.
 
 ## Materials
 
