@@ -48,12 +48,18 @@ You can test the ray agains a plane:
   }
 ```
 
+Remember that you can convert from local node coordinates to global using localToGlobal:
+```js
+  var worldpos = mynode.localToGlobal([0,10,0]);
+```
+
+
 ## Ray-Mesh collision
 
 But sometimes you want to test ray agains the objects in the scene, in that case the system will generate an octree 
-for every mesh to speed up ray mesh collision but still it will test the collision agains all nodes in the scene (no broadphase).
+for every mesh to speed up ray mesh collision but still it will test the collision agains all nodes in the scene (no broadphase so it is slow).
 
-The syntax to test a ray agains the scene is:
+The syntax to test a ray against the scene is:
 
 ```js
   var node = scene.testRay( ray );
@@ -62,6 +68,27 @@ The syntax to test a ray agains the scene is:
   }
 ```
 
-The scene.testRay method supports many parameters, to filter to which nodes to test, etc.
+If you do not want to test against all the nodes, you can filter to which ones by using the layers system:
+
+By default every node is in layers one and two (layer is 0x3 in hexadecimal, as it has first and second bit).
+You can change it:
+
+```js
+  //to change one bit
+  mynode.setLayerBit( 0x4, 1 );
+  
+  //to change all bits at once
+  mynode.layers = 7; (bit 1, 2 and 4)
+  mynode.layers = 0x1 | 0x2 | 0x4; //using ORs
+  mynode.layers = (1<<0) | (1<<1) | (1<<2); //using bit shifting
+```
+
+And then when testing ray collision we pass the layers we want to test
+
+```js
+  var collided_node = scene.testRay( ray, collision_point, max_dist, 0x4 );
+```
+
+
 
 
