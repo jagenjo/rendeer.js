@@ -3,11 +3,8 @@
 degamma_material default.vs degamma_material.fs
 degamma @SCREEN degamma.fs
 pbr default.vs pbr.fs
-pbr_uv2 default.vs pbr.fs { "UVS2":"" }
 nopbr default.vs nopbr.fs
-nopbr_uv2 default.vs nopbr.fs { "UVS2":"" }
 normals default.vs normals.fs
-normals_uv2 default.vs normals.fs { "UVS2":"" }
 brdf_integrator @SCREEN brdf_integrator.fs
 skybox default.vs skybox.fs
 tonemapper @SCREEN tonemapper.fs
@@ -39,6 +36,7 @@ tonemapper @SCREEN tonemapper.fs
 	uniform mat4 u_normal_model;
 	uniform mat4 u_view;
 	uniform mat3 u_texture_matrix;
+	uniform vec4 u_viewport;
 
 	#define DISPLACEMENTMAP 6
 	uniform sampler2D u_displacement_texture;
@@ -55,6 +53,17 @@ tonemapper @SCREEN tonemapper.fs
 			return v_coord2;
 		return v_coord;
 	}
+
+	#ifdef POINTS
+		uniform float u_camera_perspective;
+		uniform float u_pointSize;
+		float computePointSize( float radius, float w )
+		{
+			if(radius < 0.0)
+				return -radius;
+			return max(1.0, u_viewport.w * u_camera_perspective * radius / w);
+		}
+	#endif
 
 	void main() {
 
@@ -80,9 +89,15 @@ tonemapper @SCREEN tonemapper.fs
 		//vertex
 		vec4 worldpos = (u_model * vertex4);
 		v_wPosition = worldpos.xyz;
+
 		//normal
 		v_wNormal = (u_model * normal4).xyz;
 		gl_Position = u_viewprojection * worldpos;
+
+		//for point clouds
+		#ifdef POINTS
+			gl_PointSize = computePointSize( u_pointSize, gl_Position.w );
+		#endif
 	}
 
 \pbr_brdf.inc
@@ -406,7 +421,7 @@ tonemapper @SCREEN tonemapper.fs
 	// Mat properties *********
 
 	uniform vec3 u_albedo;
-	uniform vec3 u_emissive;
+	uniform vec4 u_emissive;
 	uniform float u_roughness;
 	uniform float u_metalness;
 	uniform float u_alpha;
@@ -555,7 +570,7 @@ tonemapper @SCREEN tonemapper.fs
 
 		if(u_maps_info[ALBEDOMAP] != -1){
 			vec3 albedo_tex = texture2D(u_albedo_texture, getUV( u_maps_info[ALBEDOMAP] ) ).rgb;
-			albedo_tex = pow(albedo_tex, vec3(GAMMA)); //degamma
+			albedo_tex = pow(albedo_tex, vec3(u_gamma)); //degamma
 			baseColor *= max(albedo_tex,vec3(0.01));
 		}
 
@@ -618,19 +633,11 @@ tonemapper @SCREEN tonemapper.fs
 		updateVectors( material );
 	}
 
-	vec3 rotateVector( vec3 v, float angle )
+	vec3 rotate2D( vec3 v, float angle )
 	{
-		vec3 axis = vec3(0.0,1.0,0.0);
 		float s = sin(angle);                                                                                                                          
 		float c = cos(angle);
-		float oc = 1.0 - c;
-
-		mat4 mat =  mat4(oc*axis.x*axis.x+c,oc*axis.x*axis.y-axis.z*s,oc*axis.z*axis.x+axis.y*s,0.0,
-		oc*axis.x*axis.y+axis.z*s,oc*axis.y*axis.y+c,oc*axis.y*axis.z-axis.x*s,0.0,
-		oc*axis.z*axis.x-axis.y*s,oc*axis.y*axis.z+axis.x*s,oc*axis.z*axis.z+c,0.0,
-		0.0,0.0,0.0,1.0);
-
-		return (mat * vec4(v,1.0)).xyz;
+		return vec3( v.x * c - v.z * s, v.y, v.x * s + v.z * c );
 	}
 
 	vec3 prem(vec3 R, float roughness, float rotation) {
@@ -638,14 +645,15 @@ tonemapper @SCREEN tonemapper.fs
 			return u_background_color;
 
 		float 	f = roughness * u_skybox_mipCount;
-		vec3 	r = rotateVector(R, rotation);
+		vec3 	r = rotate2D(R, rotation);
 
 		vec4 color = vec4(0.0);
 
-		float level = min(5.0,floor(f));
-		f = fract(f);
+		//float level = min(5.0,floor(f));
+		//f = fract(f);
+		//color = mix( textureCubeLodEXT(u_SpecularEnvSampler_texture, r, level), textureCubeLodEXT(u_SpecularEnvSampler_texture, r, level + 1.0), f );
 
-		color = mix( textureCubeLodEXT(u_SpecularEnvSampler_texture, r, level), textureCubeLodEXT(u_SpecularEnvSampler_texture, r, level + 1.0), f );
+		color = textureCubeLodEXT(u_SpecularEnvSampler_texture, r, f);
 		
 		//float offset = 3.0;
 		//color = mix( textureCube(u_SpecularEnvSampler_texture, r, level + offset), textureCube(u_SpecularEnvSampler_texture, r, level + 1.0 + offset), f );
@@ -771,7 +779,7 @@ tonemapper @SCREEN tonemapper.fs
 			if( u_metallicRough == true )
 				occ.xyz = vec3(occ.x); //force to use only one channel
 			occ *= u_occlusion_factor;
-			indirect *= pow(occ, vec3(GAMMA)); //degamma
+			indirect *= pow(occ, vec3(u_gamma)); //degamma
 		}
 
 		color = indirect;
@@ -817,13 +825,19 @@ tonemapper @SCREEN tonemapper.fs
 			alpha *= v_color.a;
 		#endif
 
-		vec3 emissive = u_emissive;	
+		vec3 emissive = u_emissive.xyz;	
 		if(u_maps_info[EMISSIVEMAP] != -1)
 		{
-			vec4 emissive_tex = texture2D(u_emissive_texture, getUV(u_maps_info[EMISSIVEMAP]) );
-			emissive_tex.xyz = pow(emissive_tex.xyz, vec3(GAMMA*1.5)); //degamma
-			emissive *= emissive_tex.xyz;
-			alpha *= emissive_tex.a;
+			vec2 emissive_uv = getUV(u_maps_info[EMISSIVEMAP]);
+			if( u_emissive.w == 0.0 || (emissive_uv.x > 0.0 && emissive_uv.x < 1.0 && emissive_uv.y > 0.0 && emissive_uv.y < 1.0) )
+			{
+				vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
+				emissive_tex.xyz = pow(emissive_tex.xyz, vec3(u_gamma*1.5)); //degamma
+				emissive *= emissive_tex.xyz;
+				alpha *= emissive_tex.a;
+			}
+			else
+				emissive = vec3(0.01);
 		}
 
 		if( alpha < u_alpha_cutoff )
@@ -850,6 +864,7 @@ tonemapper @SCREEN tonemapper.fs
 	#import "header.inc"
 
 	uniform float u_tonemapper;
+	uniform float u_gamma;
 
 	void main() {
        		#ifndef UVS2
@@ -873,7 +888,7 @@ tonemapper @SCREEN tonemapper.fs
 		if(u_maps_info[ALBEDOMAP] != -1)
 		{
 			vec4 color4 = texture2D( u_albedo_texture, getUV(u_maps_info[ALBEDOMAP]) );
-			color4.xyz = pow(color4.xyz, vec3(GAMMA)); //degamma
+			color4.xyz = pow(color4.xyz, vec3(u_gamma)); //degamma
 			color *= color4.xyz;
 			alpha *= color4.a;
 		}
@@ -881,17 +896,18 @@ tonemapper @SCREEN tonemapper.fs
 		if(u_maps_info[ OCCLUSIONMAP ] != -1)
 		{
 			vec3 occ = texture2D( u_occlusion_texture, getUV(u_maps_info[OCCLUSIONMAP]) ).xyz;
-			color *= pow(occ, vec3(GAMMA)); //degamma
+			color *= pow(occ, vec3(u_gamma)); //degamma
 		}
 
 		if(u_maps_info[ OPACITYMAP ] != -1)
 			alpha *= texture2D( u_opacity_texture, getUV(u_maps_info[OPACITYMAP]) ).r;
 
-		vec3 emissive = u_emissive;	
+		vec3 emissive = u_emissive.xyz;	
 		if(u_maps_info[ EMISSIVEMAP ] != -1)
 		{
-			vec4 emissive_tex = texture2D(u_emissive_texture, getUV(u_maps_info[EMISSIVEMAP]) );
-			emissive_tex.xyz = pow(emissive_tex.xyz, vec3(GAMMA)); //degamma
+			vec2 emissive_uv = getUV(u_maps_info[EMISSIVEMAP]);
+			vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
+			emissive_tex.xyz = pow(emissive_tex.xyz, vec3(u_gamma)); //degamma
 			emissive *= emissive_tex.xyz;
 			alpha *= emissive_tex.a;
 		}
@@ -906,7 +922,7 @@ tonemapper @SCREEN tonemapper.fs
 			color.xyz *= 0.1;
 
 		if( u_tonemapper != 0.0 )
-			color = pow(color, vec3(1.0 / GAMMA));
+			color = pow(color, vec3(1.0 / u_gamma));
 
 		gl_FragColor = vec4( color, alpha );
 	}
@@ -935,12 +951,11 @@ tonemapper @SCREEN tonemapper.fs
 	uniform vec4 u_color;
 	uniform sampler2D u_color_texture;
 	uniform float u_exposure;
-
-	#define GAMMA 2.2
+	uniform float u_gamma;
 
 	void main() {
 		vec4 color4 = u_color * texture2D( u_color_texture, v_coord );
-		color4.xyz = pow(color4.xyz, vec3(GAMMA)) * u_exposure; //degamma
+		color4.xyz = pow(color4.xyz, vec3(u_gamma)) * u_exposure; //degamma
 		gl_FragColor = color4;
 	}
 
@@ -973,7 +988,7 @@ tonemapper @SCREEN tonemapper.fs
 	uniform vec4 u_clipping_plane;
 	uniform float u_normalFactor;
 
-	#define GAMMA 2.2
+	uniform float u_gamma;
 
 	// Mat properties *********
 

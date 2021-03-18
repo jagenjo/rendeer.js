@@ -699,7 +699,7 @@ Skeleton.prototype.importSkeleton = function(root_node)
 	{
 		var bone = new Bone();
 		bone.name = node.name || node.id;
-		bone.model.set( node.model );
+		bone.model.set( node.model || node.transform );
 		bone.index = bones.length;
 		bones.push( bone );
 		that.bones_by_name.set( bone.name, bone.index );
@@ -1303,6 +1303,80 @@ if(RD.SceneNode)
 	{
 		this.assignSkeleton( skeletal_animation.skeleton );
 	}
+}
+
+//use it with a collada.js to extract all info
+//extracts info related to a character (its mesh, skeleton, animations and material)
+RD.AnimatedCharacterFromScene = function( scene, filename )
+{
+	var mesh_nodes = [];
+	var meshes = [];
+	var hips_node = null;
+
+	//find hips and meshes
+	for(var i = 0; i < scene.root.children.length; ++i)
+	{
+		var scene_node = scene.root.children[i];
+		if( scene_node.name && scene_node.name.indexOf("_Hips") != -1 || scene_node.type == "JOINT" )
+			hips_node = scene_node;
+		else if( scene_node.mesh)
+		{
+			mesh_nodes.push( scene_node );
+			meshes.push({mesh: GL.Mesh.load( scene.meshes[ scene_node.mesh ] )});
+		}
+	}
+
+	if(!hips_node)
+		throw("this DAE doesnt contain an animated character");
+
+	var material = null;
+	var final_mesh = null;
+	if(mesh_nodes.length)
+	{
+		//merge meshes in a single one
+		var mesh_name = null;
+		if( mesh_nodes.length > 1 )
+		{
+			final_mesh = GL.Mesh.mergeMeshes( meshes );
+			mesh_name = mesh_nodes[0].mesh;
+			final_mesh.filename = mesh_name;
+		}
+		else
+		{
+			//get character mesh
+			mesh_name = mesh_nodes[0].mesh;
+			var mesh_info = scene.meshes[ mesh_name ];
+			final_mesh = GL.Mesh.fromBinary( mesh_info );
+			final_mesh.filename = mesh_name;
+		}
+
+		gl.meshes[ mesh_name ] = final_mesh;
+
+		//mat
+		material = scene.materials[ mesh_nodes[0].material ];
+	}
+
+	//get skeleton from base pose
+	var skeleton = new RD.Skeleton();
+	skeleton.importSkeleton( hips_node );
+
+	//get animation tracks
+	var animation_info = scene.resources[ scene.root.animation ];
+	var animation = new RD.Animation();
+	animation.configure( animation_info.takes["default"] );
+
+	//create SkeletalAnimation sampling at 30 fps
+	var skeletal_anim = new RD.SkeletalAnimation();
+	skeletal_anim.fromTracksAnimation( skeleton, animation, 30 );
+	skeletal_anim.filename = filename;
+
+	return {
+		mesh: final_mesh ? final_mesh.filename : null,
+		material: material,
+		skeleton: skeleton,
+		skeletal_anim: skeletal_anim,
+		tracks_anim: animation
+	};
 }
 
 //footer

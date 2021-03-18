@@ -229,9 +229,12 @@ RD.GLTF = {
 		return json;
 	},
 
-	parse: function(json)
+	parse: function(json, filename)
 	{
 		console.log(json);
+
+		if(!json.url)
+			json.url = filename || "scene.glb";
 
 		var root = null;
 		var nodes_by_id = {};
@@ -241,6 +244,18 @@ RD.GLTF = {
 		var scene = json.scenes[ json.scene ];
 		var nodes_info = scene.nodes;
 		this.gltf_materials = {};
+
+		if(json.skins)
+		{
+			for(var i = 0; i < json.skins.length; ++i)
+			{
+				var skin = json.skins[i];
+				for(var j = 0; j < skin.joints.length; ++j)
+				{
+					json.nodes[ skin.joints[j] ]._is_joint = true;
+				}
+			}
+		}
 
 		var root = null;
 		if(nodes_info.length > 1) //multiple root nodes
@@ -354,13 +369,17 @@ RD.GLTF = {
 				case "extras":
 					break;
 				default:
-					console.log("gltf node info ignored:",i,info[i]);
+					if( i[0] != "_" )
+						console.log("gltf node info ignored:",i,info[i]);
 					break;
 			}
 		}
 
 		if(!info.name)
 			info.name = node.name = "node_" + index;
+
+		if(info._is_joint)
+			node.is_joint = true;
 
 		return node;
 	},

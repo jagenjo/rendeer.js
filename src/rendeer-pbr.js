@@ -54,12 +54,13 @@ function PBRPipeline( renderer )
 		u_skybox_info: [ this.environment_rotation, this.environment_factor ],
 		u_use_environment_texture: false,
 		u_viewport: gl.viewport_data,
+		u_camera_perspective: 1,
 		u_clipping_plane: vec4.fromValues(0,0,0,0)
     };
 
 	this.material_uniforms = {
 		u_albedo: vec3.fromValues(1,1,1),
-		u_emissive: vec3.fromValues(0,0,0),
+		u_emissive: vec4.fromValues(0,0,0,0),
 		u_roughness: 1,
 		u_metalness: 1,
 		u_alpha: 1.0,
@@ -97,6 +98,8 @@ function PBRPipeline( renderer )
 	this.num_render_calls = 0;
 	this.last_num_render_calls = 0;
 
+	this.overlay_rcs = [];
+
 	this.compiled_shaders = {};//new Map();
 
 	this.max_textures = gl.getParameter( gl.MAX_TEXTURE_IMAGE_UNITS );
@@ -113,7 +116,8 @@ PBRPipeline.DEFERRED = 2;
 PBRPipeline.MACROS = {
 	UVS2: 1,	
 	COLOR: 1<<1,
-	PARALLAX_REFLECTION: 1<<2
+	POINTS: 1<<2,
+	PARALLAX_REFLECTION: 1<<3
 };
 
 PBRPipeline.maps = ["albedo","metallicRoughness","occlusion","normal","emissive","opacity","displacement","detail"];
@@ -137,7 +141,8 @@ PBRPipeline.prototype.render = function( renderer, nodes, camera, scene, skip_fb
 }
 
 //gathers uniforms that do not change between rendered objects
-PBRPipeline.prototype.fillGlobalUniforms = function()
+//called when the rendering of a scene starts, before the skybox
+PBRPipeline.prototype.fillGlobalUniforms = function( camera )
 {
 	var brdf_tex = this.getBRDFIntegratorTexture();
 	if(brdf_tex)
@@ -162,6 +167,7 @@ PBRPipeline.prototype.fillGlobalUniforms = function()
 	this.global_uniforms.u_exposure = this.exposure;
 	this.global_uniforms.u_occlusion_factor = this.occlusion_factor;
 	this.global_uniforms.u_background_color = this.bgcolor.subarray(0,3);
+	this.global_uniforms.u_camera_perspective = camera._projection_matrix[5];
 }
 
 PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers )
@@ -204,7 +210,7 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 	else
 		this.renderSkybox( camera );
 
-	this.fillGlobalUniforms();
+	this.fillGlobalUniforms( camera );
 
 	if(this.onRenderOpaque)
 		this.onRenderOpaque( this, renderer, camera );
@@ -231,12 +237,20 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 
 	var precompose_opaque = (this.alpha_composite_callback || this.alpha_composite_target_texture) && GL.FBO.current;
 	var opaque = true;
+	var overlay_rcs = this.overlay_rcs;
+	overlay_rcs.length = 0;
 
 	//do the render call for every rcs
 	for(var i = 0; i < rcs.length; ++i)
 	{
 		var rc = rcs[i];
-		//store the opaque framebuffer into a separate texture
+		if(rc.material.overlay)
+		{
+			overlay_rcs.push(rc);
+			continue;
+		}
+
+		//clone the opaque framebuffer into a separate texture once the first semitransparent material is found (to allow refractive materials)
 		if( opaque && precompose_opaque && rc.material.alphaMode == "BLEND")
 		{
 			opaque = false;
@@ -245,6 +259,7 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 			if( this.alpha_composite_callback )
 				this.alpha_composite_callback( GL.FBO.current, this.alpha_composite_target_texture );
 		}
+		//render opaque stuff
 		this.renderMeshWithMaterial( rc.model, rc.mesh, rc.material, rc.index_buffer_name, rc.group_index, rc.node.extra_uniforms, rc.reverse_faces );
 	}
 
@@ -258,6 +273,17 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 	//if not rendering to viewport, now we must render the buffer to the viewport
 	if(this.use_rendertexture && !skip_fbo)
 		this.renderFinalBuffer();
+
+	//overlay nodes are special case of nodes that should not be affected by postprocessing
+	if( overlay_rcs.length )
+	{
+		gl.clear( gl.DEPTH_BUFFER_BIT );
+		for(var i = 0; i < overlay_rcs.length; ++i)
+		{
+			var rc = overlay_rcs[i];
+			this.renderMeshWithMaterial( rc.model, rc.mesh, rc.material, rc.index_buffer_name, rc.group_index, rc.node.extra_uniforms, rc.reverse_faces );
+		}
+	}
 }
 
 //after filling the final buffer (from renderForward) it applies FX and tonemmaper
@@ -279,10 +305,8 @@ PBRPipeline.prototype.renderFinalBuffer = function()
 	this.fx_uniforms.u_contrast = this.contrast;
 	this.fx_uniforms.u_brightness = this.brightness;
 	this.fx_uniforms.u_gamma = this.gamma;
-
 	this.final_texture.toViewport( gl.shaders["tonemapper"], this.fx_uniforms );
 }
-
 
 PBRPipeline.prototype.getNodeRenderCalls = function( node, camera, layers )
 {
@@ -440,6 +464,11 @@ PBRPipeline.prototype.getShader = function( macros, fragment_shader_name )
 	return shader;
 }
 
+PBRPipeline.prototype.renderRenderCall = function( rc )
+{
+	this.renderMeshWithMaterial( rc.model, rc.mesh, rc.material, rc.index_buffer_name, rc.group_index, rc.node.extra_uniforms, rc.reverse_faces );
+}
+
 PBRPipeline.prototype.renderMeshWithMaterial = function( model, mesh, material, index_buffer_name, group_index, extra_uniforms, reverse_faces )
 {
 	var renderer = this.renderer;
@@ -456,9 +485,11 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model, mesh, material, 
 	//materials
 	material_uniforms.u_albedo = material.color.subarray(0,3);
 	material_uniforms.u_emissive.set( material.emissive || RD.ZERO );
+	material_uniforms.u_emissive[3] = material.emissive_clamp_to_edge ? 1 : 0; //clamps to black
 	if(this.emissive_factor != 1.0)
 		vec3.scale( material_uniforms.u_emissive, material_uniforms.u_emissive, this.emissive_factor );
 
+	//compute final shader
 	var shader = null;
 
 	var macros = 0;
@@ -469,6 +500,9 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model, mesh, material, 
 
 	if( this.parallax_reflection )
 		macros |= PBRPipeline.MACROS.PARALLAX_REFLECTION;
+
+	if( material.primitive == GL.POINTS )
+		macros |= PBRPipeline.MACROS.POINTS;
 
 	if( this.overwrite_shader_name )
 	{
@@ -574,6 +608,10 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model, mesh, material, 
 	shader.uniforms( sampler_uniforms ); //locals
 	if(extra_uniforms)
 		shader.uniforms( extra_uniforms );
+
+	if( material.primitive == GL.POINTS )
+		shader.setUniform("u_pointSize", material.point_size || -1);
+
 
 	var group = null;
 	if( group_index != null && mesh.info && mesh.info.groups && mesh.info.groups[ group_index ] )

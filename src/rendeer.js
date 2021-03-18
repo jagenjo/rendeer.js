@@ -402,14 +402,13 @@ Object.defineProperty(SceneNode.prototype, 'transform', {
 	enumerable: true
 });
 
-Object.defineProperty(SceneNode.prototype, 'matrix', {
+Object.defineProperty( SceneNode.prototype, 'matrix', {
 	get: function() { return this._model_matrix; },
 	set: function(v) { 
 		this.fromMatrix( v );
 	},
 	enumerable: false
 });
-
 
 Object.defineProperty(SceneNode.prototype, 'pivot', {
 	get: function() { return this._pivot; },
@@ -2642,6 +2641,8 @@ RD.testRayWithNodes = function testRayWithNodes( ray, nodes, coll, max_dist, lay
 }
 
 //internal function to reuse computations
+RD.last_hit_test = null;
+
 RD.testRayMesh = function( ray, local_origin, local_direction, model, mesh, group_index, result, max_dist, layers, test_against_mesh, two_sided )
 {
 	max_dist = max_dist == null ? Number.MAX_VALUE : max_dist;
@@ -2702,6 +2703,8 @@ RD.testRayMesh = function( ray, local_origin, local_direction, model, mesh, grou
 	//collided the OOBB but not the mesh, so its a not
 	if( !hit_test ) 
 		return false;
+
+	RD.last_hit_test = hit_test;
 
 	//compute global hit point
 	result.set( hit_test.hit );
@@ -3839,7 +3842,7 @@ void main() {\n\
 * @param {String} name name (and url) of the mesh
 * @param {Function} on_complete callback
 */
-Renderer.prototype.loadMesh = function( url, on_complete )
+Renderer.prototype.loadMesh = function( url, on_complete, skip_assets_folder )
 {
 	if(!url)
 		return console.error("loadMesh: Cannot load null name");
@@ -3871,7 +3874,7 @@ Renderer.prototype.loadMesh = function( url, on_complete )
 	
 	//load it
 	var full_url = url;
-	if(full_url.indexOf("://") == -1)
+	if(full_url.indexOf("://") == -1 && !skip_assets_folder)
 		full_url = this.assets_folder + url;
 
 	var new_mesh = GL.Mesh.fromURL( full_url, function(m){
@@ -3902,7 +3905,7 @@ Renderer.prototype.loadMesh = function( url, on_complete )
 * @param {Object} options texture options as in litegl (option.name is used to store it with a different name)
 * @param {Function} on_complete callback
 */
-Renderer.prototype.loadTexture = function( url, options, on_complete )
+Renderer.prototype.loadTexture = function( url, options, on_complete, skip_assets_folder )
 {
 	if(!url)
 		return console.error("loadTexture: Cannot load null name");
@@ -3932,7 +3935,7 @@ Renderer.prototype.loadTexture = function( url, options, on_complete )
 	
 	//load it
 	var full_url = url;
-	if(full_url.indexOf("://") == -1)
+	if(full_url.indexOf("://") == -1 && !skip_assets_folder)
 		full_url = this.assets_folder + url;
 
 	var new_tex = null;
