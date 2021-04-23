@@ -756,6 +756,5 @@ void main() {\n\
 }\n\
 ";
 
-
 //footer
 })( typeof(window) != "undefined" ? window : (typeof(self) != "undefined" ? self : global ) );

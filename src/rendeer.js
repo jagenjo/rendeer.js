@@ -950,11 +950,16 @@ SceneNode.prototype.lookAt = function( position, target, up, reverse )
 * @method orientTo
 * @param {vec3} v
 */
-SceneNode.prototype.orientTo = function( v, reverse, up )
+SceneNode.prototype.orientTo = function( v, reverse, up, in_local_space )
 {
 	var pos = this.getGlobalPosition();
 	//build unitary vectors
-	var front = vec3.sub( vec3.create(), pos, v );
+	var front = vec3.create();
+	if( in_local_space ) 
+		front.set( v );
+	else
+		vec3.sub( front, pos, v );
+
 	up = up || RD.UP;
 	vec3.normalize( front, front );
 	if( reverse )
@@ -1359,7 +1364,7 @@ SceneNode.prototype.findNodesByFilter = function( filter_func, layers, result )
 	for(var i = 0, l = this.children.length; i < l; i++)
 	{
 		var node = this.children[i];
-		if( !(node.layer & layers) )
+		if( !(node.layers & layers) )
 			continue;
 
 		if( !filter_func || filter_func( node ) )
@@ -2174,6 +2179,39 @@ Camera.prototype.project = function( vec, viewport, result )
 	result[1] = result[1] * viewport[3] + viewport[1];
 
 	return result;
+}
+
+/**
+* returns the size in screenspace of a sphere set in a position
+* @method computeProjectedRadius
+* @param {vec3} vec center of sphere
+* @param {Number} radius radius of sphere
+* @param {vec4} viewport [optional]
+* @param {Boolean} billboarded [optional] in case you want the billboarded projection
+* @return {Number} radius
+*/
+Camera.prototype.computeProjectedRadius = function( center, radius, viewport, billboarded )
+{
+	viewport = viewport || gl.viewport_data;
+
+	//billboarded circle
+	if(billboarded)
+	{
+		var v = vec4.create();
+		v.set( center );
+		v[3] = 1;
+		var proj = vec4.transformMat4( v, v, this._viewprojection_matrix );
+		return Math.max( 1.0, viewport[3] * this._projection_matrix[5] * radius / proj[3] );
+	}
+
+	//from https://stackoverflow.com/questions/21648630/radius-of-projected-sphere-in-screen-space
+	if(this.type == RD.Camera.ORTHOGRAPHIC)
+		return radius / ( this._frustum_size.constructor === Number ? this._frustum_size : 1 ) * viewport[3] / 2;
+	var d = vec3.distance( center, this.position ); //true distance
+	var fov = this.fov / 2 * Math.PI / 180.0;
+	var pr = (1.0 / Math.tan(fov) * radius / Math.sqrt(d * d - radius * radius)); //good
+	//var pr = 1.0 / Math.tan(fov) * radius / d; // distorted
+	return pr * (viewport[3] / 2);
 }
 
 /**
@@ -4030,15 +4068,14 @@ Renderer.prototype.loadTextureAtlas = function(data, url, on_complete)
 * @param {Function} on_complete callback
 * @param {Object} extra_macros object containing macros that must be included in all
 */
-Renderer.prototype.loadShaders = function( url, on_complete, extra_macros )
+Renderer.prototype.loadShaders = function( url, on_complete, extra_macros, skip_assets_folder )
 {
 	var that = this;
 	
-	if(url.indexOf("://") == -1)
+	if(url.indexOf("://") == -1 && !skip_assets_folder)
 		url = this.assets_folder + url;
 
 	url += "?nocache=" + Math.random();
-
 	this.loading_shaders = true;
 	
 	//load shaders code from a files atlas
@@ -4048,6 +4085,11 @@ Renderer.prototype.loadShaders = function( url, on_complete, extra_macros )
 		if(on_complete)
 			on_complete(files);
 	});
+}
+
+//reloads last shaders
+Renderer.prototype.reloadShaders = function( extra_macros )
+{
 }
 
 /**

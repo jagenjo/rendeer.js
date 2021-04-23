@@ -31,9 +31,11 @@ tonemapper @SCREEN tonemapper.fs
 	varying vec2 v_coord2;
 	varying vec4 v_color;
 
-	uniform mat4 u_viewprojection;
 	uniform mat4 u_model;
-	uniform mat4 u_normal_model;
+	#ifdef INSTANCING
+	//TODO
+	#endif
+	uniform mat4 u_viewprojection;
 	uniform mat4 u_view;
 	uniform mat3 u_texture_matrix;
 	uniform vec4 u_viewport;
@@ -413,6 +415,7 @@ tonemapper @SCREEN tonemapper.fs
 	uniform vec4 u_clipping_plane;
 	uniform vec4 u_viewport;
 	uniform float u_exposure;
+	uniform float u_gamma;
 	uniform float u_occlusion_factor; //used to boost illumination
 
 	uniform sampler2D u_brdf_texture;
@@ -832,12 +835,12 @@ tonemapper @SCREEN tonemapper.fs
 			if( u_emissive.w == 0.0 || (emissive_uv.x > 0.0 && emissive_uv.x < 1.0 && emissive_uv.y > 0.0 && emissive_uv.y < 1.0) )
 			{
 				vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
-				emissive_tex.xyz = pow(emissive_tex.xyz, vec3(u_gamma*1.5)); //degamma
+				emissive_tex.xyz = pow(emissive_tex.xyz, vec3(u_gamma)); //degamma
 				emissive *= emissive_tex.xyz;
 				alpha *= emissive_tex.a;
 			}
 			else
-				emissive = vec3(0.01);
+				emissive = vec3(0.0);
 		}
 
 		if( alpha < u_alpha_cutoff )
@@ -864,7 +867,7 @@ tonemapper @SCREEN tonemapper.fs
 	#import "header.inc"
 
 	uniform float u_tonemapper;
-	uniform float u_gamma;
+	//uniform float u_gamma;
 
 	void main() {
        		#ifndef UVS2
@@ -906,10 +909,15 @@ tonemapper @SCREEN tonemapper.fs
 		if(u_maps_info[ EMISSIVEMAP ] != -1)
 		{
 			vec2 emissive_uv = getUV(u_maps_info[EMISSIVEMAP]);
-			vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
-			emissive_tex.xyz = pow(emissive_tex.xyz, vec3(u_gamma)); //degamma
-			emissive *= emissive_tex.xyz;
-			alpha *= emissive_tex.a;
+			if( u_emissive.w == 0.0 || (emissive_uv.x > 0.0 && emissive_uv.x < 1.0 && emissive_uv.y > 0.0 && emissive_uv.y < 1.0) )
+			{
+				vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
+				emissive_tex.xyz = pow(emissive_tex.xyz, vec3(u_gamma * (u_emissive.w == 1.0 ? 2.0 : 1.0) )); //degamma
+				emissive *= emissive_tex.xyz;
+				alpha *= emissive_tex.a;
+			}
+			else
+				emissive = vec3(0.0);
 		}
 		color += emissive;
 

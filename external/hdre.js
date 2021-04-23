@@ -6,7 +6,7 @@
 // hdre.js 
 
 //main namespace
-(function(global){
+;(function(global){
 
 	/**
 	 * Main namespace

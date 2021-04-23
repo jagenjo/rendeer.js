@@ -26,6 +26,7 @@ RD.GLTF = {
 
 	flip_uv: true,
 	overwrite_materials: true,
+	rename_assets: false, //force assets to have unique names (materials, meshes)
 
 	prefabs: {},
 
@@ -331,6 +332,9 @@ RD.GLTF = {
 					break;
 				case "matrix": 
 					node.fromMatrix( v );
+					var det = mat4.determinant( v );
+					if( det < 0 )
+						node.flags.frontFace = GL.CW; //reverse
 					break;
 				case "mesh": 
 					var mesh = RD.GLTF.parseMesh(v, json);
@@ -437,7 +441,9 @@ RD.GLTF = {
 			g.length = prims[i].length;
 		}
 
-		mesh.name = mesh_info.name || "mesh_" + index;
+		mesh.name = mesh_info.name;
+		if(mesh.name || this.rename_assets)
+			mesh.name = json.filename + "::mesh_" + (mesh_info.name || index);
 		//mesh.material = primitive.material;
 		//mesh.primitive = mesh_info.mode;
 		mesh.updateBoundingBox();
@@ -729,7 +735,9 @@ RD.GLTF = {
 			return null;
 		}
 
-		var mat_name = info.name || json.filename + "::mat_" + index;
+		var mat_name = info.name;
+		if(!mat_name || this.rename_assets)
+			mat_name = json.filename + "::mat_" + (info.name || index);
 
 		var material = RD.Materials[ mat_name ];
 		if(material && (!this.overwrite_materials || material.from_filename == json.filename) )
@@ -1024,6 +1032,32 @@ RD.GLTF = {
 					if(callback)
 						callback(node);
 				});
+			}
+		}
+	},
+
+	//special case when using a data path
+	removeRootPathFromTextures: function( materials, root_path )
+	{
+		if(!root_path)
+			return;
+		for(var i in materials)
+		{
+			var mat = materials[i];
+			for(var j in mat.textures)
+			{
+				var sampler = mat.textures[j];
+				if(!sampler)
+					continue;
+				if( sampler.constructor === String && sampler.indexOf( ROOM.root_path ) == 0 && sampler.texture.indexOf("/") != -1 )
+				{
+					sampler = { texture: sampler.substr( ROOM.root_path.length ) };
+					continue;
+				}
+				if(!sampler.texture)
+					continue;
+				if( sampler.texture.indexOf( ROOM.root_path ) == 0 && sampler.texture.indexOf("/") != -1 )
+					sampler.texture = sampler.texture.substr( ROOM.root_path.length );
 			}
 		}
 	}

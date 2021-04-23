@@ -403,14 +403,13 @@ Object.defineProperty(SceneNode.prototype, 'transform', {
 	enumerable: true
 });
 
-Object.defineProperty(SceneNode.prototype, 'matrix', {
+Object.defineProperty( SceneNode.prototype, 'matrix', {
 	get: function() { return this._model_matrix; },
 	set: function(v) { 
 		this.fromMatrix( v );
 	},
 	enumerable: false
 });
-
 
 Object.defineProperty(SceneNode.prototype, 'pivot', {
 	get: function() { return this._pivot; },
@@ -2643,6 +2642,8 @@ RD.testRayWithNodes = function testRayWithNodes( ray, nodes, coll, max_dist, lay
 }
 
 //internal function to reuse computations
+RD.last_hit_test = null;
+
 RD.testRayMesh = function( ray, local_origin, local_direction, model, mesh, group_index, result, max_dist, layers, test_against_mesh, two_sided )
 {
 	max_dist = max_dist == null ? Number.MAX_VALUE : max_dist;
@@ -2703,6 +2704,8 @@ RD.testRayMesh = function( ray, local_origin, local_direction, model, mesh, grou
 	//collided the OOBB but not the mesh, so its a not
 	if( !hit_test ) 
 		return false;
+
+	RD.last_hit_test = hit_test;
 
 	//compute global hit point
 	result.set( hit_test.hit );
@@ -3840,7 +3843,7 @@ void main() {\n\
 * @param {String} name name (and url) of the mesh
 * @param {Function} on_complete callback
 */
-Renderer.prototype.loadMesh = function( url, on_complete )
+Renderer.prototype.loadMesh = function( url, on_complete, skip_assets_folder )
 {
 	if(!url)
 		return console.error("loadMesh: Cannot load null name");
@@ -3872,7 +3875,7 @@ Renderer.prototype.loadMesh = function( url, on_complete )
 	
 	//load it
 	var full_url = url;
-	if(full_url.indexOf("://") == -1)
+	if(full_url.indexOf("://") == -1 && !skip_assets_folder)
 		full_url = this.assets_folder + url;
 
 	var new_mesh = GL.Mesh.fromURL( full_url, function(m){
@@ -3903,7 +3906,7 @@ Renderer.prototype.loadMesh = function( url, on_complete )
 * @param {Object} options texture options as in litegl (option.name is used to store it with a different name)
 * @param {Function} on_complete callback
 */
-Renderer.prototype.loadTexture = function( url, options, on_complete )
+Renderer.prototype.loadTexture = function( url, options, on_complete, skip_assets_folder )
 {
 	if(!url)
 		return console.error("loadTexture: Cannot load null name");
@@ -3933,7 +3936,7 @@ Renderer.prototype.loadTexture = function( url, options, on_complete )
 	
 	//load it
 	var full_url = url;
-	if(full_url.indexOf("://") == -1)
+	if(full_url.indexOf("://") == -1 && !skip_assets_folder)
 		full_url = this.assets_folder + url;
 
 	var new_tex = null;
@@ -7575,9 +7578,12 @@ RD.GLTF = {
 		return json;
 	},
 
-	parse: function(json)
+	parse: function(json, filename)
 	{
 		console.log(json);
+
+		if(!json.url)
+			json.url = filename || "scene.glb";
 
 		var root = null;
 		var nodes_by_id = {};
@@ -7587,6 +7593,18 @@ RD.GLTF = {
 		var scene = json.scenes[ json.scene ];
 		var nodes_info = scene.nodes;
 		this.gltf_materials = {};
+
+		if(json.skins)
+		{
+			for(var i = 0; i < json.skins.length; ++i)
+			{
+				var skin = json.skins[i];
+				for(var j = 0; j < skin.joints.length; ++j)
+				{
+					json.nodes[ skin.joints[j] ]._is_joint = true;
+				}
+			}
+		}
 
 		var root = null;
 		if(nodes_info.length > 1) //multiple root nodes
@@ -7700,13 +7718,17 @@ RD.GLTF = {
 				case "extras":
 					break;
 				default:
-					console.log("gltf node info ignored:",i,info[i]);
+					if( i[0] != "_" )
+						console.log("gltf node info ignored:",i,info[i]);
 					break;
 			}
 		}
 
 		if(!info.name)
 			info.name = node.name = "node_" + index;
+
+		if(info._is_joint)
+			node.is_joint = true;
 
 		return node;
 	},
@@ -8448,12 +8470,13 @@ function PBRPipeline( renderer )
 		u_skybox_info: [ this.environment_rotation, this.environment_factor ],
 		u_use_environment_texture: false,
 		u_viewport: gl.viewport_data,
+		u_camera_perspective: 1,
 		u_clipping_plane: vec4.fromValues(0,0,0,0)
     };
 
 	this.material_uniforms = {
 		u_albedo: vec3.fromValues(1,1,1),
-		u_emissive: vec3.fromValues(0,0,0),
+		u_emissive: vec4.fromValues(0,0,0,0),
 		u_roughness: 1,
 		u_metalness: 1,
 		u_alpha: 1.0,
@@ -8491,6 +8514,8 @@ function PBRPipeline( renderer )
 	this.num_render_calls = 0;
 	this.last_num_render_calls = 0;
 
+	this.overlay_rcs = [];
+
 	this.compiled_shaders = {};//new Map();
 
 	this.max_textures = gl.getParameter( gl.MAX_TEXTURE_IMAGE_UNITS );
@@ -8507,7 +8532,8 @@ PBRPipeline.DEFERRED = 2;
 PBRPipeline.MACROS = {
 	UVS2: 1,	
 	COLOR: 1<<1,
-	PARALLAX_REFLECTION: 1<<2
+	POINTS: 1<<2,
+	PARALLAX_REFLECTION: 1<<3
 };
 
 PBRPipeline.maps = ["albedo","metallicRoughness","occlusion","normal","emissive","opacity","displacement","detail"];
@@ -8531,7 +8557,8 @@ PBRPipeline.prototype.render = function( renderer, nodes, camera, scene, skip_fb
 }
 
 //gathers uniforms that do not change between rendered objects
-PBRPipeline.prototype.fillGlobalUniforms = function()
+//called when the rendering of a scene starts, before the skybox
+PBRPipeline.prototype.fillGlobalUniforms = function( camera )
 {
 	var brdf_tex = this.getBRDFIntegratorTexture();
 	if(brdf_tex)
@@ -8556,6 +8583,7 @@ PBRPipeline.prototype.fillGlobalUniforms = function()
 	this.global_uniforms.u_exposure = this.exposure;
 	this.global_uniforms.u_occlusion_factor = this.occlusion_factor;
 	this.global_uniforms.u_background_color = this.bgcolor.subarray(0,3);
+	this.global_uniforms.u_camera_perspective = camera._projection_matrix[5];
 }
 
 PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers )
@@ -8598,7 +8626,7 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 	else
 		this.renderSkybox( camera );
 
-	this.fillGlobalUniforms();
+	this.fillGlobalUniforms( camera );
 
 	if(this.onRenderOpaque)
 		this.onRenderOpaque( this, renderer, camera );
@@ -8625,12 +8653,20 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 
 	var precompose_opaque = (this.alpha_composite_callback || this.alpha_composite_target_texture) && GL.FBO.current;
 	var opaque = true;
+	var overlay_rcs = this.overlay_rcs;
+	overlay_rcs.length = 0;
 
 	//do the render call for every rcs
 	for(var i = 0; i < rcs.length; ++i)
 	{
 		var rc = rcs[i];
-		//store the opaque framebuffer into a separate texture
+		if(rc.material.overlay)
+		{
+			overlay_rcs.push(rc);
+			continue;
+		}
+
+		//clone the opaque framebuffer into a separate texture once the first semitransparent material is found (to allow refractive materials)
 		if( opaque && precompose_opaque && rc.material.alphaMode == "BLEND")
 		{
 			opaque = false;
@@ -8639,6 +8675,7 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 			if( this.alpha_composite_callback )
 				this.alpha_composite_callback( GL.FBO.current, this.alpha_composite_target_texture );
 		}
+		//render opaque stuff
 		this.renderMeshWithMaterial( rc.model, rc.mesh, rc.material, rc.index_buffer_name, rc.group_index, rc.node.extra_uniforms, rc.reverse_faces );
 	}
 
@@ -8652,6 +8689,17 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 	//if not rendering to viewport, now we must render the buffer to the viewport
 	if(this.use_rendertexture && !skip_fbo)
 		this.renderFinalBuffer();
+
+	//overlay nodes are special case of nodes that should not be affected by postprocessing
+	if( overlay_rcs.length )
+	{
+		gl.clear( gl.DEPTH_BUFFER_BIT );
+		for(var i = 0; i < overlay_rcs.length; ++i)
+		{
+			var rc = overlay_rcs[i];
+			this.renderMeshWithMaterial( rc.model, rc.mesh, rc.material, rc.index_buffer_name, rc.group_index, rc.node.extra_uniforms, rc.reverse_faces );
+		}
+	}
 }
 
 //after filling the final buffer (from renderForward) it applies FX and tonemmaper
@@ -8673,10 +8721,8 @@ PBRPipeline.prototype.renderFinalBuffer = function()
 	this.fx_uniforms.u_contrast = this.contrast;
 	this.fx_uniforms.u_brightness = this.brightness;
 	this.fx_uniforms.u_gamma = this.gamma;
-
 	this.final_texture.toViewport( gl.shaders["tonemapper"], this.fx_uniforms );
 }
-
 
 PBRPipeline.prototype.getNodeRenderCalls = function( node, camera, layers )
 {
@@ -8834,6 +8880,11 @@ PBRPipeline.prototype.getShader = function( macros, fragment_shader_name )
 	return shader;
 }
 
+PBRPipeline.prototype.renderRenderCall = function( rc )
+{
+	this.renderMeshWithMaterial( rc.model, rc.mesh, rc.material, rc.index_buffer_name, rc.group_index, rc.node.extra_uniforms, rc.reverse_faces );
+}
+
 PBRPipeline.prototype.renderMeshWithMaterial = function( model, mesh, material, index_buffer_name, group_index, extra_uniforms, reverse_faces )
 {
 	var renderer = this.renderer;
@@ -8850,9 +8901,11 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model, mesh, material, 
 	//materials
 	material_uniforms.u_albedo = material.color.subarray(0,3);
 	material_uniforms.u_emissive.set( material.emissive || RD.ZERO );
+	material_uniforms.u_emissive[3] = material.emissive_clamp_to_edge ? 1 : 0; //clamps to black
 	if(this.emissive_factor != 1.0)
 		vec3.scale( material_uniforms.u_emissive, material_uniforms.u_emissive, this.emissive_factor );
 
+	//compute final shader
 	var shader = null;
 
 	var macros = 0;
@@ -8863,6 +8916,9 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model, mesh, material, 
 
 	if( this.parallax_reflection )
 		macros |= PBRPipeline.MACROS.PARALLAX_REFLECTION;
+
+	if( material.primitive == GL.POINTS )
+		macros |= PBRPipeline.MACROS.POINTS;
 
 	if( this.overwrite_shader_name )
 	{
@@ -8968,6 +9024,10 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model, mesh, material, 
 	shader.uniforms( sampler_uniforms ); //locals
 	if(extra_uniforms)
 		shader.uniforms( extra_uniforms );
+
+	if( material.primitive == GL.POINTS )
+		shader.setUniform("u_pointSize", material.point_size || -1);
+
 
 	var group = null;
 	if( group_index != null && mesh.info && mesh.info.groups && mesh.info.groups[ group_index ] )
@@ -10155,7 +10215,7 @@ Skeleton.prototype.importSkeleton = function(root_node)
 	{
 		var bone = new Bone();
 		bone.name = node.name || node.id;
-		bone.model.set( node.model );
+		bone.model.set( node.model || node.transform );
 		bone.index = bones.length;
 		bones.push( bone );
 		that.bones_by_name.set( bone.name, bone.index );
@@ -10759,6 +10819,80 @@ if(RD.SceneNode)
 	{
 		this.assignSkeleton( skeletal_animation.skeleton );
 	}
+}
+
+//use it with a collada.js to extract all info
+//extracts info related to a character (its mesh, skeleton, animations and material)
+RD.AnimatedCharacterFromScene = function( scene, filename )
+{
+	var mesh_nodes = [];
+	var meshes = [];
+	var hips_node = null;
+
+	//find hips and meshes
+	for(var i = 0; i < scene.root.children.length; ++i)
+	{
+		var scene_node = scene.root.children[i];
+		if( scene_node.name && scene_node.name.indexOf("_Hips") != -1 || scene_node.type == "JOINT" )
+			hips_node = scene_node;
+		else if( scene_node.mesh)
+		{
+			mesh_nodes.push( scene_node );
+			meshes.push({mesh: GL.Mesh.load( scene.meshes[ scene_node.mesh ] )});
+		}
+	}
+
+	if(!hips_node)
+		throw("this DAE doesnt contain an animated character");
+
+	var material = null;
+	var final_mesh = null;
+	if(mesh_nodes.length)
+	{
+		//merge meshes in a single one
+		var mesh_name = null;
+		if( mesh_nodes.length > 1 )
+		{
+			final_mesh = GL.Mesh.mergeMeshes( meshes );
+			mesh_name = mesh_nodes[0].mesh;
+			final_mesh.filename = mesh_name;
+		}
+		else
+		{
+			//get character mesh
+			mesh_name = mesh_nodes[0].mesh;
+			var mesh_info = scene.meshes[ mesh_name ];
+			final_mesh = GL.Mesh.fromBinary( mesh_info );
+			final_mesh.filename = mesh_name;
+		}
+
+		gl.meshes[ mesh_name ] = final_mesh;
+
+		//mat
+		material = scene.materials[ mesh_nodes[0].material ];
+	}
+
+	//get skeleton from base pose
+	var skeleton = new RD.Skeleton();
+	skeleton.importSkeleton( hips_node );
+
+	//get animation tracks
+	var animation_info = scene.resources[ scene.root.animation ];
+	var animation = new RD.Animation();
+	animation.configure( animation_info.takes["default"] );
+
+	//create SkeletalAnimation sampling at 30 fps
+	var skeletal_anim = new RD.SkeletalAnimation();
+	skeletal_anim.fromTracksAnimation( skeleton, animation, 30 );
+	skeletal_anim.filename = filename;
+
+	return {
+		mesh: final_mesh ? final_mesh.filename : null,
+		material: material,
+		skeleton: skeleton,
+		skeletal_anim: skeletal_anim,
+		tracks_anim: animation
+	};
 }
 
 //footer
