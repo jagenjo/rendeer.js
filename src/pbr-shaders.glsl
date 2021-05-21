@@ -4,6 +4,7 @@ degamma_material default.vs degamma_material.fs
 degamma @SCREEN degamma.fs
 pbr default.vs pbr.fs
 nopbr default.vs nopbr.fs
+overlay default.vs overlay.fs
 normals default.vs normals.fs
 brdf_integrator @SCREEN brdf_integrator.fs
 skybox default.vs skybox.fs
@@ -31,9 +32,10 @@ tonemapper @SCREEN tonemapper.fs
 	varying vec2 v_coord2;
 	varying vec4 v_color;
 
-	uniform mat4 u_model;
 	#ifdef INSTANCING
-	//TODO
+		attribute mat4 u_model;
+	#else
+		uniform mat4 u_model;
 	#endif
 	uniform mat4 u_viewprojection;
 	uniform mat4 u_view;
@@ -912,20 +914,19 @@ tonemapper @SCREEN tonemapper.fs
 			if( u_emissive.w == 0.0 || (emissive_uv.x > 0.0 && emissive_uv.x < 1.0 && emissive_uv.y > 0.0 && emissive_uv.y < 1.0) )
 			{
 				vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
-				emissive_tex.xyz = pow(emissive_tex.xyz, vec3(u_gamma * (u_emissive.w == 1.0 ? 2.0 : 1.0) )); //degamma
+				emissive_tex.xyz = pow( emissive_tex.xyz, vec3(u_gamma) ); //degamma
 				emissive *= emissive_tex.xyz;
 				alpha *= emissive_tex.a;
 			}
-			else
+			else //outside of 0..1 range
 				emissive = vec3(0.0);
 		}
-		color += emissive;
 
 		if( alpha < u_alpha_cutoff)
 			discard;
 
+		color += emissive;
 		color *= u_exposure;
-
 		if( gl_FrontFacing == false )
 			color.xyz *= 0.1;
 
@@ -934,6 +935,71 @@ tonemapper @SCREEN tonemapper.fs
 
 		gl_FragColor = vec4( color, alpha );
 	}
+
+\overlay.fs
+
+	//SHADER FOR SURFACES THAT SHOULD NOT BE COLOR CORRECTED ***************************
+
+	#import "header.inc"
+
+	void main() {
+       		#ifndef UVS2
+			v_coord1 = v_coord;
+		#endif
+		#ifndef COLOR
+			v_color = vec4(1.0);
+		#endif
+
+		if( testClippingPlane( u_clipping_plane, v_wPosition ) < 0.0 )
+			discard;
+
+		vec3 color = u_albedo * v_color.xyz;
+		float alpha = u_alpha;
+
+		if(u_maps_info[DETAILMAP] != -1){
+			vec3 detail_tex = texture2D(u_detail_texture, getUV( u_maps_info[DETAILMAP] ) * 10.0 ).rgb;
+			color *= detail_tex;
+		}
+
+		if(u_maps_info[ALBEDOMAP] != -1)
+		{
+			vec4 color4 = texture2D( u_albedo_texture, getUV(u_maps_info[ALBEDOMAP]) );
+			color *= color4.xyz;
+			alpha *= color4.a;
+		}
+
+		if(u_maps_info[ OCCLUSIONMAP ] != -1)
+		{
+			vec3 occ = texture2D( u_occlusion_texture, getUV(u_maps_info[OCCLUSIONMAP]) ).xyz;
+		}
+
+		if(u_maps_info[ OPACITYMAP ] != -1)
+			alpha *= texture2D( u_opacity_texture, getUV(u_maps_info[OPACITYMAP]) ).r;
+
+		vec3 emissive = u_emissive.xyz;	
+		if(u_maps_info[ EMISSIVEMAP ] != -1)
+		{
+			vec2 emissive_uv = getUV(u_maps_info[EMISSIVEMAP]);
+			if( u_emissive.w == 0.0 || (emissive_uv.x > 0.0 && emissive_uv.x < 1.0 && emissive_uv.y > 0.0 && emissive_uv.y < 1.0) )
+			{
+				vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
+				emissive *= emissive_tex.xyz;
+				alpha *= emissive_tex.a;
+			}
+			else
+				emissive = vec3(0.0);
+		}
+
+		if( alpha < u_alpha_cutoff)
+			discard;
+
+		color += emissive;
+		if( gl_FrontFacing == false )
+			color.xyz *= 0.1;
+
+		gl_FragColor = vec4( color, alpha );
+	}
+
 
 \degamma.fs
 

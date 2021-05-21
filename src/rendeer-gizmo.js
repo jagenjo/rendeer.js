@@ -348,11 +348,21 @@ Gizmo.prototype.applyTranslation = function(d)
 	this.applyTransformToTarget(transmat);
 }
 
-Gizmo.prototype.applyRotation = function(angle, axis)
+Gizmo.prototype.applyRotation = function(angle, axis, center)
 {
-	var transmat = mat4.create();
-	mat4.rotate(transmat,transmat, angle, axis );
-	this.applyTransformToTarget(transmat);
+	var M = mat4.create();
+	if(!center)
+		mat4.rotate(M,M, angle, axis );
+	else
+	{
+		var T = mat4.create();
+		mat4.setTranslation(T,center);
+		mat4.mul( M, M, T );
+		mat4.rotate(M,M, angle, axis );
+		mat4.setTranslation(T,[-center[0],-center[1],-center[2]]);
+		mat4.mul( M, M, T );
+	}
+	this.applyTransformToTarget(M);
 }
 
 Gizmo.prototype.applyScale = function(s)

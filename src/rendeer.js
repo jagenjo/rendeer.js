@@ -2208,6 +2208,8 @@ Camera.prototype.computeProjectedRadius = function( center, radius, viewport, bi
 	if(this.type == RD.Camera.ORTHOGRAPHIC)
 		return radius / ( this._frustum_size.constructor === Number ? this._frustum_size : 1 ) * viewport[3] / 2;
 	var d = vec3.distance( center, this.position ); //true distance
+	if(d == 0)
+		return 0;
 	var fov = this.fov / 2 * Math.PI / 180.0;
 	var pr = (1.0 / Math.tan(fov) * radius / Math.sqrt(d * d - radius * radius)); //good
 	//var pr = 1.0 / Math.tan(fov) * radius / d; // distorted
