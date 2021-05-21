@@ -18,6 +18,7 @@ function PBRPipeline( renderer )
 	this.exposure = 1;
 	this.occlusion_factor = 1;
 	this.emissive_factor = 1.0; //to boost emissive
+	this.postfx_shader_name = null; //allows to apply a final FX after tonemapper
 
 	this.contrast = 1.0;
 	this.brightness = 1.0;
@@ -356,7 +357,12 @@ PBRPipeline.prototype.renderFinalBuffer = function()
 	this.fx_uniforms.u_brightness = this.brightness;
 	this.fx_uniforms.u_gamma = this.gamma;
 	this.frame_texture.copyTo( this.final_texture, gl.shaders["tonemapper"], this.fx_uniforms );
-	this.final_texture.toViewport();
+	
+	var shader_postfx = null;
+	if(this.postfx_shader_name)
+		shader_postfx = gl.shaders[ this.postfx_shader_name ];
+
+	this.final_texture.toViewport( shader_postfx );
 }
 
 PBRPipeline.prototype.getNodeRenderCalls = function( node, camera, layers )
