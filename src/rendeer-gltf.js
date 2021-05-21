@@ -119,6 +119,10 @@ RD.GLTF = {
 		{
 			var buffer = list.pop();
 			var bin_url = folder + "/" + buffer.uri;
+
+			if( buffer.uri.substr(0,5) == "blob:")
+				bin_url = buffer.uri;
+
 			console.log(" - loading " + buffer.uri + " ...");
 			if( buffer.uri.substr(0,5) == "data:")
 			{
@@ -856,7 +860,12 @@ RD.GLTF = {
 
 				}
 				else
-					result.texture = json.folder + "/" + filename;
+				{
+					if(filename.substr(0,5) == "blob:")
+						result.texture = filename;
+					else
+						result.texture = json.folder + "/" + filename;
+				}
 			}
 			else if(source.bufferView != null) //embeded image file
 			{
