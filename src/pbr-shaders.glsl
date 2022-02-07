@@ -4,11 +4,34 @@ degamma_material default.vs degamma_material.fs
 degamma @SCREEN degamma.fs
 pbr default.vs pbr.fs
 nopbr default.vs nopbr.fs
+albedo default.vs albedo.fs
+occlusion default.vs occlusion.fs
 overlay default.vs overlay.fs
 normals default.vs normals.fs
 brdf_integrator @SCREEN brdf_integrator.fs
 skybox default.vs skybox.fs
+fxaa_tonemapper @SCREEN fxaa_tonemapper.fs
 tonemapper @SCREEN tonemapper.fs
+
+\skinning
+
+attribute vec4 a_bone_indices;
+attribute vec4 a_weights;
+uniform mat4 u_bones[64];
+
+void computeSkinning(inout vec4 vertex, inout vec4 normal)
+{
+	vertex = u_bones[int(a_bone_indices.x)] * a_weights.x * vertex + 
+			u_bones[int(a_bone_indices.y)] * a_weights.y * vertex + 
+			u_bones[int(a_bone_indices.z)] * a_weights.z * vertex + 
+			u_bones[int(a_bone_indices.w)] * a_weights.w * vertex;
+	normal =	u_bones[int(a_bone_indices.x)] * a_weights.x * normal + 
+			u_bones[int(a_bone_indices.y)] * a_weights.y * normal + 
+			u_bones[int(a_bone_indices.z)] * a_weights.z * normal + 
+			u_bones[int(a_bone_indices.w)] * a_weights.w * normal;
+	normal = normalize(normal);
+}
+
 
 \default.vs
 
@@ -69,10 +92,19 @@ tonemapper @SCREEN tonemapper.fs
 		}
 	#endif
 
+	#ifdef SKINNING
+		#import "skinning"
+	#endif
+
 	void main() {
 
 		vec4 vertex4 = vec4(a_vertex,1.0);
 		vec4 normal4 = vec4(a_normal,0.0);
+
+		#ifdef SKINNING
+			computeSkinning(vertex4,normal4);
+		#endif
+
 		v_wNormal = a_normal;
 		v_coord = a_coord;
 		v_coord1 = a_coord;
@@ -97,6 +129,10 @@ tonemapper @SCREEN tonemapper.fs
 		//normal
 		v_wNormal = (u_model * normal4).xyz;
 		gl_Position = u_viewprojection * worldpos;
+
+		//barrel distortion
+		//float sign = gl_Position.x < 0.0 ? -1.0 : 1.0;
+		//gl_Position.x -= gl_Position.x * gl_Position.x * 0.1;
 
 		//for point clouds
 		#ifdef POINTS
@@ -383,8 +419,10 @@ tonemapper @SCREEN tonemapper.fs
 
 \header.inc
 
-	#extension GL_OES_standard_derivatives : enable
-	#extension GL_EXT_shader_texture_lod : enable
+	#ifndef WEBGL2
+		#extension GL_OES_standard_derivatives : enable
+		#extension GL_EXT_shader_texture_lod : enable
+	#endif
 	precision highp float;
 	precision highp int;
 
@@ -434,6 +472,7 @@ tonemapper @SCREEN tonemapper.fs
 	uniform float u_normalFactor;
 	uniform bool u_metallicRough;
 	uniform float u_reflectance;
+	uniform vec3 u_backface_color;
 
 	uniform float u_clearCoat;
 	uniform float u_clearCoatRoughness;
@@ -500,6 +539,37 @@ tonemapper @SCREEN tonemapper.fs
 			return gl_FragCoord.xy / u_viewport.zw;
 		return v_coord;
 	}
+
+\dither4x4
+
+float dither4x4(vec2 position, float brightness)
+{
+  int x = int(mod(position.x, 4.0));
+  int y = int(mod(position.y, 4.0));
+  int index = x + y * 4;
+  float limit = 0.0;
+
+  if (x < 8) {
+    if (index == 0) limit = 0.0625;
+    if (index == 1) limit = 0.5625;
+    if (index == 2) limit = 0.1875;
+    if (index == 3) limit = 0.6875;
+    if (index == 4) limit = 0.8125;
+    if (index == 5) limit = 0.3125;
+    if (index == 6) limit = 0.9375;
+    if (index == 7) limit = 0.4375;
+    if (index == 8) limit = 0.25;
+    if (index == 9) limit = 0.75;
+    if (index == 10) limit = 0.125;
+    if (index == 11) limit = 0.625;
+    if (index == 12) limit = 1.0;
+    if (index == 13) limit = 0.5;
+    if (index == 14) limit = 0.875;
+    if (index == 15) limit = 0.375;
+  }
+
+  return brightness < limit ? 0.0 : 1.0;
+}
 
 
 \pbr.fs
@@ -845,15 +915,17 @@ tonemapper @SCREEN tonemapper.fs
 				emissive = vec3(0.0);
 		}
 
-		if( alpha < u_alpha_cutoff )
+		if( alpha <= u_alpha_cutoff )
 			discard;
+		//if( dither4x4(gl_FragCoord.xy, alpha) == 0.0 )
+		//	discard;
 
 		applyIndirectLighting( material, color );
 
 		color += emissive;
 
 		if( gl_FrontFacing == false )
-			color.xyz *= 0.1;
+			color.xyz *= u_backface_color;
 
 		//color.xyz = material.N;
 
@@ -922,19 +994,111 @@ tonemapper @SCREEN tonemapper.fs
 				emissive = vec3(0.0);
 		}
 
-		if( alpha < u_alpha_cutoff)
+		if( alpha <= u_alpha_cutoff)
 			discard;
 
 		color += emissive;
 		color *= u_exposure;
 		if( gl_FrontFacing == false )
-			color.xyz *= 0.1;
+			color.xyz *= u_backface_color;
 
+		color = max(color,vec3(0.0)); //to avoid artifacts
 		if( u_tonemapper != 0.0 )
 			color = pow(color, vec3(1.0 / u_gamma));
 
 		gl_FragColor = vec4( color, alpha );
 	}
+
+\albedo.fs
+
+	//SHADER FOR NON-PBR ***************************
+
+	#import "header.inc"
+
+	uniform float u_tonemapper;
+	//uniform float u_gamma;
+
+	void main() {
+       		#ifndef UVS2
+			v_coord1 = v_coord;
+		#endif
+		#ifndef COLOR
+			v_color = vec4(1.0);
+		#endif
+
+		if( testClippingPlane( u_clipping_plane, v_wPosition ) < 0.0 )
+			discard;
+
+		vec3 color = u_albedo * v_color.xyz;
+		float alpha = u_alpha;
+
+		if(u_maps_info[DETAILMAP] != -1){
+			vec3 detail_tex = texture2D(u_detail_texture, getUV( u_maps_info[DETAILMAP] ) * 10.0 ).rgb;
+			color *= detail_tex;
+		}
+
+		if(u_maps_info[ALBEDOMAP] != -1)
+		{
+			vec4 color4 = texture2D( u_albedo_texture, getUV(u_maps_info[ALBEDOMAP]) );
+			color4.xyz = pow(color4.xyz, vec3(u_gamma)); //degamma
+			color *= color4.xyz;
+			alpha *= color4.a;
+		}
+
+		if( alpha <= u_alpha_cutoff)
+			discard;
+
+		color *= u_exposure;
+		if( gl_FrontFacing == false )
+			color.xyz *= u_backface_color;
+
+		color = max(color,vec3(0.0)); //to avoid artifacts
+		if( u_tonemapper != 0.0 )
+			color = pow(color, vec3(1.0 / u_gamma));
+
+		gl_FragColor = vec4( color, alpha );
+	}
+
+\occlusion.fs
+
+	//SHADER FOR NON-PBR ***************************
+
+	#import "header.inc"
+
+	uniform float u_tonemapper;
+	//uniform float u_gamma;
+
+	void main() {
+       		#ifndef UVS2
+			v_coord1 = v_coord;
+		#endif
+		#ifndef COLOR
+			v_color = vec4(1.0);
+		#endif
+
+		if( testClippingPlane( u_clipping_plane, v_wPosition ) < 0.0 )
+			discard;
+
+		vec3 color = vec3(1.0); //u_albedo * v_color.xyz;
+		float alpha = u_alpha;
+
+		if(u_maps_info[ OCCLUSIONMAP ] != -1)
+		{
+			vec3 occ = texture2D( u_occlusion_texture, getUV(u_maps_info[OCCLUSIONMAP]) ).xyz;
+			color *= pow(occ, vec3(u_gamma)); //degamma
+		}
+
+		color *= u_exposure;
+		if( gl_FrontFacing == false )
+			color.xyz *= u_backface_color;
+
+		color = max(color,vec3(0.0)); //to avoid artifacts
+		if( u_tonemapper != 0.0 )
+			color = pow(color, vec3(1.0 / u_gamma));
+
+		gl_FragColor = vec4( color, alpha );
+	}
+
 
 \overlay.fs
 
@@ -990,7 +1154,7 @@ tonemapper @SCREEN tonemapper.fs
 				emissive = vec3(0.0);
 		}
 
-		if( alpha < u_alpha_cutoff)
+		if( alpha <= u_alpha_cutoff)
 			discard;
 
 		color += emissive;
@@ -1036,8 +1200,10 @@ tonemapper @SCREEN tonemapper.fs
 
 \normals.fs
 
-	#extension GL_OES_standard_derivatives : enable
-	#extension GL_EXT_shader_texture_lod : enable
+	#ifndef WEBGL2
+		#extension GL_OES_standard_derivatives : enable
+		#extension GL_EXT_shader_texture_lod : enable
+	#endif
 	precision highp float;
 	precision highp int;
 
@@ -1278,7 +1444,9 @@ tonemapper @SCREEN tonemapper.fs
 \skybox.fs
 // Shader used to show skybox 
 
-	#extension GL_EXT_shader_texture_lod : enable
+	#ifndef WEBGL2
+		#extension GL_EXT_shader_texture_lod : enable
+	#endif
 
 	precision highp float;
 	varying vec3 v_wPosition;
@@ -1412,7 +1580,7 @@ float testClippingPlane(vec4 plane, vec3 p)
 		return ( 1.0 - specularColor ) * fresnel + specularColor;
 	} 
 
-\tonemapper.fs
+\fxaa_tonemapper.fs
 
 	precision highp float;
 	varying vec3 v_wPosition;
@@ -1502,6 +1670,61 @@ float testClippingPlane(vec4 plane, vec3 p)
 
 		//FXAA
 		vec4 color = applyFXAA(u_color_texture, v_coord);
+
+		//Tonemapper
+		color.rgb = tonemapUncharted2(color.rgb);
+
+		//gamma
+		color.rgb = pow(color.rgb, vec3(1./u_gamma));
+
+		//contrast
+		color.rgb = (color.rgb - vec3(0.5)) * u_contrast + vec3(0.5);
+
+		//brightness
+		color.rgb *= u_brightness;
+
+		gl_FragColor = color;
+	}
+
+
+\tonemapper.fs
+
+	precision highp float;
+	varying vec3 v_wPosition;
+	varying vec3 v_wNormal;
+	varying vec2 v_coord;
+	uniform vec4 u_color;
+	uniform float u_brightness;
+	uniform float u_contrast;
+	uniform float u_gamma;
+
+	uniform sampler2D u_color_texture;
+
+	uniform vec2 u_viewportSize;
+	uniform vec2 u_iViewportSize;
+
+	vec3 uncharted2Tonemap(const vec3 x) {
+		const float A = 0.15;
+		const float B = 0.50;
+		const float C = 0.10;
+		const float D = 0.20;
+		const float E = 0.02;
+		const float F = 0.30;
+		return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - E / F;
+	}
+
+	// http://filmicworlds.com/blog/filmic-tonemapping-operators/
+	vec3 tonemapUncharted2(const vec3 color) {
+		const float W = 11.2;
+		const float exposureBias = 2.0;
+		vec3 curr = uncharted2Tonemap(exposureBias * color);
+		vec3 whiteScale = 1.0 / uncharted2Tonemap(vec3(W));
+		return curr * whiteScale;
+	}
+
+	void main() {
+
+		vec4 color = texture2D(u_color_texture, v_coord);
 
 		//Tonemapper
 		color.rgb = tonemapUncharted2(color.rgb);

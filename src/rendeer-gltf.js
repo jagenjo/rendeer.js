@@ -25,15 +25,18 @@ RD.GLTF = {
 	rename_animation_properties: { "translation":"position","scale":"scaling" },
 
 	flip_uv: true,
+	convert_skeletons: false,
 	overwrite_materials: true,
 	rename_assets: false, //force assets to have unique names (materials, meshes)
 
 	prefabs: {},
 
-	texture_options: { format: GL.RGBA, magFilter: GL.LINEAR, minFilter: GL.LINEAR_MIPMAP_LINEAR, wrap: GL.REPEAT },
+	texture_options: { format: GL.RGBA, magFilter: GL.LINEAR, minFilter: GL.LINEAR_MIPMAP_LINEAR, wrap: GL.REPEAT, no_flip: false },
 
 	load: function( url, callback, extension, callback_progress )
 	{
+		if(!url)
+			throw("url missing");
 		var json = null;
 		var filename = "";
 		var folder = "";
@@ -46,7 +49,7 @@ RD.GLTF = {
 			extension = extension || filename.split(".").pop().toLowerCase();
 			folder = folder.join("/");
 
-			console.log("loading gltf json...");
+			//console.log("loading gltf json...");
 
 			var xhr = new XMLHttpRequest();
 			xhr.onload = function() {
@@ -79,8 +82,11 @@ RD.GLTF = {
 		else //array of files already loaded
 		{
 			var files_data = url;
-			console.log(files_data);
+			//console.log(files_data);
 			filename = files_data["main"];
+			if(!filename)
+				return;
+
 			url = filename;
 			var main = files_data[ filename ];
 			if(main.extension == "glb")
@@ -123,7 +129,7 @@ RD.GLTF = {
 			if( buffer.uri.substr(0,5) == "blob:")
 				bin_url = buffer.uri;
 
-			console.log(" - loading " + buffer.uri + " ...");
+			//console.log(" - loading " + buffer.uri + " ...");
 			if( buffer.uri.substr(0,5) == "data:")
 			{
 				var data = _base64ToArrayBuffer( buffer.uri.substr(37) );
@@ -150,12 +156,13 @@ RD.GLTF = {
 
 		function onFetchComplete()
 		{
-			console.log("parsing gltf ...");
+			//console.log("parsing gltf ...");
 			json.filename = filename;
 			json.folder = folder;
 			json.url = url;
 			var node = RD.GLTF.parse( json );
-			RD.GLTF.prefabs[ url ] = node.serialize();
+			var data = node.serialize(); 
+			RD.GLTF.prefabs[ url ] = data;
 			if(callback)
 				callback(node);
 		}
@@ -165,14 +172,17 @@ RD.GLTF = {
 			if( extension == "gltf" )
 			{
 				json = data;
-				console.log("loading gltf binaries...");
+				//console.log("loading gltf binaries...");
 				fetchBinaries( json.buffers.concat() );
 			}
 			else if( extension == "glb" )
 			{
 				json = RD.GLTF.parseGLB(data);
 				if(!json)
+				{
+					console.error("error parsing GLB:", filename );
 					return;
+				}
 				onFetchComplete();
 			}
 		}
@@ -193,7 +203,7 @@ RD.GLTF = {
 			return null;
 		}
 		var version = dv.getUint32(4,endianess);
-		console.log("GLTF Version: " + version);
+		//console.log("GLTF Version: " + version);
 
 		var length = dv.getUint32(8,endianess); //full size
 
@@ -223,8 +233,8 @@ RD.GLTF = {
 				var buffer = json.buffers[chunk_index];
 				buffer.data = chunk_data;
 				buffer.dataview = new Uint8Array(chunk_data);
-				if(data.byteLength != buffer.byteLength)
-					console.warn("gltf binary doesnt match json size hint");
+				//if(data.byteLength != buffer.byteLength)
+				//	console.warn("gltf binary doesnt match json size hint");
 				chunk_index++;
 			}
 			else
@@ -236,7 +246,7 @@ RD.GLTF = {
 
 	parse: function(json, filename)
 	{
-		console.log(json);
+		//console.log(json);
 
 		if(!json.url)
 			json.url = filename || "scene.glb";
@@ -269,6 +279,7 @@ RD.GLTF = {
 			root.name = "root";
 		}
 
+		//build hierarchy
 		for(var i = 0; i < nodes_info.length; ++i)
 		{
 			var info = nodes_info[i];
@@ -302,6 +313,9 @@ RD.GLTF = {
 					}
 				}
 			}
+			
+			if(this.convert_skeletons)
+				this.convertSkinToSkeleton(root,root);
 		}
 
 		root.materials = this.gltf_materials;
@@ -383,6 +397,19 @@ RD.GLTF = {
 			}
 		}
 
+		if(node.mesh && node.skin)
+		{
+			var mesh = gl.meshes[ node.mesh ];
+			mesh.bones = [];
+			for(var j = 0; j < node.skin.joints.length; ++j)
+			{
+				var bonename = node.skin.joints[j];
+				var bindpose = node.skin.bindMatrices[j];
+				mesh.bones.push([bonename,bindpose]);
+			}
+		}
+
+
 		if(!info.name)
 			info.name = node.name = "node_" + index;
 
@@ -411,10 +438,15 @@ RD.GLTF = {
 			prims.push(prim);
 			var mesh_primitive = { vertexBuffers: {}, indexBuffers:{} };
 			for(var j in prim.buffers)
-				if( j == "indices" || j == "triangles" )
-					mesh_primitive.indexBuffers[j] = { data: prim.buffers[j] };
+			{
+				var buffer_name = j;
+				if( buffer_name == "bones" )
+					buffer_name = "bone_indices";
+				if( buffer_name == "indices" || buffer_name == "triangles" )
+					mesh_primitive.indexBuffers[buffer_name] = { data: prim.buffers[j] };
 				else
-					mesh_primitive.vertexBuffers[j] = { data: prim.buffers[j] };
+					mesh_primitive.vertexBuffers[buffer_name] = { data: prim.buffers[j] };
+			}
 			meshes.push({ mesh: mesh_primitive });
 		}
 
@@ -446,7 +478,7 @@ RD.GLTF = {
 		}
 
 		mesh.name = mesh_info.name;
-		if(mesh.name || this.rename_assets)
+		if(!mesh.name || this.rename_assets)
 			mesh.name = json.filename + "::mesh_" + (mesh_info.name || index);
 		//mesh.material = primitive.material;
 		//mesh.primitive = mesh_info.mode;
@@ -486,7 +518,7 @@ RD.GLTF = {
 			for(var i in this.buffer_names)
 			{
 				var prop_name = this.buffer_names[i];
-				var flip = prop_name == "coords" || prop_name == "coords1";
+				var flip = this.flip_uv && (prop_name == "coords" || prop_name == "coords1");
 				var att_index = primitive_info.attributes[i];
 				if(att_index == null)
 					continue;
@@ -511,6 +543,23 @@ RD.GLTF = {
 		primitive.start = 0;
 		primitive.length = buffers.triangles ? buffers.triangles.length : buffers.vertices.length / 3;
 		return primitive;
+	},
+
+	convertSkinToSkeleton: function(node,root)
+	{
+		if(node.skin)
+		{
+			var skeleton_root = root.findNodeByName( node.skin.skeleton_root )
+			if(!node.skeleton)
+				node.skeleton = new RD.Skeleton();
+			node.skeleton.importSkeleton( skeleton_root || root );
+		}
+
+		for( var i = 0; i < node.children.length; ++i )
+		{
+			var child = node.children[i];
+			this.convertSkinToSkeleton(child,root);
+		}
 	},
 
 	installDracoModule: function( callback )
@@ -553,7 +602,7 @@ RD.GLTF = {
 
 	decodePrimitive: function( decoder, primitive_info, json )
 	{
-		console.log(primitive_info);
+		//console.log(primitive_info);
 		var ext_data = primitive_info.extensions.KHR_draco_mesh_compression;
 		var buffers = {};
 
@@ -670,6 +719,7 @@ RD.GLTF = {
 
 		//num numbers
 		var size = accessor.count * components;
+		var databuffer = null;
 
 		//create buffer
 		switch( accessor.componentType )
@@ -907,18 +957,26 @@ RD.GLTF = {
 		var skin = {};
 		if( info.skeleton != null )
 			skin.skeleton_root = json.nodes[ info.skeleton ].name;
-		skin.bindMatrices = this.splitBuffer( this.parseAccessor( info.inverseBindMatrices, json ), 16 );
+		var buffer = this.parseAccessor( info.inverseBindMatrices, json );
+		if(!buffer)
+		{
+			console.warn("accessor is null");
+			return null;
+		}
+		skin.bindMatrices = this.splitBuffer( buffer, 16 );
 		skin.joints = [];
 		for(var i = 0; i < info.joints.length; ++i)
 		{
 			var joint = json.nodes[ info.joints[i] ];
-			skin.joints.push( joint.id );
+			skin.joints.push( joint.id || joint.name );
 		}
 		return skin;
 	},
 
 	splitBuffer: function( buffer, length )
 	{
+		if(!buffer)
+			console.warn("buffer is null");
 		var l = buffer.length;
 		var result = [];
 		for(var i = 0; i < l; i+= length)
@@ -1026,6 +1084,9 @@ RD.GLTF = {
 				var texture = GL.Texture.fromURL( image_url, { wrap: gl.REPEAT, extension: extension } );				
 				texture.name = this.filename;
 				gl.textures[ texture.name ] = texture;
+				//hack in case we drag textures individually
+				if( gl.textures[ "/textures/" + texture.name ] )
+					gl.textures[ "/textures/" + texture.name ] = texture;
 			}
 
 			files_data[ this.filename ] = { 
@@ -1084,13 +1145,17 @@ RD.SceneNode.prototype.loadGLTF = function( url, callback )
 		return;
 	}
 
+	this.loading = true;
+
 	RD.GLTF.load( url, inner);
 
 	function inner(node)
 	{
-		that.addChild( node );
+		that.loading = false;
+		if(node)
+			that.addChild( node );
 		if(callback)
-			callback(that);
+			callback(that, node);
 	}
 }
 

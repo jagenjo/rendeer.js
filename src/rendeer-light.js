@@ -151,8 +151,10 @@
 		this.shadowmap.fbo.unbind();
 		renderer.generating_shadowmap = false;
 		this.shadowmap.texture.bind(4);
+		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR );
 	}
 
+	/*
 	Light.prototype.renderNode = function(renderer,camera)
 	{
 		if(!gl.meshes["cylinder_light"])
@@ -161,6 +163,7 @@
 			gl.meshes["cone_light"] = GL.Mesh.cone({radius:0.1,height:0.25});
 		}
 	}
+	*/
 
 	RD.Light = Light;
 

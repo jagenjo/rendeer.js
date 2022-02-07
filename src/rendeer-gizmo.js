@@ -18,6 +18,9 @@ function Gizmo(o)
 	this.shader = "flat"; //do not change this
 	this._last = vec3.create();
 
+	this.onActionFinished = null; //called on mouseup
+	this.onDuplicateTargets = null; //called when user shift + drags
+
 	var colors = {x:Gizmo.XAXIS_COLOR,y:Gizmo.YAXIS_COLOR,z:Gizmo.ZAXIS_COLOR};
 	var actions = ["drag","movex","movey","movez","movexy","movexz","moveyz","scalex","scaley","scalez","scalexy","scaleyz","scalexz","rotatex","rotatey","rotatez","rotatefront","rotate","scale"];
 	this.actions = {};
@@ -210,6 +213,7 @@ Gizmo.prototype.updateGizmo = function()
 	if(this.targets.length == 1 && this.coordinates == RD.Gizmo.OBJECT_SPACE )
 	{
 		this.transform = this.targets[0].transform;
+		this.scaling = [1,1,1]; //remove scaling
 	}
 	else
 		this.position = this.computeCenter(this.targets);
@@ -300,7 +304,7 @@ Gizmo.prototype.getTargetBaseNodes = function()
 	}
 }
 
-Gizmo.prototype.applyTransformToTarget = function(transmat)
+Gizmo.prototype.applyTransformToTarget = function( transmat, local_space )
 {
 	var gm = this.getGlobalMatrix( mat4.create() );
 	var igm = mat4.invert(mat4.create(), gm);
@@ -314,38 +318,56 @@ Gizmo.prototype.applyTransformToTarget = function(transmat)
 	for(var i = 0; i < targets.length; ++i)
 	{
 		var n = targets[i];
+
+		//precompute winding
 		scaling_sign[0] = n.scaling[0] >= 0 ? 1 : -1;
 		scaling_sign[1] = n.scaling[1] >= 0 ? 1 : -1;
 		scaling_sign[2] = n.scaling[2] >= 0 ? 1 : -1;
-		n.getGlobalMatrix(m); //in global
-		mat4.multiply(m,igm,m); //local to gizmo
-		mat4.multiply(m,transmat,m);//scaled
-		mat4.multiply(m,gm,m);//back to world
-		n.fromMatrix(m,true);
+
+		//apply transform
+		if( local_space )
+		{
+			mat4.multiply(m,transmat,n.matrix);
+			n.fromMatrix(m);
+		}
+		else
+		{
+			n.getGlobalMatrix(m); //get global node model
+			if( this.coordinates == Gizmo.WORLD_SPACE )
+				mat4.multiply(m,igm,m); //transform to local of gizmo
+			mat4.multiply(m,transmat,m); //apply trans
+			if( this.coordinates == Gizmo.WORLD_SPACE )
+				mat4.multiply(m,gm,m);//back to world
+			n.fromMatrix(m,true);//pass as world (to avoid substracting the parent)
+		}
+
+		//other stuff: snap, fix winding
 		vec3.mul( n._scale, n._scale, scaling_sign ); //in case it was flipped in one axis
 		n.position = this.applySnap( n.position );
-		if(this.grid_size) //snap
+		if(this.grid_size && 1) //snap
 		{
-			var euler = quat.toEuler(vec3.create(), n.rotation );
+			var euler = quat.toEuler( vec3.create(), n.rotation );
 			euler[0] = (Math.round((euler[0] * RAD2DEG) / 15) * 15) * DEG2RAD;
 			euler[1] = (Math.round((euler[1] * RAD2DEG) / 15) * 15) * DEG2RAD;
 			euler[2] = (Math.round((euler[2] * RAD2DEG) / 15) * 15) * DEG2RAD;
 			quat.fromEuler(n.rotation,euler);
+			quat.normalize( n.rotation, n.rotation );
 		}
 		//console.log("result",n.position);
 	}
 
+	//update gizmo transform
 	mat4.multiply(m,gm,transmat);//back to world
 	this.fromMatrix(m);
 	this.scaling = [1,1,1];
 	this.updateGizmo();
 }
 
-Gizmo.prototype.applyTranslation = function(d)
+Gizmo.prototype.applyTranslation = function(d, local_space)
 {
 	var transmat = mat4.create();
-	mat4.translate(transmat,transmat,d);
-	this.applyTransformToTarget(transmat);
+	mat4.translate( transmat, transmat, d );
+	this.applyTransformToTarget( transmat, local_space );
 }
 
 Gizmo.prototype.applyRotation = function(angle, axis, center)
@@ -365,13 +387,13 @@ Gizmo.prototype.applyRotation = function(angle, axis, center)
 	this.applyTransformToTarget(M);
 }
 
-Gizmo.prototype.applyScale = function(s)
+Gizmo.prototype.applyScale = function(s, local_space)
 {
 	if(s.constructor === Number)
 		s = [s,s,s];
 	var transmat = mat4.create();
 	mat4.scale(transmat,transmat,s);
-	this.applyTransformToTarget(transmat);
+	this.applyTransformToTarget(transmat, local_space);
 }
 
 Gizmo.prototype.applySnap = function(pos)
@@ -445,6 +467,9 @@ Gizmo.prototype.onMouse = function(e)
 	var action_info = this.actions[action];
 	var model = this._global_matrix;
 	var center_2D = camera.project( center, null, this.center_2D );
+	//convert to local space
+	var invmodel = mat4.invert(mat4.create(),model);
+	var in_object_space = this.coordinates == Gizmo.OBJECT_SPACE;
 
 	if(e.type == "mousedown")
 	{
@@ -464,7 +489,7 @@ Gizmo.prototype.onMouse = function(e)
 			if( action_info.move && action_info.axis ) //axis move
 			{
 				var axis = vec3.clone(action_info.axis);
-				mat4.rotateVec3(axis,model,axis);
+				mat4.rotateVec3(axis,model,axis); //need axis in world space to find closest point
 				vec3.normalize(axis,axis);
 				this._last = ray.closestPointOnRay( center, axis ); //compute axis
 				if(e.shiftKey)
@@ -610,14 +635,31 @@ Gizmo.prototype.onMouse = function(e)
 					//console.log("expected",pos);
 					diff = vec3.sub( vec3.create(), pos, this.click_pos );
 					this.click_pos = pos;
+
+					if( this.coordinates == Gizmo.OBJECT_SPACE )
+					{
+						mat4.rotateVec3(diff,invmodel,diff);
+						this.applyTranslation(diff, true);
+						return true;
+					}
 				}
 			}
-			else if( action_info.move || action_info.scale ) //axis move and scale
+			else if( (action_info.move || action_info.scale) ) //axis move and scale
 			{
+				//find closest point to axis
+				var closest = null;
+				if( action_info.axis )
+				{
+					var axis = vec3.clone(action_info.axis);
+					mat4.rotateVec3(axis,model,axis);
+					vec3.normalize(axis,axis);
+					closest = ray.closestPointOnRay( center, axis );
+				}
+
 				if(action == "scale" || (action_info.scale && e.ctrlKey) )
 				{
 					var f = (1 + (mouse[1] - this.click_2D[1]) * 0.01 );
-					this.applyScale(f);
+					this.applyScale(f, in_object_space);
 					this.click_2D[0] = mouse[0];
 					this.click_2D[1] = mouse[1];
 					return true;
@@ -628,9 +670,9 @@ Gizmo.prototype.onMouse = function(e)
 					var f = (1 + (mouse[1] - this.click_2D[1]) * 0.01 );
 					switch(action)
 					{
-						case "scalexy": this.applyScale([f,f,1]); break;
-						case "scaleyz": this.applyScale([1,f,f]); break;
-						case "scalexz": this.applyScale([f,1,f]); break;
+						case "scalexy": this.applyScale([f,f,1],in_object_space); break;
+						case "scaleyz": this.applyScale([1,f,f],in_object_space); break;
+						case "scalexz": this.applyScale([f,1,f],in_object_space); break;
 					}
 
 					this.click_2D[0] = mouse[0];
@@ -638,64 +680,72 @@ Gizmo.prototype.onMouse = function(e)
 					return true;
 				}
 
-				var axis = vec3.clone(action_info.axis);
-				mat4.rotateVec3(axis,model,axis);
-				vec3.normalize(axis,axis);
-				var closest = ray.closestPointOnRay( center, axis );
 				if(action_info.scale)
 				{
 					//var dist = vec3.distance( closest, center );
 					var dist = vec2.distance( mouse, this.center_2D );
 					var ratio = dist / this.click_dist;
 					if(action == "scalex")
-						this.applyScale([ratio,1,1]); //this.target._scale[0] *= ratio;
+						this.applyScale([ratio,1,1],in_object_space); //this.target._scale[0] *= ratio;
 					else if(action == "scaley")
-						this.applyScale([1,ratio,1]); //this.target._scale[1] *= ratio;
+						this.applyScale([1,ratio,1],in_object_space); //this.target._scale[1] *= ratio;
 					else if(action == "scalez")
-						this.applyScale([1,1,ratio]); //this.target._scale[2] *= ratio;
+						this.applyScale([1,1,ratio],in_object_space); //this.target._scale[2] *= ratio;
 					this.click_dist = dist;
 					//this.target.updateMatrices();
 					return true;
 				}
-				this.applySnap(closest);
-				diff = vec3.sub( vec3.create(), closest, this._last );
-				this._last = closest;
-			}
+
+				if( action_info.move )
+				{
+					if(in_object_space)
+					{
+						diff = vec3.sub( vec3.create(), closest, this._last );
+						this._last.set( closest );
+						/*
+						var dist = vec3.length( diff );
+						//get only rotation
+						mat4.rotateVec3(diff,invmodel,diff);
+						vec3.normalize( diff, diff );
+						vec3.scale( diff, diff, dist );
+						if( Math.abs(diff[0]) > Math.abs(diff[1]) && Math.abs(diff[0]) > Math.abs(diff[2]))
+							diff[1] = diff[2] = 0;
+						else if( Math.abs(diff[1]) > Math.abs(diff[2]) )
+							diff[0] = diff[2] = 0;
+						else
+							diff[0] = diff[1] = 0;
+						this.applyTranslation(diff, true)//, this.coordinates == Gizmo.OBJECT_SPACE);
+						return true;
+						*/
+					}
+					else
+					{
+						this.applySnap(closest);
+						diff = vec3.sub( vec3.create(), closest, this._last );
+						this._last.set( closest );
+					}
+				}
+
+			}//move or scale
+
 			if( action == "drag")
 			{
 				var closest = ray.testPlane( center, this._camera.getFront() );
 				var closest = ray.collision_point;
 				this.applySnap(closest);
-				//console.log("expected",closest);
 				diff = vec3.sub( vec3.create(), closest, this._last );
 				this._last = closest;
 			}
 
-			if(diff)
+			if(diff) //in world coordinates
 			{
-				this.applyTranslation(diff);
-				//this.applySnap(pos);
-				//this.translate(diff);
-				//this.updateMatrices();
-				//this.updateTarget();
+				this.applyTranslation(diff)//, this.coordinates == Gizmo.OBJECT_SPACE);
 				return true;
 			}
 		}
 		else //moving the mouse without click
 		{
 			this.testMouseOver(e);
-		}
-	}
-	else if(e.type == "mouseup")
-	{
-		this.saveTargetTransforms();
-		if(this._selected_action)
-		{
-			this._selected_action = null;
-			this.render( this._last_renderer, this._last_camera ); //update gizmo positions
-			this.testMouseOver(e);
-			this.updateGizmo();
-			return true;
 		}
 	}
 	else if(e.type == "wheel")
@@ -715,6 +765,22 @@ Gizmo.prototype.onMouse = function(e)
 			vec3.sub(diff,diff,center);
 			this.applyTranslation(diff);
 			this._last = center;
+			return true;
+		}
+	}
+
+	//separated to avoid problems with mouseup missing
+	if(e.type == "mouseup" || (this._selected_action && e.buttons == 0) )
+	{
+		this.saveTargetTransforms();
+		if(this._selected_action)
+		{
+			this._selected_action = null;
+			this.render( this._last_renderer, this._last_camera ); //update gizmo positions
+			this.testMouseOver(e);
+			this.updateGizmo();
+			if(this.onActionFinished)
+				this.onActionFinished();
 			return true;
 		}
 	}

@@ -29,21 +29,21 @@
 		camera.lookAt( [0,200,300],[0,100,0],[0,1,0] );
 
 		//create a node
-		var man = new RD.SceneNode();
-		man.color = [1,0,0,1];
-		man.mesh = "data/man.obj";
-		man.shader = "phong";
+		var node = new RD.SceneNode({
+			color: [1,0,0,1],
+			mesh: "data/man.obj",
+			shader: "phong"
+		});
 
 		//inner update
-		man.update = function(dt) { 
+		node.update = function(dt) { 
 			this.rotate(dt * 0.1,RD.UP);
 			this.color[0] = 1.0;
 			this.color[1] = Math.sin( getTime() * 0.001 );
 			this.color[2] = 1.0 - this.color[1];
 		}
 
-		scene.root.addChild(man);
-
+		scene.root.addChild(node);
 
 		//global settings
 		var bg_color = vec4.fromValues(0.2,0.3,0.4,1);
@@ -67,7 +67,7 @@
 		renderer.context.onmousemove = function(e)
 		{
 			if(e.dragging)
-				man.rotate( e.deltax * 0.01, RD.UP );
+				node.rotate( e.deltax * 0.01, RD.UP );
 		}
 	}
 

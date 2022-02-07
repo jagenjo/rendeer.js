@@ -51,6 +51,7 @@ RD.WHITE = vec3.fromValues(1,1,1);
 RD.BLACK = vec3.fromValues(0,0,0);
 RD.IDENTITY = mat4.create();
 RD.ONES4 = vec4.fromValues(1,1,1,1);
+RD.TRANS10_IDENTITY = new Float32Array([0,0,0, 0,0,0,1, 1,1,1]);
 
 RD.CENTER = 0;
 RD.TOP_LEFT = 1;
@@ -87,9 +88,10 @@ RD.QUAT = 5;
 RD.MAT3 = 6;
 RD.TRANS10 = 7;
 RD.MAT4 = 8;
+RD.STRING = 9;
 
-RD.TYPES = { "NUMBER":RD.NUMBER, "SCALAR":RD.NUMBER, "VEC2":RD.VEC2, "VEC3":RD.VEC3, "VEC4":RD.VEC4, "QUAT":RD.QUAT, "MAT3":RD.MAT3, "TRANS10":RD.TRANS10, "MAT4":RD.MAT4 };
-RD.TYPES_SIZE = [0,1,2,3,4,4,9,10,16];
+RD.TYPES = { "NUMBER":RD.NUMBER, "SCALAR":RD.NUMBER, "VEC2":RD.VEC2, "VEC3":RD.VEC3, "VEC4":RD.VEC4, "QUAT":RD.QUAT, "MAT3":RD.MAT3, "TRANS10":RD.TRANS10, "MAT4":RD.MAT4, "STRING":RD.STRING };
+RD.TYPES_SIZE = [0,1,2,3,4,4,9,10,16,0];
 
 RD.NO_INTERPOLATION = 0;
 RD.LINEAR = 1;
@@ -249,6 +251,9 @@ SceneNode.prototype._ctor = function()
 
 SceneNode.ctor = SceneNode.prototype._ctor; //helper
 
+SceneNode["@position"] = { type: "vec3" };
+SceneNode["@rotation"] = { type: "quat" }; //for tween
+
 /*
 SceneNode.prototype.super = function(class_name)
 {
@@ -398,12 +403,13 @@ Object.defineProperty(SceneNode.prototype, 'transform', {
 	get: function() { return this._transform; },
 	set: function(v) { 
 		this._transform.set(v);
+		quat.normalize(this._rotation, this._rotation ); //ensure it is not deformed
 		this._must_update_matrix = true; },
 	enumerable: true
 });
 
 Object.defineProperty( SceneNode.prototype, 'matrix', {
-	get: function() { return this._model_matrix; },
+	get: function() { return this._local_matrix; },
 	set: function(v) { 
 		this.fromMatrix( v );
 	},
@@ -427,6 +433,17 @@ Object.defineProperty(SceneNode.prototype, 'pivot', {
 	},
 	enumerable: true
 });
+
+//to work with tween
+Object.defineProperty(SceneNode.prototype, 'mustUpdate', {
+	get: function() { return this._must_update_matrix; },
+	set: function(v) { 
+		if(v)
+			this._must_update_matrix = true; 	
+	},
+	enumerable: false
+});
+	
 
 /**
 * The color in RGBA format
@@ -537,6 +554,8 @@ SceneNode.prototype.addChild = function( node, keep_transform )
 					change_scene( child, scene );
 			}
 	}
+
+	return this; //to chain
 }
 
 /**
@@ -550,7 +569,7 @@ SceneNode.prototype.removeChild = function( node, keep_transform )
 		throw("removeChild: Not its children");
 
 	if(!this.children)
-		return;
+		return this;
 
 	var pos = this.children.indexOf(node);
 	if(pos == -1)
@@ -560,6 +579,8 @@ SceneNode.prototype.removeChild = function( node, keep_transform )
 	node._parent = null;
 	if( keep_transform )
 		node.fromMatrix( node._global_matrix );
+	else
+		node._global_matrix.set( node._local_matrix );
 
 	change_scene( node );
 
@@ -578,6 +599,8 @@ SceneNode.prototype.removeChild = function( node, keep_transform )
 		for(var i = 0, l = node.children.length; i < l; i++)
 			change_scene( node.children[i] );
 	}
+
+	return this;
 }
 
 SceneNode.prototype.removeAllChildren = function()
@@ -664,10 +687,12 @@ SceneNode.prototype.getVisibleChildren = function( result, layers, layers_affect
 	for(var i = 0, l = this.children.length; i < l; i++)
 	{
 		var node = this.children[i];
-		var visible = node.layers & layers;
-		if(layers_affect_children && !visible)
+		if(node.flags.visible === false)
 			continue;
-		if(visible)
+		var in_layer = (node.layers & layers);
+		if(layers_affect_children && !in_layer)
+			continue;
+		if(in_layer)
 			result.push(node);
 		node.getVisibleChildren(result, layers);
 	}
@@ -692,7 +717,7 @@ SceneNode.prototype.serialize = function()
 	if(this.name)
 		r.name = this.name;
 	if(this.primitives && this.primitives.length)
-		r.primitives = this.primitives.concat();
+		r.primitives = this.primitives.map(function(a){ return Object.assign({}, a); }); //clone first level
 	if(this.mesh)
 		r.mesh = this.mesh;
 	if(this.material)
@@ -705,6 +730,23 @@ SceneNode.prototype.serialize = function()
 		r.extra = this.extra;
 	if(this.animation)
 		r.animation = this.animation;
+	if(this.animations) //clone anims
+	{
+		r.animations = [];
+		for(var i = 0; i < this.animations.length; ++i)
+			r.animations.push( this.animations[i].serialize() );
+	}
+	if(this.skin)
+	{
+		r.skin = {};
+		r.skin.joints = this.skin.joints.concat();
+		r.skin.skeleton_root = this.skin.skeleton_root;
+		r.skin.bindMatrices = [];
+		for(var i = 0; i < this.skin.bindMatrices.length; ++i)
+			r.skin.bindMatrices.push( typedArrayToArray(this.skin.bindMatrices[i]) );
+	}
+	if(this.skeleton)
+		r.skeleton = this.skeleton.serialize();
 
 	if(this.onSerialize)
 		this.onSerialize(r);
@@ -748,6 +790,7 @@ SceneNode.prototype.configure = function(o)
 				continue;
 			case "scale":
 			case "scaling":
+				vec3.copy( this._scale, [1,1,1] ); //reset first
 				this.scale(o[i]);
 				continue;
 			case "tiling":
@@ -756,13 +799,30 @@ SceneNode.prototype.configure = function(o)
 				else
 					this.setTextureTiling(o[i][0],o[i][1],o[i][2],o[i][3]);
 				continue;
+			case "skeleton":
+				var skeleton = new RD.Skeleton();
+				skeleton.configure(o[i]);
+				this.skeleton = skeleton;
+				continue;
+			case "animations":
+				this.animations = [];
+				for(var j = 0; j < o.animations.length; ++j)
+				{
+					var anim = new RD.Animation();
+					anim.configure( o.animations[j] );
+					this.animations.push( anim );
+				}
+				continue;
+			case "primitives":
+				this.primitives = o.primitives.map(function(a){ return Object.assign({}, a); }); //clone first level
+				continue;
 			case "name":
 			case "mesh":
-			case "primitives":
 			case "material":
 			case "ref":
 			case "draw_range":
 			case "submesh":
+			case "skin":
 			case "animation":
 				this[i] = o[i];
 				continue;
@@ -858,7 +918,7 @@ SceneNode.prototype.resetTransform = function()
 SceneNode.prototype.translate = function( delta, local )
 {
 	if(local)
-		this.getLocalVector( delta, temp_vec3 );
+		this.getGlobalVector( delta, temp_vec3 );
 	else
 		temp_vec3.set(delta);
 	vec3.add( this._position, this._position, temp_vec3 );
@@ -869,6 +929,37 @@ SceneNode.prototype.move = SceneNode.prototype.translate;
 SceneNode.prototype.moveLocal = function( delta )
 {
 	this.translate(delta, true);
+}
+
+/**
+* Assigns rotation based on euler angles
+* @method rotate
+* @param {number|vec3} yaw or euler (rotation in Y)  in radians
+* @param {number} pitch (rotation in X)  in radians
+* @param {number} roll (rotation in Z)  in radians
+*/
+SceneNode.prototype.setEulerRotation = function(yaw,pitch,roll)
+{
+	if(yaw && yaw.length >= 3)
+		quat.fromEuler( this._rotation, yaw);
+	else
+		quat.fromEuler( this._rotation, [yaw,pitch,roll]);
+	this._must_update_matrix = true;
+}
+
+SceneNode.prototype.setRotationFromEuler = SceneNode.prototype.setEulerRotation;
+
+
+/**
+* returns a vec3 decomposition of .rotation in euler format [yaw,pitch,roll]
+* @method rotate
+* @param {vec3} out [optional]  in radians
+*/
+SceneNode.prototype.getEulerRotation = function(out)
+{
+	out = out || vec3.create();
+	quat.toEuler(out,this._rotation);
+	return out;
 }
 
 /**
@@ -886,17 +977,6 @@ SceneNode.prototype.rotate = function( angle_in_rad, axis, in_local )
 		quat.multiply( this._rotation, this._rotation, temp_quat );
 	else
 		quat.multiply( this._rotation, temp_quat, this._rotation );
-	this._must_update_matrix = true;
-}
-
-/**
-* Changes the rotation using euler angles
-* @method rotate
-* @param {Array} eule_angles [yaw,pitch,roll] in radians
-*/
-SceneNode.prototype.setRotationFromEuler = function( euler )
-{
-	quat.fromEuler( this._rotation, euler );
 	this._must_update_matrix = true;
 }
 
@@ -950,7 +1030,7 @@ SceneNode.prototype.lookAt = function( position, target, up, reverse )
 * @method orientTo
 * @param {vec3} v
 */
-SceneNode.prototype.orientTo = function( v, reverse, up, in_local_space )
+SceneNode.prototype.orientTo = function( v, reverse, up, in_local_space, cylindrical )
 {
 	var pos = this.getGlobalPosition();
 	//build unitary vectors
@@ -959,6 +1039,9 @@ SceneNode.prototype.orientTo = function( v, reverse, up, in_local_space )
 		front.set( v );
 	else
 		vec3.sub( front, pos, v );
+
+	if(cylindrical) //flatten
+		front[1] = 0;
 
 	up = up || RD.UP;
 	vec3.normalize( front, front );
@@ -1031,11 +1114,12 @@ SceneNode.prototype.getLocalMatrix = function(out)
 * Get transform global matrix (concatenating parents) (its a reference)
 * @method getGlobalMatrix
 * @param {mat4} out [optional] where to copy the result, otherwise it is returned the property matrix
+* @param {Boolean} fast [optional] it will skip computing the whole ierarchy and reuse the latest stored global matrix (it could be outdated)
 * @return {mat4} matrix44 
 */
-SceneNode.prototype.getGlobalMatrix = function(out)
+SceneNode.prototype.getGlobalMatrix = function(out, fast)
 {
-	this.updateGlobalMatrix();
+	this.updateGlobalMatrix( fast );
 	if(out)
 	{
 		out.set(this._global_matrix);
@@ -1216,16 +1300,22 @@ SceneNode.prototype.getLocalPoint = function(v, result)
 }
 
 /**
-* Returns a point rotated by the local rotation
-* @method getLocalVector
+* Returns a point rotated by the local rotation (relative to its parent)
+* @method getParentVector
 * @param {vec3} v the point
 * @param {vec3} [result=vec3] where to store the output
 * @return {vec3} result
 */
-SceneNode.prototype.getLocalVector = function(v, result)
+SceneNode.prototype.getParentVector = function(v, result)
 {
 	result = result || vec3.create();
 	return vec3.transformQuat( result, v, this._rotation );
+}
+
+//LEGACY
+SceneNode.prototype.getLocalVector = function(v)
+{
+	console.error("DEPRECATED: SceneNode.prototype.getLocalVector, use getGlobalVector or getParentVector");
 }
 
 /**
@@ -1253,28 +1343,50 @@ SceneNode.prototype.getGlobalPosition = function(result, fast)
 }
 
 /**
-* Returns a point multiplied by the global matrix
-* @method getGlobalPoint
+* Returns a point from local coordinates to global (multiplied by the global matrix)
+* @method localToGlobal
+* @param {vec3} v the point
+* @param {vec3} [result=vec3] where to store the output
+* @param {vec3} fast [Boolean] if true uses the last global matrix computed instead of recomputing it (but it could be outdated)
+* @return {vec3} result
+*/
+SceneNode.prototype.localToGlobal = function(v, result, fast)
+{
+	result = result || vec3.create();
+	var m = this.getGlobalMatrix( null, fast );
+	return vec3.transformMat4(result, v, m );	
+}
+
+SceneNode.prototype.getGlobalPoint = SceneNode.prototype.localToGlobal;
+
+/**
+* Transform a point from global coordinates to local coordinates
+* @method globalToLocal
 * @param {vec3} v the point
 * @param {vec3} [result=vec3] where to store the output
 * @return {vec3} result
 */
-SceneNode.prototype.getGlobalPoint = function(v, result)
-{
-	result = result || vec3.create();
-	var m = this.getGlobalMatrix();
-	return vec3.transformMat4(result, v, m );	
-}
-
-SceneNode.prototype.localToGlobal = SceneNode.prototype.getGlobalPoint;
-
-
 SceneNode.prototype.globalToLocal = function(v,result)
 {
 	result = result || vec3.create();
 	var m = this.getGlobalMatrix();
 	mat4.invert(temp_mat4,m);
 	return vec3.transformMat4(result, v, temp_mat4 );
+}
+
+/**
+* Transform a vector from global coordinates to local coordinates
+* @method globalVectorToLocal
+* @param {vec3} v the point
+* @param {vec3} [result=vec3] where to store the output
+* @return {vec3} result
+*/
+SceneNode.prototype.globalVectorToLocal = function(v,result)
+{
+	result = result || vec3.create();
+	var q = this.getGlobalRotation();
+	quat.invert(q,q);
+	return vec3.transformQuat( result, v, q );
 }
 
 /**
@@ -1287,8 +1399,8 @@ SceneNode.prototype.globalToLocal = function(v,result)
 SceneNode.prototype.getGlobalVector = function(v, result)
 {
 	result = result || vec3.create();
-	var quat = this.getGlobalRotation(temp_quat);
-	return vec3.transformQuat( result, v, quat );
+	var q = this.getGlobalRotation(temp_quat);
+	return vec3.transformQuat( result, v, q );
 }
 
 /**
@@ -1456,11 +1568,32 @@ SceneNode.prototype.updateBoundingBox = function( ignore_children )
 		if(!child_bb)
 			continue;
 		if(!bb)
+		{
 			bb = this.bounding_box = BBox.create();
-		BBox.merge( bb, bb, child_bb );
+			bb.set( child_bb );
+		}
+		else
+			BBox.merge( bb, bb, child_bb );
 	}
 
 	return bb;
+}
+
+/**
+* returns the N material
+* @method getMaterial
+* @param { Number } index
+* @return { RD.Material } the material or null if not found
+*/
+SceneNode.prototype.getMaterial = function(index)
+{
+	index = index || 0;
+
+	if(this.material)
+		return RD.Materials[this.material];
+	if( this.primitives && this.primitives.length > index)
+		return RD.Materials[this.primitives[index].material];
+	return null;
 }
 
 /**
@@ -1530,19 +1663,20 @@ SceneNode.prototype.testRay = (function(){
 		var local_result = vec3.create();
 
 		//test against children
-		for(var i = 0 ; i < this.children.length; ++ i )
+		for(var i = 0, l = this.children.length; i < l; ++i )
 		{
 			var child = this.children[i];
 			var child_collided = child.testRay( ray, local_result, max_dist, layers, test_against_mesh );
 			if(!child_collided)
 				continue;
+
 			var distance = vec3.distance( ray.origin, local_result );
-			if( distance < max_dist )
-			{
-				max_dist = distance;
-				result.set( local_result );
-				node = child_collided;
-			}
+			if( distance > max_dist )
+				continue;
+
+			max_dist = distance;
+			result.set( local_result );
+			node = child_collided;
 		}
 		
 		return node;
@@ -1567,7 +1701,7 @@ SceneNode.prototype.testRayWithMesh = (function(){
 	var end = vec3.create();
 	var inv = mat4.create();
 
-	return function( ray, coll_point, max_dist, layers, test_against_mesh, test_primitives )
+	return function( ray, coll_point, max_dist, layers, test_against_mesh )
 	{
 		if( !this.mesh )
 			return false;
@@ -1587,17 +1721,16 @@ SceneNode.prototype.testRayWithMesh = (function(){
 		vec3.sub( direction, end, origin );
 		vec3.normalize( direction, direction );
 
-		if( this.primitives && test_primitives )
+		var two_sided = this.flags.two_sided;
+
+		if( this.primitives && this.primitives.length )
 		{
-			for(var i = 0; i < this.primitives.length; ++i)
-			{
-				var info = this.primitives[i];
-				var test = RD.testRayMesh( ray, origin, direction, mesh, info.index, coll_point, max_dist, layers, test_against_mesh, true );
-				//TODO!
-			}
+			var material = RD.Materials[ this.primitives[0].material ];
+			if(material)
+				two_sided = material.flags.two_sided;
 		}
-		else
-			return RD.testRayMesh( ray, origin, direction, model, mesh, group_index, coll_point, max_dist, layers, test_against_mesh, this.flags.two_sided );
+
+		return RD.testRayMesh( ray, origin, direction, model, mesh, group_index, coll_point, max_dist, layers, test_against_mesh, two_sided );
 	}
 })();
 
@@ -1922,6 +2055,8 @@ Camera.prototype.orthographic = function(frustum_size, near, far, aspect)
 */
 Camera.prototype.lookAt = function(position,target,up)
 {
+	if(this._position == target) //special case
+		target = vec3.clone( target );
 	vec3.copy(this._position, position);
 	vec3.copy(this._target, target);
 	vec3.copy(this._up, up);
@@ -1987,7 +2122,9 @@ Camera.prototype.updateMatrices = function( force )
 Camera.prototype.getModel = function(m)
 {
 	m = m || mat4.create();
-	mat4.invert(this._model_matrix, this._view_matrix );
+	if(this._must_update_matrix)
+		this.updateMatrices();
+	//mat4.invert(this._model_matrix, this._view_matrix ); //already done when updateMatrices
 	mat4.copy(m, this._model_matrix);
 	return m;
 }
@@ -2022,13 +2159,13 @@ Camera.prototype.getLocalVector = function(v, result)
 }
 
 /**
-* transform point from local to global
-* @method getLocalVector
+* transform point from local to global coordinates
+* @method localToGlobal
 * @param {vec3} v
 * @param {vec3} result [Optional]
 * @return {vec3} local point transformed
 */
-Camera.prototype.getLocalPoint = function(v, result)
+Camera.prototype.localToGlobal = function(v, result)
 {
 	if(this._must_update_matrix)
 		this.updateMatrices();
@@ -2036,7 +2173,36 @@ Camera.prototype.getLocalPoint = function(v, result)
 	return vec3.transformMat4( result || vec3.create(), v, this._model_matrix );
 }
 
-Camera.prototype.localToGlobal = Camera.prototype.getLocalPoint;
+Camera.prototype.getLocalPoint = Camera.prototype.localToGlobal;
+
+/**
+* transform point from global coordinates (world space) to local coordinates (view space)
+* @method globalToLocal
+* @param {vec3} v
+* @param {vec3} result [Optional]
+* @return {vec3} local point
+*/
+Camera.prototype.globalToLocal = function(v, result)
+{
+	if(this._must_update_matrix)
+		this.updateMatrices();
+	return vec3.transformMat4( result || vec3.create(), v, this._view_matrix );
+}
+
+/**
+* transform vector from global coordinates (world space) to local coordinates (view space) taking into account only rotation and scaling
+* @method globalVectorToLocal
+* @param {vec3} v
+* @param {vec3} result [Optional]
+* @return {vec3} local vector
+*/
+Camera.prototype.globalVectorToLocal = function(v, result)
+{
+	if(this._must_update_matrix)
+		this.updateMatrices();
+	return mat4.rotateVec3( result || vec3.create(), this._view_matrix, v );
+}
+
 
 /**
 * gets the front vector normalized 
@@ -2298,6 +2464,25 @@ Camera.prototype.getRayPlaneCollision = function(x,y, position, normal, result, 
 		return result;
 	return null;
 	//*/
+}
+
+
+Camera.prototype.getModelForScreenPixel = function(x,y,distance,face_to_eye, result)
+{
+	result = result || mat4.create();
+
+	//convert coord from screen to world
+	var pos = this.unproject([x,y,-1]);
+	var delta = vec3.sub( vec3.create(), pos, this._position );
+	vec3.normalize( delta, delta );
+	vec3.scaleAndAdd( pos, pos, delta, distance );
+
+	vec3.normalize( delta, delta );
+
+	//build matrix
+	mat4.fromTranslationFrontTop( result, pos, delta, this._up );
+
+	return result;
 }
 
 Camera.controller_keys = { forward: "UP", back: "DOWN", left:"LEFT", right:"RIGHT" };
@@ -2581,7 +2766,7 @@ Scene.prototype.findNodesInBBox = function( box, layers, out )
 }
 
 /**
-* propagate update method
+* propagate update method to all nodes
 * @method update
 * @param {number} dt
 */
@@ -2654,7 +2839,9 @@ RD.testRayWithNodes = function testRayWithNodes( ray, nodes, coll, max_dist, lay
 	if(!coll)
 		coll = ray.collision_point;
 
-	var local_result = vec3.create();
+	if( !RD.testRayWithNodes.local_result )
+		RD.testRayWithNodes.local_result = vec3.create();
+	var local_result = RD.testRayWithNodes.local_result;
 
 	//test against nodes
 	var coll_node = null;
@@ -2664,17 +2851,18 @@ RD.testRayWithNodes = function testRayWithNodes( ray, nodes, coll, max_dist, lay
 		var child_collided = node.testRay( ray, local_result, max_dist, layers, test_against_mesh );
 		if(!child_collided)
 			continue;
+
 		var distance = vec3.distance( ray.origin, local_result );
-		if( distance < max_dist )
-		{
-			max_dist = distance;
-			coll.set( local_result );
-			RD.testRayWithNodes.coll_node = child_collided;
-			if(!get_collision_node)
-				coll_node = node; //child_collided;
-			else
-				coll_node = child_collided;
-		}
+		if( distance > max_dist )
+			continue;
+
+		max_dist = distance; //adjust distance
+		coll.set( local_result );
+		RD.testRayWithNodes.coll_node = child_collided;
+		if(!get_collision_node)
+			coll_node = node; //child_collided;
+		else
+			coll_node = child_collided;
 	}	
 
 	return coll_node;
@@ -2896,6 +3084,21 @@ Material.prototype.configure = function(o)
 		this[i] = o[i];
 }
 
+/**
+* Stores this material in the global RD.Materials container
+* @method register
+* @param {String} name if no name is passed it will use this.name
+*/
+Material.prototype.register = function(name)
+{
+	if(name)
+		this.name = name;
+	if(!this.name)
+		throw("cannot register material without name");
+	RD.Materials[ this.name ] = this;
+	return this; //to chain
+}
+
 Material.prototype.serialize = function()
 {
 	var o = {
@@ -2908,6 +3111,8 @@ Material.prototype.serialize = function()
 		o.name = this.name;
 	if(this.alphaMode)
 		o.alphaMode = this.alphaMode;
+	if(this.blendMode)
+		o.blendMode = this.blendMode;
 	if(this.alphaCutoff != 0.5)
 		o.alphaCutoff = this.alphaCutoff;
 	if(this.uv_transform)
@@ -2916,6 +3121,8 @@ Material.prototype.serialize = function()
 		o.normalFactor = this.normalFactor;
 	if(this.displacementFactor)
 		o.displacementFactor = this.displacementFactor;
+	if(this.backface_color)
+		o.backface_color = typedArrayToArray( this.backface_color );
 	if(this.model)
 	{
 		o.model = this.model;
@@ -3015,6 +3222,7 @@ function Renderer( context, options )
 	this.sort_by_priority = true;
 	this.sort_by_distance = false;
 	this.reverse_normals = false; //used for reflections
+	this.disable_cull_face = false;
 	this.layers_affect_children = false;
 	
 	this.assets_folder = "";
@@ -3377,8 +3585,14 @@ Renderer.prototype.renderNode = function(node, camera)
 		{
 			var prim = node.primitives[i];
 			var material = this.overwrite_material || RD.Materials[ prim.material ];
-			if(material)
-				this.renderMeshWithMaterial( node._global_matrix, mesh, material, "triangles", i );
+			if(!material)
+				continue;
+			if( this.onFilterByMaterial )
+			{
+				if( this.onFilterByMaterial( material, RD.Materials[ prim.material ] ) == false )
+					continue;
+			}
+			this.renderMeshWithMaterial( node._global_matrix, mesh, material, "triangles", i );
 		}
 		return;
 	}
@@ -3540,7 +3754,8 @@ Renderer.prototype.renderMeshWithMaterial = function( model, mesh, material, ind
 }
 
 //allows to pass a mesh or a bounding box
-Renderer.prototype.renderBounding = function(mesh_or_bb, matrix)
+//if matrix specified, the bbox will be TSR on rendering (rendered ad OOBB), not recomputed using the matrix
+Renderer.prototype.renderBounding = function(mesh_or_bb, matrix, color)
 {
 	if(!mesh_or_bb)
 		return;
@@ -3553,10 +3768,12 @@ Renderer.prototype.renderBounding = function(mesh_or_bb, matrix)
 	else
 		bb = mesh_or_bb;
 
+	color = color || [1,1,0,1];
+
 	var s = bb.subarray(3,6); //halfsize
 	mat4.translate( m, matrix, bb.subarray(0,3) );
 	mat4.scale( m, m, [s[0]*2,s[1]*2,s[2]*2] );
-	this.renderMesh( m, gl.meshes["cube"], null, [1,1,0,1], null, gl.LINES, "wireframe" );
+	this.renderMesh( m, gl.meshes["cube"], null, color, null, gl.LINES, "wireframe" );
 }
 
 Renderer.prototype.enableItemFlags = function(item)
@@ -3568,7 +3785,7 @@ Renderer.prototype.enableItemFlags = function(item)
 	gl[ item.flags.depth_test === false ? "disable" : "enable"]( gl.DEPTH_TEST );
 	if( item.flags.depth_write === false )
 		gl.depthMask( false );
-	gl[ item.flags.two_sided === true ? "disable" : "enable"]( gl.CULL_FACE );
+	gl[ item.flags.two_sided === true || this.disable_cull_face ? "disable" : "enable"]( gl.CULL_FACE );
 	
 	//blend
 	if(	item.blend_mode !== RD.BLEND_NONE)
@@ -3627,13 +3844,17 @@ Renderer.prototype.setPointSize = function(v)
 * @param {GL.Shader} shader
 * @param {Number} point_size
 */
-RD.Renderer.prototype.renderPoints = function( positions, extra, camera, num_points, shader, point_size, primitive, texture )
+RD.Renderer.prototype.renderPoints = function( positions, extra, camera, num_points, shader, point_size, primitive, texture, model )
 {
 	if(!positions || positions.constructor !== Float32Array)
 		throw("RD.renderPoints only accepts Float32Array");
 	if(!shader)
 	{
-		if( texture )
+		if( primitive == GL.LINES || primitive == GL.LINE_LOOP )
+		{
+			shader = this.shaders["flat"];
+		}
+		else if( texture )
 		{
 			shader = this.shaders["_points_textured"];
 			if(!shader)
@@ -3644,10 +3865,13 @@ RD.Renderer.prototype.renderPoints = function( positions, extra, camera, num_poi
 		}
 		else
 		{
-			shader = this.shaders["_points"];
+			shader = this.shaders[ extra ? "_points_color" : "_points"];
 			if(!shader)
 			{
-				shader = this.shaders["_points"] = new GL.Shader( RD.points_vs_shader, RD.points_fs_shader );
+				if(extra)
+					shader = this.shaders["_points_color"] = new GL.Shader( RD.points_vs_shader, RD.points_fs_shader, { "COLORED":""} );
+				else
+					shader = this.shaders["_points"] = new GL.Shader( RD.points_vs_shader, RD.points_fs_shader );
 				shader.uniforms({u_texture:0, u_atlas: 1, u_pointSize: 1});
 			}
 		}
@@ -3688,6 +3912,7 @@ RD.Renderer.prototype.renderPoints = function( positions, extra, camera, num_poi
 	shader.setUniform( "u_color", this._color );
 	shader.setUniform( "u_pointSize", point_size );
 	shader.setUniform( "u_camera_perspective", camera._projection_matrix[5] );
+	shader.setUniform( "u_model", model || RD.IDENTITY ); 
 	shader.setUniform( "u_viewport", gl.viewport_data );
 	shader.setUniform( "u_viewprojection", camera._viewprojection_matrix );
 	if(texture)
@@ -3703,6 +3928,7 @@ attribute vec3 a_vertex;\n\
 attribute vec4 a_extra4;\n\
 varying vec3 v_pos;\n\
 varying vec4 v_extra4;\n\
+uniform mat4 u_model;\n\
 uniform mat4 u_viewprojection;\n\
 uniform vec4 u_viewport;\n\
 uniform float u_camera_perspective;\n\
@@ -3716,7 +3942,7 @@ float computePointSize( float radius, float w )\n\
 }\n\
 \n\
 void main() {\n\
-	v_pos = a_vertex;\n\
+	v_pos = (u_model * vec4(a_vertex,1.0)).xyz;\n\
 	v_extra4 = a_extra4;\n\
 	gl_Position = u_viewprojection * vec4(v_pos,1.0);\n\
 	gl_PointSize = computePointSize( u_pointSize, gl_Position.w );\n\
@@ -3726,6 +3952,7 @@ void main() {\n\
 RD.points_fs_shader = "\n\
 precision highp float;\n\
 uniform vec4 u_color;\n\
+varying vec4 v_extra4;\n\
 vec2 remap(in vec2 value, in vec2 low1, in vec2 high1, in vec2 low2, in vec2 high2 ) { vec2 range1 = high1 - low1; vec2 range2 = high2 - low2; return low2 + range2 * (value - low1) / range1; }\n\
 #ifdef TEXTURED\n\
 	uniform sampler2D u_texture;\n\
@@ -3736,6 +3963,9 @@ vec2 remap(in vec2 value, in vec2 low1, in vec2 high1, in vec2 low2, in vec2 hig
 \n\
 void main() {\n\
 	vec4 color = u_color;\n\
+	#ifdef COLORED\n\
+		color *= v_extra4;\n\
+	#endif\n\
 	#ifdef TEXTURED\n\
 		color *= texture2D( u_texture, gl_FragCoord );\n\
 	#endif\n\
@@ -3877,6 +4107,36 @@ void main() {\n\
 ";
 
 /**
+* Returns the path appending the folder where assets are located
+* @method getAssetFullPath
+* @param {String} name name (and url) of the mesh
+* @return {String} full path
+*/
+Renderer.prototype.getAssetFullPath = function( url, skip_assets_folder )
+{
+	if(url.indexOf("://") != -1 || skip_assets_folder)
+		return url;
+
+	if(!this.assets_folder)
+		return url;
+	else  if(this.onGetAssetsFolder)
+		return this.onGetAssetFolder(url);
+	else
+	{
+		var hasSlashA = this.assets_folder.substr(-1) == "/";
+		var hasSlashB = url[0] == "/";
+		if( hasSlashA != hasSlashB )
+			return this.assets_folder + url;
+		else if ( hasSlashA && hasSlashB )
+			return this.assets_folder + url.substr(1);
+		else 
+			return this.assets_folder + "/" + url;
+	}
+	console.warn("this path should never be executed...");
+	return url;
+}
+
+/**
 * Loads one mesh and stores inside the meshes object to be reused in the future, if it is already loaded it skips the loading
 * @method loadMesh
 * @param {String} name name (and url) of the mesh
@@ -3891,15 +4151,6 @@ Renderer.prototype.loadMesh = function( url, on_complete, skip_assets_folder )
 		return;
 
 	var name = url;
-	/* no options
-	if(options)
-	{
-		if(options.name)
-			name = options.name;
-		if(options.preview)
-			name = options.preview;
-	}
-	*/
 
 	//check if we have it
 	var mesh = this.meshes[ name ];
@@ -3913,9 +4164,7 @@ Renderer.prototype.loadMesh = function( url, on_complete, skip_assets_folder )
 	var that = this;
 	
 	//load it
-	var full_url = url;
-	if(full_url.indexOf("://") == -1 && !skip_assets_folder)
-		full_url = this.assets_folder + url;
+	var full_url = this.getAssetFullPath( url, skip_assets_folder);
 
 	var new_mesh = GL.Mesh.fromURL( full_url, function(m){
 		if(!m)
@@ -3974,10 +4223,7 @@ Renderer.prototype.loadTexture = function( url, options, on_complete, skip_asset
 	var that = this;
 	
 	//load it
-	var full_url = url;
-	if(full_url.indexOf("://") == -1 && !skip_assets_folder)
-		full_url = this.assets_folder + url;
-
+	var full_url = this.getAssetFullPath( url, skip_assets_folder);
 	var new_tex = null;
 	
 	if( url.indexOf("CUBEMAP") != -1 )
@@ -5012,6 +5258,42 @@ RD.parseTextConfig = function(text)
 
 Renderer.prototype.createShaders = function()
 {
+	if( gl._shaders_created )
+	{
+		this._flat_shader = gl.shaders["flat"];
+		this._flat_instancing_shader = gl.shaders["flat_instancing"];
+		this._flat_skinning_shader = gl.shaders["flat_skinning"];
+		this._point_shader = gl.shaders["point"];	
+		this._color_shader = gl.shaders["color"];
+		this._texture_shader = gl.shaders["texture"];
+		this._texture_albedo_shader = gl.shaders["texture_albedo"];
+		this._texture_instancing_shader = gl.shaders["texture_instancing"];
+		this._texture_albedo_instancing_shader = gl.shaders["texture_albedo_instancing"];
+
+		if(RD.Skeleton)
+			this._texture_skinning_shader = gl.shaders["texture_skinning"];
+
+		this._texture_transform_shader = gl.shaders["texture_transform"];
+		
+		//basic phong shader
+		this._phong_uniforms = { u_ambient: vec3.create(), u_light_vector: vec3.fromValues(0.5442, 0.6385, 0.544), u_light_color: RD.WHITE };
+		this._phong_shader = gl.shaders["phong"];
+		this._phong_shader._uniforms = this._phong_uniforms;
+		this._phong_shader.uniforms( this._phong_uniforms );
+
+		this._phong_instancing_shader = gl.shaders["phong_instancing"];
+		this._phong_instancing_shader._uniforms = this._phong_uniforms;
+		this._phong_instancing_shader.uniforms( this._phong_uniforms );
+
+		this._textured_phong_shader = gl.shaders["textured_phong"];
+		this._textured_phong_shader.uniforms( this._phong_uniforms );
+		
+		this._textured_phong_instancing_shader = gl.shaders["textured_phong_instancing"];
+		this._textured_phong_instancing_shader.uniforms( this._phong_uniforms );
+		this._normal_shader = gl.shaders["normal"];
+		this._uvs_shader = gl.shaders["uvs"];
+	}
+
 	//adds code for skinning
 	var skinning = "";
 	var skinning_vs = "";
@@ -5056,19 +5338,19 @@ Renderer.prototype.createShaders = function()
 				}\
 				";
 		
-	var fragment_shader = this._flat_fragment_shader = '\
+	var fragment_shader = this._flat_fragment_shader = "\
 				precision highp float;\
 				uniform vec4 u_color;\
 				void main() {\
 				  gl_FragColor = u_color;\
 				}\
-	';
+	";
 
 	gl.shaders["flat"] = this._flat_shader = new GL.Shader( vertex_shader, fragment_shader );
 	gl.shaders["flat_instancing"] = this._flat_instancing_shader = new GL.Shader(vertex_shader, fragment_shader, { INSTANCING:"" });
 	gl.shaders["flat_skinning"] = this._flat_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, {SKINNING:""} );
 	
-	this._point_shader = new GL.Shader('\
+	this._point_shader = new GL.Shader("\
 				precision highp float;\
 				attribute vec3 a_vertex;\
 				uniform mat4 u_mvp;\
@@ -5077,7 +5359,7 @@ Renderer.prototype.createShaders = function()
 					gl_PointSize = u_pointSize;\
 					gl_Position = u_mvp * vec4(a_vertex,1.0);\
 				}\
-				', '\
+				", "\
 				precision highp float;\
 				uniform vec4 u_color;\
 				void main() {\
@@ -5085,10 +5367,10 @@ Renderer.prototype.createShaders = function()
 				     discard;\
 				  gl_FragColor = u_color;\
 				}\
-			');
+			");
 	gl.shaders["point"] = this._point_shader;	
 	
-	this._color_shader = new GL.Shader('\
+	this._color_shader = new GL.Shader("\
 		precision highp float;\
 		attribute vec3 a_vertex;\
 		attribute vec4 a_color;\
@@ -5100,16 +5382,16 @@ Renderer.prototype.createShaders = function()
 			gl_Position = u_mvp * vec4(a_vertex,1.0);\
 			gl_PointSize = 5.0;\
 		}\
-		', '\
+		", "\
 		precision highp float;\
 		varying vec4 v_color;\
 		void main() {\
 		  gl_FragColor = v_color;\
 		}\
-	');
+	");
 	gl.shaders["color"] = this._color_shader;
 
-	var fragment_shader = '\
+	var fragment_shader = "\
 		precision highp float;\
 		varying vec2 v_coord;\
 		uniform vec4 u_color;\n\
@@ -5125,11 +5407,11 @@ Renderer.prototype.createShaders = function()
 			#else\n\
 				vec4 color = u_color * texture2D(u_color_texture, v_coord);\n\
 			#endif\n\
-			if(color.w < u_global_alpha_clip)\n\
+			if(color.w <= u_global_alpha_clip)\n\
 				discard;\n\
 			gl_FragColor = color;\
 		}\
-	';
+	";
 	
 	gl.shaders["texture"] = this._texture_shader = new GL.Shader( vertex_shader, fragment_shader );
 	gl.shaders["texture_albedo"] = this._texture_albedo_shader = new GL.Shader( vertex_shader, fragment_shader, { ALBEDO:"" } );
@@ -5139,7 +5421,7 @@ Renderer.prototype.createShaders = function()
 	if(RD.Skeleton)
 		gl.shaders["texture_skinning"] = this._texture_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, { SKINNING:"" } );
 
-	this._texture_transform_shader = new GL.Shader('\
+	this._texture_transform_shader = new GL.Shader("\
 		precision highp float;\n\
 		attribute vec3 a_vertex;\n\
 		attribute vec2 a_coord;\n\
@@ -5151,7 +5433,7 @@ Renderer.prototype.createShaders = function()
 			gl_Position = u_mvp * vec4(a_vertex,1.0);\n\
 			gl_PointSize = 5.0;\n\
 		}\n\
-		', '\n\
+		", "\n\
 		precision highp float;\n\
 		varying vec2 v_coord;\n\
 		uniform vec4 u_color;\n\
@@ -5159,17 +5441,17 @@ Renderer.prototype.createShaders = function()
 		uniform sampler2D u_color_texture;\n\
 		void main() {\n\
 			vec4 color = u_color * texture2D(u_color_texture, v_coord);\n\
-			if(color.w < u_global_alpha_clip)\n\
+			if(color.w <= u_global_alpha_clip)\n\
 				discard;\n\
 			gl_FragColor = color;\n\
 		}\
-	');
+	");
 	gl.shaders["texture_transform"] = this._texture_transform_shader;
 	
 	//basic phong shader
 	this._phong_uniforms = { u_ambient: vec3.create(), u_light_vector: vec3.fromValues(0.5442, 0.6385, 0.544), u_light_color: RD.WHITE };
 
-	var fragment_shader = this._fragment_shader = '\
+	var fragment_shader = this._fragment_shader = "\
 			precision highp float;\n\
 			varying vec3 v_normal;\n\
 			varying vec2 v_coord;\n\
@@ -5195,7 +5477,7 @@ Renderer.prototype.createShaders = function()
 				#endif\n\
 				gl_FragColor = color * (vec4(u_ambient,1.0) + NdotL * vec4(u_light_color,1.0));\n\
 			}\
-	'
+	";
 	
 	gl.shaders["phong"] = this._phong_shader = new GL.Shader( vertex_shader, fragment_shader );
 	this._phong_shader._uniforms = this._phong_uniforms;
@@ -5211,24 +5493,25 @@ Renderer.prototype.createShaders = function()
 	gl.shaders["textured_phong_instancing"] = this._textured_phong_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { INSTANCING: "", TEXTURED: "" } );
 	this._textured_phong_instancing_shader.uniforms( this._phong_uniforms );
 
-	var fragment_shader = '\
+	var fragment_shader = "\
 			precision highp float;\n\
 			varying vec3 v_normal;\n\
 			void main() {\n\
 				gl_FragColor = vec4( normalize(v_normal),1.0);\n\
 			}\
-	'
+	";
 	gl.shaders["normal"] = this._normal_shader = new GL.Shader( vertex_shader, fragment_shader );
 
-	var fragment_shader = '\
+	var fragment_shader = "\
 			precision highp float;\n\
 			varying vec2 v_coord;\n\
 			void main() {\n\
 				gl_FragColor = vec4(v_coord,0.0,1.0);\n\
 			}\
-	'
+	";
 	gl.shaders["uvs"] = this._uvs_shader = new GL.Shader( vertex_shader, fragment_shader );
 
+	gl._shaders_created = true;
 }
 
 //****************************
@@ -5297,6 +5580,84 @@ RD.readPixels = function( url, on_complete )
 		on_complete(data,this);
 	}
 };
+
+RD.alignDivToNode = function( domElement, cameraElement, div, node, camera, allow_cursor )
+{
+	var width = parseInt( domElement.clientWidth );
+	var height = parseInt( domElement.clientHeight );
+	var _widthHalf = width*0.5;
+	var _heightHalf = height*0.5;
+	var fov = camera._projection_matrix[ 5 ] * _heightHalf;
+
+	//top container
+	domElement.style.width = gl.canvas.width + "px";
+	domElement.style.height = gl.canvas.height + "px";
+	domElement.style.perspective = fov + 'px';
+	domElement.style.pointerEvents = 'none';
+
+	if(cameraElement)
+	{
+		var cameraCSSMatrix = 'translateZ(' + fov + 'px) ' + getCameraCSSMatrix( camera._view_matrix );
+		var style = cameraCSSMatrix + ' translate(' + _widthHalf + 'px,' + _heightHalf + 'px)';
+		cameraElement.style.transformStyle = 'preserve-3d';
+		cameraElement.style.transform = style;
+		cameraElement.style.width = width + "px";
+		cameraElement.style.height = height + "px";
+		cameraElement.style.pointerEvents = 'none';
+	}
+
+	var model = node.getGlobalMatrix();
+	var scaleX = 1/div.clientWidth;
+	var scaleY = 1/div.clientHeight;
+	if( div.parentNode != cameraElement )
+		cameraElement.appendChild( div );
+
+	div.style.pointerEvents = allow_cursor ? 'auto' : 'none';
+	div.style.transform = getObjectCSSMatrix( model ) + ' scale3D('+scaleX+','+scaleY+',1)';
+
+	//renderObject( scene, scene, camera, cameraCSSMatrix );
+	function epsilon(a) { return Math.abs(a) < 0.00001 ? 0 : a; }
+
+	function getCameraCSSMatrix( matrix ) {
+		return 'matrix3d(' + epsilon( matrix[ 0 ] ) + ',' 
+			+ epsilon( - matrix[ 1 ] ) + ',' 
+			+ epsilon( matrix[ 2 ] ) + ','
+			+ epsilon( matrix[ 3 ] ) + ','
+			+ epsilon( matrix[ 4 ] ) + ','
+			+ epsilon( - matrix[ 5 ] ) + ','
+			+ epsilon( matrix[ 6 ] ) + ',' 
+			+ epsilon( matrix[ 7 ] ) + ','
+			+ epsilon( matrix[ 8 ] ) + ','
+			+ epsilon( - matrix[ 9 ] ) + ','
+			+ epsilon( matrix[ 10 ] ) + ','
+			+ epsilon( matrix[ 11 ] ) + ','
+			+ epsilon( matrix[ 12 ] ) + ','
+			+ epsilon( - matrix[ 13 ] ) + ','
+			+ epsilon( matrix[ 14 ] ) + ','
+			+ epsilon( matrix[ 15 ] ) + ')';
+	}
+
+	function getObjectCSSMatrix( matrix ) {
+
+		const matrix3d = 'matrix3d(' + epsilon( matrix[ 0 ] ) + ','
+			+ epsilon( matrix[ 1 ] ) + ','
+			+ epsilon( matrix[ 2 ] ) + ','
+			+ epsilon( matrix[ 3 ] ) + ','
+			+ epsilon( - matrix[ 4 ] ) + ','
+			+ epsilon( - matrix[ 5 ] ) + ','
+			+ epsilon( - matrix[ 6 ] ) + ','
+			+ epsilon( - matrix[ 7 ] ) + ','
+			+ epsilon( matrix[ 8 ] ) + ','
+			+ epsilon( matrix[ 9 ] ) + ','
+			+ epsilon( matrix[ 10 ] ) + ','
+			+ epsilon( matrix[ 11 ] ) + ','
+			+ epsilon( matrix[ 12 ] ) + ','
+			+ epsilon( matrix[ 13 ] ) + ','
+			+ epsilon( matrix[ 14 ] ) + ','
+			+ epsilon( matrix[ 15 ] ) + ')';
+		return 'translate(-50%,-50%) ' + matrix3d;
+	}
+}
 
 //in case litegl is not installed, Rendeer could still be useful
 if(typeof(GL) == "undefined")

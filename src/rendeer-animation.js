@@ -36,6 +36,8 @@ Animation.prototype.applyAnimation = function( root_node, time, interpolation )
 	for(var i = 0; i < this.tracks.length; ++i)
 	{
 		var track = this.tracks[i];
+		if(track.enabled === false)
+			continue;
 		track.applyTrack( root_node, time, interpolation );
 	}
 }
@@ -107,6 +109,7 @@ Animation.prototype.findNearestRight = function( time )
 
 RD.Animation = Animation;
 
+//a Track stores a set of keyframes that affect a single property of an object (usually transform info from nodes)
 function Track()
 {
 	this.enabled = true;
@@ -454,8 +457,10 @@ Track.prototype.applyTrack = function( root, time, interpolation )
 	if(!root)
 		return;
 
+	//reads value stored in track
 	var sample = this.getSample( time, interpolation );
 
+	//tryes to apply it to target
 	if( root.constructor === RD.SceneNode ) //apply to scene ierarchy
 	{
 		var node = null;
@@ -478,12 +483,15 @@ Track.prototype.applyTrack = function( root, time, interpolation )
 
 Track.prototype.serialize = function()
 {
+	//if( this.packed_data ) //TODO
+		//unpack
+
 	var o = {
 		enabled: this.enabled,
 		target_node: this.target_node, 
 		target_property: this.target_property, 
 		type: this.type,
-		data: this.data.concat(), //clone!
+		data: this.data.constructor == Array ? this.data.concat() : typedArrayToArray(this.data), //clone!
 		packed_data: this.packed_data
 	};
 	return o;
@@ -507,15 +515,18 @@ Track.prototype.configure = function(o)
 		else
 			this.type = o.type;
 	}
-	if(o.data.concat)
-		this.data = o.data.concat(); //clone!
-	else
-		this.data = new o.data.constructor( o.data );
 
-	if(o.packed_data)
-		this.packed_data = o.packed_data;
+	//clone data
+	if(o.packed_data || o.data.constructor === Float32Array) 
+	{
+		this.packed_data = true;
+		this.data = new Float32Array( o.data );
+	}
 	else
-		this.packed_data = this.data.constructor !== Array;
+	{
+		this.packed_data = false;
+		this.data = o.data.concat();
+	}
 }
 
 RD.interpolateLinear = function( a, b, t, result, type, value_size, track )
@@ -679,7 +690,11 @@ Skeleton.identity = mat4.create();
 
 Skeleton.prototype.getBoneMatrix = function( name, global )
 {
-	var index = this.bones_by_name.get(name);
+	var index = -1;
+	if(name.constructor === String)
+		index = this.bones_by_name.get(name);
+	else if(name.constructor === Number)
+		index = name;
 	if( index === undefined )
 		return Skeleton.identity;
 	if(global)
@@ -688,18 +703,32 @@ Skeleton.prototype.getBoneMatrix = function( name, global )
 }
 
 //imports skeleton from structure following Rendeer
-Skeleton.prototype.importSkeleton = function(root_node)
+Skeleton.prototype.importSkeleton = function( root_node, extra_transform )
 {
-	var bones = this.bones = [];
 	var that = this;
+
+	if(!bones)
+		this.bones = [];
+	else
+		this.bones.length = 0;
+
+	var bones = this.bones;
+
 	inner_getChilds(root_node);
+
+	if( extra_transform )
+		mat4.mul( bones[0].model, extra_transform, bones[0].model );
+
 	this.updateGlobalMatrices();
 
 	function inner_getChilds( node )
 	{
 		var bone = new Bone();
 		bone.name = node.name || node.id;
-		bone.model.set( node.model || node.transform );
+		if(node.model)
+			bone.model.set( node.model );
+		else if( node.transform && node.getLocalMatrix)
+			bone.model.set( node.getLocalMatrix() );
 		bone.index = bones.length;
 		bones.push( bone );
 		that.bones_by_name.set( bone.name, bone.index );
@@ -816,9 +845,17 @@ Skeleton.prototype.assignLayer = function(bone, layer)
 	//TODO
 }
 
+Skeleton.temp_vec3 = vec3.create();
+Skeleton.temp_vec4 = vec4.create();
+Skeleton.temp_mat4 = mat4.create();
+
 //applies any transform found in the animation tracks to this skeleton
 Skeleton.prototype.applyTracksAnimation = function( animation, time )
 {
+	var v3 = Skeleton.temp_vec3;
+	var v4 = Skeleton.temp_vec4;
+	var m = Skeleton.temp_mat4;
+
 	for(var i = 0; i < animation.tracks.length; ++i )
 	{
 		var track = animation.tracks[i];
@@ -828,6 +865,25 @@ Skeleton.prototype.applyTracksAnimation = function( animation, time )
 		var bone = this.bones[ bone_index ];
 		if( track.target_property == "model" || track.target_property == "matrix" )
 			track.getSample( time, RD.LINEAR, bone.model );
+		else if( track.target_property == "position" )
+		{
+			track.getSample( time, RD.LINEAR, v3 );
+			mat4.setTranslation( bone.model, v3 );
+		}
+		else if( track.target_property == "rotation" )
+		{
+			track.getSample( time, RD.LINEAR, v4 );
+			mat4.fromQuat( m, v4 );
+			//mat4.mul( bone.model, m, bone.model);
+			mat4.getTranslation( v3, bone.model );
+			mat4.setTranslation( m, v3 );
+			bone.model.set( m );
+		}
+		else if( track.target_property == "scaling" )
+		{
+			track.getSample( time, RD.LINEAR, v3 );
+			mat4.scale( bone.model, bone.model, v3 );
+		}
 	}
 }
 
@@ -1114,7 +1170,8 @@ SkeletalAnimation.prototype.assignTime = function(time, loop, interpolate, layer
 	var bones_map = this.bones_map;
 
 	//compute local bones
-	for (var i = 0; i < num_animated_bones; ++i)
+	var l = Math.min( num_animated_bones, bones_map.length );
+	for (var i = 0; i < l; ++i)
 	{
 		var bone_index = bones_map[i];
 		var bone = skeleton.bones[bone_index];
@@ -1254,7 +1311,7 @@ SkeletalAnimation.prototype.toData = function()
 }
 
 //resamples the tracks to get poses over time
-SkeletalAnimation.prototype.fromTracksAnimation = function( skeleton, animation, frames_per_second )
+SkeletalAnimation.prototype.fromTracksAnimation = function( skeleton, animation, frames_per_second, extra_transform )
 {
 	this.duration = animation.duration;
 	this.samples_per_second = frames_per_second;
@@ -1262,6 +1319,7 @@ SkeletalAnimation.prototype.fromTracksAnimation = function( skeleton, animation,
 
 	//count animated bones and update bones map
 	var num_animated_bones = 0;
+	var animated_bones = {};
 	for(var i = 0; i < animation.tracks.length; ++i )
 	{
 		var track = animation.tracks[i];
@@ -1270,7 +1328,16 @@ SkeletalAnimation.prototype.fromTracksAnimation = function( skeleton, animation,
 			continue;
 		//var bone = skeleton.bones[ bone_index ];
 		this.bones_map[ num_animated_bones ] = bone_index; //store to which bone is the N matrix in the keyframes
-		num_animated_bones++;
+		if( animated_bones[track.target_node] == null ) //one bone can have several tracks
+		{
+			animated_bones[track.target_node] = track.target_node;
+			num_animated_bones++;
+		}
+	}
+
+	if( num_animated_bones > skeleton.bones.length )
+	{
+		console.warn("more animated bones than bones?");
 	}
 
 	//return;
@@ -1284,6 +1351,8 @@ SkeletalAnimation.prototype.fromTracksAnimation = function( skeleton, animation,
 	{
 		var t = i * (1/frames_per_second);
 		this.skeleton.applyTracksAnimation( animation, t );
+		if( extra_transform )
+			mat4.mul( this.skeleton.bones[0].model, extra_transform, this.skeleton.bones[0].model );
 		this.assignPoseToKeyframe( this.skeleton, i );
 	}
 }
@@ -1303,31 +1372,116 @@ if(RD.SceneNode)
 	{
 		this.assignSkeleton( skeletal_animation.skeleton );
 	}
+
+	RD.SceneNode.prototype.updateSkinningBones = function(root)
+	{
+		root = root || this;
+
+		if(this.skin && this.mesh)
+			RD.collectBones( root, this.skin, gl.meshes[ this.mesh ] );
+
+		if(this.children && this.children.length)
+			for(var i = 0; i < this.children.length; ++i)
+				this.children[i].updateSkinningBones(root);
+	}
 }
 
-//use it with a collada.js to extract all info
+
+RD.collectBones = function( root, skin_info, mesh )
+{
+	if(!mesh || !mesh.bones)
+		return;
+
+	var num_bones = mesh.bones.length;
+	if(!skin_info._bone_matrices)
+		skin_info._bone_matrices = new Float32Array( 16 * num_bones );
+	var bone_matrices = skin_info._bone_matrices;
+	var inner_m = mat4.create();
+	var root_node = root.findNodeByName( skin_info.skeleton_root );
+	if(!root_node)
+		root_node == root;
+	var bm = mat4.create();
+
+	for (var i = 0; i < mesh.bones.length; ++i)
+	{
+		var bone_info = mesh.bones[i];
+		var m = bone_matrices.subarray(i*16,i*16+16);
+		var bone_name = bone_info[0];
+		var bone_node = root.findNodeByName( bone_name );
+		if(!bone_node)
+			continue;
+		mat4.identity( bm );
+		inner_getGlobalMatrix( bone_node, root_node, bm );
+		//bm = bone_node.getGlobalMatrix();
+		mat4.multiply( m, bm, bone_info[1] ); //use globals
+		if( mesh.bind_matrix )
+			mat4.multiply( m, m, mesh.bind_matrix );
+	}
+
+	function inner_getGlobalMatrix( node, root_node, bm )
+	{
+		if(!root_node || !node)
+			return bm;
+
+		if(node == root_node)
+		{
+			mat4.mul( bm, node.getGlobalMatrix(), bm );
+			return bm;
+		}
+
+		mat4.mul( bm, node.matrix, bm );
+		return inner_getGlobalMatrix( node._parent, root_node, bm );
+	}
+
+	return bone_matrices;
+}
+
+//use it with a collada.js or GLTF to extract all info
 //extracts info related to a character (its mesh, skeleton, animations and material)
-RD.AnimatedCharacterFromScene = function( scene, filename )
+RD.AnimatedCharacterFromScene = function( scene, filename, Z_is_up )
 {
 	var mesh_nodes = [];
 	var meshes = [];
 	var hips_node = null;
 
+	var root = null;
+	
+	if( scene.constructor === RD.SceneNode)
+		root = scene;
+	else 
+		root = scene.root;
+
 	//find hips and meshes
-	for(var i = 0; i < scene.root.children.length; ++i)
+	for(var i = 0; i < root.children.length; ++i)
 	{
-		var scene_node = scene.root.children[i];
-		if( scene_node.name && scene_node.name.indexOf("_Hips") != -1 || scene_node.type == "JOINT" )
+		var scene_node = root.children[i];
+		if( (scene_node.name && (scene_node.name == "Armature" || scene_node.name.indexOf("_Hips") != -1)) || scene_node.type == "JOINT" || scene_node.is_joint )
 			hips_node = scene_node;
 		else if( scene_node.mesh)
 		{
 			mesh_nodes.push( scene_node );
-			meshes.push({mesh: GL.Mesh.load( scene.meshes[ scene_node.mesh ] )});
+			var mesh = null;
+			if( gl.meshes[ scene_node.mesh ] )
+				mesh = gl.meshes[ scene_node.mesh ];
+			else if( scene.meshes && scene.meshes[ scene_node.mesh ] )
+				mesh = GL.Mesh.load( scene.meshes[ scene_node.mesh ] );
+			if(mesh)
+				meshes.push({mesh: mesh});
 		}
 	}
 
+	if(!hips_node && root.findNodesByFilter)
+	{
+		var r = root.findNodesByFilter(a=>a.skin);
+		if(r && r.length)
+			hips_node = r[0];
+	}
+
+	if(!mesh_nodes.length && root.findNodesByFilter)
+		mesh_nodes = root.findNodesByFilter(a=>a.mesh);
+
 	if(!hips_node)
-		throw("this DAE doesnt contain an animated character");
+		throw("this scene doesnt contain an animated character");
 
 	var material = null;
 	var final_mesh = null;
@@ -1345,29 +1499,70 @@ RD.AnimatedCharacterFromScene = function( scene, filename )
 		{
 			//get character mesh
 			mesh_name = mesh_nodes[0].mesh;
-			var mesh_info = scene.meshes[ mesh_name ];
-			final_mesh = GL.Mesh.fromBinary( mesh_info );
-			final_mesh.filename = mesh_name;
+			if( gl.meshes[ mesh_name ] )
+			{
+				final_mesh = gl.meshes[ mesh_name ];
+				final_mesh.filename = mesh_name;
+			}
+			else if( scene.meshes )
+			{
+				var mesh_info = scene.meshes[ mesh_name ];
+				final_mesh = GL.Mesh.fromBinary( mesh_info );
+				final_mesh.filename = mesh_name;
+			}
 		}
 
 		gl.meshes[ mesh_name ] = final_mesh;
 
+		var matname = null;
+		if(mesh_nodes[0].material)
+			matname = mesh_nodes[0].material;
+		else if(mesh_nodes[0].primitives && mesh_nodes[0].primitives.length)
+			matname = mesh_nodes[0].primitives[0].material;
+
+
 		//mat
-		material = scene.materials[ mesh_nodes[0].material ];
+		if( RD.Materials[ matname ] )
+			material = RD.Materials[ matname ];
+		else if( scene.materials )
+			material = scene.materials[ matname ];
+	}
+
+	//in case we need to rotate
+	var up_rotation = null;
+	if(Z_is_up && 0)
+	{
+		up_rotation = mat4.create();
+		mat4.rotateX( up_rotation, up_rotation, 90*DEG2RAD );
 	}
 
 	//get skeleton from base pose
 	var skeleton = new RD.Skeleton();
-	skeleton.importSkeleton( hips_node );
+	skeleton.importSkeleton( hips_node, up_rotation );
 
 	//get animation tracks
-	var animation_info = scene.resources[ scene.root.animation ];
-	var animation = new RD.Animation();
-	animation.configure( animation_info.takes["default"] );
+	var animation_name = null;
+	if( scene.root && scene.root.animation )
+		animation_name = scene.root.animation;
+	else if( scene.animations )
+		animation_name = scene.animations[0].id;
+
+	var animation = null;
+	if( RD.Animations[ animation_name ] )
+		animation = RD.Animations[ animation_name ];
+	else if( scene.resources )
+	{
+		var animation_info = scene.resources[ animation_name ];
+		animation = new RD.Animation();
+		animation.configure( animation_info.takes["default"] );
+	}
+
+	if(!animation)
+		throw("no animation in scene");
 
 	//create SkeletalAnimation sampling at 30 fps
 	var skeletal_anim = new RD.SkeletalAnimation();
-	skeletal_anim.fromTracksAnimation( skeleton, animation, 30 );
+	skeletal_anim.fromTracksAnimation( skeleton, animation, 30, up_rotation );
 	skeletal_anim.filename = filename;
 
 	return {
