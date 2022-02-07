@@ -919,7 +919,7 @@ SceneNode.prototype.resetTransform = function()
 SceneNode.prototype.translate = function( delta, local )
 {
 	if(local)
-		this.getLocalVector( delta, temp_vec3 );
+		this.getGlobalVector( delta, temp_vec3 );
 	else
 		temp_vec3.set(delta);
 	vec3.add( this._position, this._position, temp_vec3 );
@@ -1301,16 +1301,22 @@ SceneNode.prototype.getLocalPoint = function(v, result)
 }
 
 /**
-* Returns a point rotated by the local rotation
-* @method getLocalVector
+* Returns a point rotated by the local rotation (relative to its parent)
+* @method getParentVector
 * @param {vec3} v the point
 * @param {vec3} [result=vec3] where to store the output
 * @return {vec3} result
 */
-SceneNode.prototype.getLocalVector = function(v, result)
+SceneNode.prototype.getParentVector = function(v, result)
 {
 	result = result || vec3.create();
 	return vec3.transformQuat( result, v, this._rotation );
+}
+
+//LEGACY
+SceneNode.prototype.getLocalVector = function(v)
+{
+	console.error("DEPRECATED: SceneNode.prototype.getLocalVector, use getGlobalVector or getParentVector");
 }
 
 /**
@@ -1338,21 +1344,21 @@ SceneNode.prototype.getGlobalPosition = function(result, fast)
 }
 
 /**
-* Returns a point multiplied by the global matrix
-* @method getGlobalPoint
+* Returns a point from local coordinates to global (multiplied by the global matrix)
+* @method localToGlobal
 * @param {vec3} v the point
 * @param {vec3} [result=vec3] where to store the output
 * @param {vec3} fast [Boolean] if true uses the last global matrix computed instead of recomputing it (but it could be outdated)
 * @return {vec3} result
 */
-SceneNode.prototype.getGlobalPoint = function(v, result, fast)
+SceneNode.prototype.localToGlobal = function(v, result, fast)
 {
 	result = result || vec3.create();
 	var m = this.getGlobalMatrix( null, fast );
 	return vec3.transformMat4(result, v, m );	
 }
 
-SceneNode.prototype.localToGlobal = SceneNode.prototype.getGlobalPoint;
+SceneNode.prototype.getGlobalPoint = SceneNode.prototype.localToGlobal;
 
 /**
 * Transform a point from global coordinates to local coordinates
@@ -2154,13 +2160,13 @@ Camera.prototype.getLocalVector = function(v, result)
 }
 
 /**
-* transform point from local to global
-* @method getLocalVector
+* transform point from local to global coordinates
+* @method localToGlobal
 * @param {vec3} v
 * @param {vec3} result [Optional]
 * @return {vec3} local point transformed
 */
-Camera.prototype.getLocalPoint = function(v, result)
+Camera.prototype.localToGlobal = function(v, result)
 {
 	if(this._must_update_matrix)
 		this.updateMatrices();
@@ -2168,7 +2174,7 @@ Camera.prototype.getLocalPoint = function(v, result)
 	return vec3.transformMat4( result || vec3.create(), v, this._model_matrix );
 }
 
-Camera.prototype.localToGlobal = Camera.prototype.getLocalPoint;
+Camera.prototype.getLocalPoint = Camera.prototype.localToGlobal;
 
 /**
 * transform point from global coordinates (world space) to local coordinates (view space)
