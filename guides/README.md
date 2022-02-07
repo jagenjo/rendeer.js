@@ -83,6 +83,18 @@ The strings are the name of the assets that will be fetched when rendering. Thes
 
 But user is in charge of loading the assets manually, by default Rendeer does not perform asset loading automatically unless you set the ```renderer.autoload_assets = true;```, so add your resources to those containers before using them.
 
+So here is an example of how to create a mesh and assign it to a node:
+
+```js
+	var node = new RD.SceneNode();
+	node.mesh = "foo";
+	scene.root.addChild(node);
+	
+	//now we must have that mesh
+	var mesh = new GL.Mesh({vertices:[0,1,0, 1,0,0, 1,1,0]});
+	gl.meshes["foo"] = mesh;
+```
+
 ### The SceneNode transformations
 
 To perform transformations in the SceneNode there are three main properties in every SceneNode, which are position, rotation and scaling. 
