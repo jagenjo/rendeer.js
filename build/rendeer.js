@@ -3124,13 +3124,13 @@ Material.prototype.serialize = function()
 		o.displacementFactor = this.displacementFactor;
 	if(this.backface_color)
 		o.backface_color = typedArrayToArray( this.backface_color );
+	if(this.emissive)
+		o.emissive = typedArrayToArray( this.emissive );
 	if(this.model)
 	{
 		o.model = this.model;
 		o.metallicFactor = this.metallicFactor;
 		o.roughnessFactor = this.roughnessFactor;
-		if(this.emissive)
-			o.emissive = typedArrayToArray( this.emissive );
 	}
 
 	return o;
@@ -5640,7 +5640,7 @@ RD.alignDivToNode = function( domElement, cameraElement, div, node, camera, allo
 
 	function getObjectCSSMatrix( matrix ) {
 
-		const matrix3d = 'matrix3d(' + epsilon( matrix[ 0 ] ) + ','
+		var matrix3d = 'matrix3d(' + epsilon( matrix[ 0 ] ) + ','
 			+ epsilon( matrix[ 1 ] ) + ','
 			+ epsilon( matrix[ 2 ] ) + ','
 			+ epsilon( matrix[ 3 ] ) + ','
@@ -10150,8 +10150,8 @@ PBRPipeline.prototype.resolveQueries = function()
 	var useTimestamps = this._useQueryTimestamps;
 
 	if (startQuery || endQuery || timeElapsedQuery) {
-	  let disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT);
-	  let available;
+	  var disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT);
+	  var available;
 	  if (disjoint) {
 		// Have to redo all of the measurements.
 	  } else {
@@ -10162,11 +10162,11 @@ PBRPipeline.prototype.resolveQueries = function()
 		}
 
 		if (available) {
-		  let timeElapsed;
+		  var timeElapsed;
 		  if (useTimestamps) {
 			// See how much time the rendering of the object took in nanoseconds.
-			let timeStart = ext.getQueryObjectEXT(startQuery, ext.QUERY_RESULT_EXT);
-			let timeEnd = ext.getQueryObjectEXT(endQuery, ext.QUERY_RESULT_EXT);
+			var timeStart = ext.getQueryObjectEXT(startQuery, ext.QUERY_RESULT_EXT);
+			var timeEnd = ext.getQueryObjectEXT(endQuery, ext.QUERY_RESULT_EXT);
 			timeElapsed = timeEnd - timeStart;
 		  } else {
 			timeElapsed = ext.getQueryObjectEXT(timeElapsedQuery, ext.QUERY_RESULT_EXT);
@@ -11909,13 +11909,13 @@ RD.AnimatedCharacterFromScene = function( scene, filename, Z_is_up )
 
 	if(!hips_node && root.findNodesByFilter)
 	{
-		var r = root.findNodesByFilter(a=>a.skin);
+		var r = root.findNodesByFilter(function(a){ return a.skin; });
 		if(r && r.length)
 			hips_node = r[0];
 	}
 
 	if(!mesh_nodes.length && root.findNodesByFilter)
-		mesh_nodes = root.findNodesByFilter(a=>a.mesh);
+		mesh_nodes = root.findNodesByFilter(function(a){ return a.mesh; });
 
 	if(!hips_node)
 		throw("this scene doesnt contain an animated character");

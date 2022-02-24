@@ -1146,8 +1146,8 @@ PBRPipeline.prototype.resolveQueries = function()
 	var useTimestamps = this._useQueryTimestamps;
 
 	if (startQuery || endQuery || timeElapsedQuery) {
-	  let disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT);
-	  let available;
+	  var disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT);
+	  var available;
 	  if (disjoint) {
 		// Have to redo all of the measurements.
 	  } else {
@@ -1158,11 +1158,11 @@ PBRPipeline.prototype.resolveQueries = function()
 		}
 
 		if (available) {
-		  let timeElapsed;
+		  var timeElapsed;
 		  if (useTimestamps) {
 			// See how much time the rendering of the object took in nanoseconds.
-			let timeStart = ext.getQueryObjectEXT(startQuery, ext.QUERY_RESULT_EXT);
-			let timeEnd = ext.getQueryObjectEXT(endQuery, ext.QUERY_RESULT_EXT);
+			var timeStart = ext.getQueryObjectEXT(startQuery, ext.QUERY_RESULT_EXT);
+			var timeEnd = ext.getQueryObjectEXT(endQuery, ext.QUERY_RESULT_EXT);
 			timeElapsed = timeEnd - timeStart;
 		  } else {
 			timeElapsed = ext.getQueryObjectEXT(timeElapsedQuery, ext.QUERY_RESULT_EXT);

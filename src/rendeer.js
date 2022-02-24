@@ -3123,13 +3123,13 @@ Material.prototype.serialize = function()
 		o.displacementFactor = this.displacementFactor;
 	if(this.backface_color)
 		o.backface_color = typedArrayToArray( this.backface_color );
+	if(this.emissive)
+		o.emissive = typedArrayToArray( this.emissive );
 	if(this.model)
 	{
 		o.model = this.model;
 		o.metallicFactor = this.metallicFactor;
 		o.roughnessFactor = this.roughnessFactor;
-		if(this.emissive)
-			o.emissive = typedArrayToArray( this.emissive );
 	}
 
 	return o;
@@ -5639,7 +5639,7 @@ RD.alignDivToNode = function( domElement, cameraElement, div, node, camera, allo
 
 	function getObjectCSSMatrix( matrix ) {
 
-		const matrix3d = 'matrix3d(' + epsilon( matrix[ 0 ] ) + ','
+		var matrix3d = 'matrix3d(' + epsilon( matrix[ 0 ] ) + ','
 			+ epsilon( matrix[ 1 ] ) + ','
 			+ epsilon( matrix[ 2 ] ) + ','
 			+ epsilon( matrix[ 3 ] ) + ','

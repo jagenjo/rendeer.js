@@ -1472,13 +1472,13 @@ RD.AnimatedCharacterFromScene = function( scene, filename, Z_is_up )
 
 	if(!hips_node && root.findNodesByFilter)
 	{
-		var r = root.findNodesByFilter(a=>a.skin);
+		var r = root.findNodesByFilter(function(a){ return a.skin; });
 		if(r && r.length)
 			hips_node = r[0];
 	}
 
 	if(!mesh_nodes.length && root.findNodesByFilter)
-		mesh_nodes = root.findNodesByFilter(a=>a.mesh);
+		mesh_nodes = root.findNodesByFilter(function(a){ return a.mesh; });
 
 	if(!hips_node)
 		throw("this scene doesnt contain an animated character");
