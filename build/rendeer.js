@@ -9772,7 +9772,8 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 	{
 		if( skinning_info.constructor === RD.Skeleton )
 		{
-			shader.setUniform("u_bones", skinning_info.computeFinalBoneMatrices(), mesh );
+			this.bones = skinning_info.computeFinalBoneMatrices( this.bones, mesh );
+			shader.setUniform("u_bones", this.bones );
 		}
 		else if( skinning_info._bone_matrices )
 		{
@@ -11805,6 +11806,7 @@ if(RD.SceneNode)
 		var mesh = gl.meshes[ this.mesh ];
 		if(!mesh)
 			return;
+		//this.skeleton = skeleton;
 		this.bones = skeleton.computeFinalBoneMatrices( this.bones, mesh );
 		this.uniforms.u_bones = this.bones;
 	}

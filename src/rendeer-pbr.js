@@ -768,7 +768,8 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 	{
 		if( skinning_info.constructor === RD.Skeleton )
 		{
-			shader.setUniform("u_bones", skinning_info.computeFinalBoneMatrices(), mesh );
+			this.bones = skinning_info.computeFinalBoneMatrices( this.bones, mesh );
+			shader.setUniform("u_bones", this.bones );
 		}
 		else if( skinning_info._bone_matrices )
 		{

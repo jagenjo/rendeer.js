@@ -1364,6 +1364,7 @@ if(RD.SceneNode)
 		var mesh = gl.meshes[ this.mesh ];
 		if(!mesh)
 			return;
+		//this.skeleton = skeleton;
 		this.bones = skeleton.computeFinalBoneMatrices( this.bones, mesh );
 		this.uniforms.u_bones = this.bones;
 	}
