@@ -9634,7 +9634,7 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 		macros |= PBRPipeline.MACROS.UVS2;
 	if(mesh.vertexBuffers.colors)
 		macros |= PBRPipeline.MACROS.COLOR;
-	if( skinning_info )
+	if( skinning_info && skinning_info.skip_model )
 		macros |= PBRPipeline.MACROS.SKINNING;
 
 	if( this.parallax_reflection )
@@ -9789,7 +9789,7 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 	if( num_instances == 1 )
 		renderer._uniforms.u_model.set( model_matrix );
 
-	if( skinning_info )
+	if( skinning_info && this.skinning_skip_model )
 		mat4.identity( renderer._uniforms.u_model );
 
 	shader.uniforms( renderer._uniforms ); //globals
