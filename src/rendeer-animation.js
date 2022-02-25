@@ -1119,6 +1119,8 @@ function SkeletalAnimation()
 	this.num_animated_bones = 0;
 	this.num_keyframes = 0;
 
+	this.loading = false;
+
 	//maps from keyframe data bone index to skeleton bone index because it may be that not all skeleton bones are animated
 	this.bones_map = new Uint8Array(64);  //this.bones_map[ i ] => skeleton.bones[ bone_index ]
 
@@ -1130,7 +1132,9 @@ RD.SkeletalAnimation = SkeletalAnimation;
 SkeletalAnimation.prototype.load = function(url, callback)
 {
 	var that =  this;
+	this.loading = true;
 	return HttpRequest(url, null, function(data) {
+		that.loading = false;
 		that.fromData(data);
 		if(callback)
 			callback(that);

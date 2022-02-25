@@ -408,6 +408,8 @@ PBRPipeline.prototype.getNodeRenderCalls = function( node, camera, layers )
 		return;
 
 	var skinning = node.skeleton || node.skin || null;
+	if( skinning.loading )
+		skinning = null;
 
 	//check if inside frustum (skinned objects are not tested)
 	if(this.test_visibility && !skinning)
