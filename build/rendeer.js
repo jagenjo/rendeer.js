@@ -9392,7 +9392,11 @@ PBRPipeline.prototype.getNodeRenderCalls = function( node, camera, layers )
 	{
 		mesh = gl.meshes[ node.mesh ];
 		if(!mesh)
+		{
+			if( this.renderer.autoload_assets && node.mesh.indexOf(".") != -1)
+				this.renderer.loadMesh( node.mesh );
 			return;
+		}
 	}
 
 	if(layers === undefined)
