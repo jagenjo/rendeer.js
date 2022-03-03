@@ -3135,7 +3135,7 @@ Material.prototype.serialize = function()
 	return o;
 }
 
-Material.prototype.render = function( renderer, model, mesh, indices_name, group_index )
+Material.prototype.render = function( renderer, model, mesh, indices_name, group_index, skeleton )
 {
 	//get shader
 	var shader_name = this.shader_name;
@@ -3144,13 +3144,21 @@ Material.prototype.render = function( renderer, model, mesh, indices_name, group
 		if( this.model == "pbrMetallicRoughness" )
 			shader_name = "texture_albedo";
 		else
-			shader_name = renderer.default_shader_name || RD.Material.default_shader_name;
+		{
+			if( skeleton )
+				shader_name = null;
+			else
+				shader_name = renderer.default_shader_name || RD.Material.default_shader_name;
+		}
 	}
 	var shader = gl.shaders[ shader_name ];
-	if (!shader)
+	if (!shader) 
 	{
 		var color_texture = this.textures.color || this.textures.albedo;
-		shader = color_texture ? renderer._texture_shader : renderer._flat_shader;
+		if( skeleton )
+			shader = color_texture ? renderer._texture_skinning_shader : renderer._flat_skinning_shader;
+		else
+			shader = color_texture ? renderer._texture_shader : renderer._flat_shader;
 	}
 
 	//get texture
@@ -3183,6 +3191,11 @@ Material.prototype.render = function( renderer, model, mesh, indices_name, group
 	renderer.enableItemFlags( this );
 
 	renderer._uniforms.u_model.set( model );
+	if( skeleton && shader.uniformInfo.u_bones )
+	{
+		this.bones = skeleton.computeFinalBoneMatrices( this.bones, mesh );
+		shader.setUniform("u_bones", this.bones );
+	}
 	shader.uniforms( renderer._uniforms ); //globals
 	shader.uniforms( this.uniforms ); //locals
 
@@ -3592,7 +3605,7 @@ Renderer.prototype.renderNode = function(node, camera)
 				if( this.onFilterByMaterial( material, RD.Materials[ prim.material ] ) == false )
 					continue;
 			}
-			this.renderMeshWithMaterial( node._global_matrix, mesh, material, "triangles", i );
+			this.renderMeshWithMaterial( node._global_matrix, mesh, material, "triangles", i, node.skeleton );
 		}
 		return;
 	}
@@ -3604,7 +3617,7 @@ Renderer.prototype.renderNode = function(node, camera)
 		{
 			if(material.render)
 			{
-				this.renderMeshWithMaterial( node._global_matrix, mesh, material, node.indices, node.submesh );
+				this.renderMeshWithMaterial( node._global_matrix, mesh, material, node.indices, node.submesh, node.skeleton );
 				return;
 			}
 			else
@@ -3636,7 +3649,12 @@ Renderer.prototype.renderNode = function(node, camera)
 			shader = gl.shaders[this.shader_overwrite];
 	}
 	if (!shader)
-		shader = node.textures.color ? this._texture_shader : this._flat_shader;
+	{
+		if( node.skeleton )
+			shader = node.textures.color ? this._texture_skinning_shader : this._flat_skinning_shader;
+		else
+			shader = node.textures.color ? this._texture_shader : this._flat_shader;
+	}
 
 	//shader doesnt support instancing
 	if(instancing && !shader.attributes.u_model)
@@ -3688,6 +3706,12 @@ Renderer.prototype.renderNode = function(node, camera)
 	
 	if(node.onRender)
 		node.onRender(this, camera, shader);
+
+	if( this.skeleton )
+	{
+		this.bones = this.skeleton.computeFinalBoneMatrices( this.bones, mesh );
+		shader.setUniform("u_bones", this.bones );
+	}
 
 	//allows to have several global uniforms containers
 	for(var i = 0; i < this.global_uniforms_containers.length; ++i)
@@ -3747,10 +3771,10 @@ Renderer.prototype.renderMesh = function( model, mesh, texture, color, shader, m
 	this.draw_calls += 1;
 }
 
-Renderer.prototype.renderMeshWithMaterial = function( model, mesh, material, index_buffer_name, group_index )
+Renderer.prototype.renderMeshWithMaterial = function( model, mesh, material, index_buffer_name, group_index, skeleton )
 {
 	if(material.render)
-		material.render( this, model, mesh, index_buffer_name, group_index );
+		material.render( this, model, mesh, index_buffer_name, group_index, skeleton );
 }
 
 //allows to pass a mesh or a bounding box

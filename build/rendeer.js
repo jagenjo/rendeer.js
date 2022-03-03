@@ -3136,7 +3136,7 @@ Material.prototype.serialize = function()
 	return o;
 }
 
-Material.prototype.render = function( renderer, model, mesh, indices_name, group_index )
+Material.prototype.render = function( renderer, model, mesh, indices_name, group_index, skeleton )
 {
 	//get shader
 	var shader_name = this.shader_name;
@@ -3145,13 +3145,21 @@ Material.prototype.render = function( renderer, model, mesh, indices_name, group
 		if( this.model == "pbrMetallicRoughness" )
 			shader_name = "texture_albedo";
 		else
-			shader_name = renderer.default_shader_name || RD.Material.default_shader_name;
+		{
+			if( skeleton )
+				shader_name = null;
+			else
+				shader_name = renderer.default_shader_name || RD.Material.default_shader_name;
+		}
 	}
 	var shader = gl.shaders[ shader_name ];
-	if (!shader)
+	if (!shader) 
 	{
 		var color_texture = this.textures.color || this.textures.albedo;
-		shader = color_texture ? renderer._texture_shader : renderer._flat_shader;
+		if( skeleton )
+			shader = color_texture ? renderer._texture_skinning_shader : renderer._flat_skinning_shader;
+		else
+			shader = color_texture ? renderer._texture_shader : renderer._flat_shader;
 	}
 
 	//get texture
@@ -3184,6 +3192,11 @@ Material.prototype.render = function( renderer, model, mesh, indices_name, group
 	renderer.enableItemFlags( this );
 
 	renderer._uniforms.u_model.set( model );
+	if( skeleton && shader.uniformInfo.u_bones )
+	{
+		this.bones = skeleton.computeFinalBoneMatrices( this.bones, mesh );
+		shader.setUniform("u_bones", this.bones );
+	}
 	shader.uniforms( renderer._uniforms ); //globals
 	shader.uniforms( this.uniforms ); //locals
 
@@ -3593,7 +3606,7 @@ Renderer.prototype.renderNode = function(node, camera)
 				if( this.onFilterByMaterial( material, RD.Materials[ prim.material ] ) == false )
 					continue;
 			}
-			this.renderMeshWithMaterial( node._global_matrix, mesh, material, "triangles", i );
+			this.renderMeshWithMaterial( node._global_matrix, mesh, material, "triangles", i, node.skeleton );
 		}
 		return;
 	}
@@ -3605,7 +3618,7 @@ Renderer.prototype.renderNode = function(node, camera)
 		{
 			if(material.render)
 			{
-				this.renderMeshWithMaterial( node._global_matrix, mesh, material, node.indices, node.submesh );
+				this.renderMeshWithMaterial( node._global_matrix, mesh, material, node.indices, node.submesh, node.skeleton );
 				return;
 			}
 			else
@@ -3637,7 +3650,12 @@ Renderer.prototype.renderNode = function(node, camera)
 			shader = gl.shaders[this.shader_overwrite];
 	}
 	if (!shader)
-		shader = node.textures.color ? this._texture_shader : this._flat_shader;
+	{
+		if( node.skeleton )
+			shader = node.textures.color ? this._texture_skinning_shader : this._flat_skinning_shader;
+		else
+			shader = node.textures.color ? this._texture_shader : this._flat_shader;
+	}
 
 	//shader doesnt support instancing
 	if(instancing && !shader.attributes.u_model)
@@ -3689,6 +3707,12 @@ Renderer.prototype.renderNode = function(node, camera)
 	
 	if(node.onRender)
 		node.onRender(this, camera, shader);
+
+	if( this.skeleton )
+	{
+		this.bones = this.skeleton.computeFinalBoneMatrices( this.bones, mesh );
+		shader.setUniform("u_bones", this.bones );
+	}
 
 	//allows to have several global uniforms containers
 	for(var i = 0; i < this.global_uniforms_containers.length; ++i)
@@ -3748,10 +3772,10 @@ Renderer.prototype.renderMesh = function( model, mesh, texture, color, shader, m
 	this.draw_calls += 1;
 }
 
-Renderer.prototype.renderMeshWithMaterial = function( model, mesh, material, index_buffer_name, group_index )
+Renderer.prototype.renderMeshWithMaterial = function( model, mesh, material, index_buffer_name, group_index, skeleton )
 {
 	if(material.render)
-		material.render( this, model, mesh, index_buffer_name, group_index );
+		material.render( this, model, mesh, index_buffer_name, group_index, skeleton );
 }
 
 //allows to pass a mesh or a bounding box
@@ -9412,7 +9436,7 @@ PBRPipeline.prototype.getNodeRenderCalls = function( node, camera, layers )
 		return;
 
 	var skinning = node.skeleton || node.skin || null;
-	if( skinning && skinning._loading )
+	if( skinning && (!skinning.bones || !skinning.bones.length) )
 		skinning = null;
 
 	//check if inside frustum (skinned objects are not tested)
@@ -11043,7 +11067,7 @@ RD.EvaluateHermiteSplineVector = function( p0, p1, pre_p0, post_p1, s, result )
 }
 
 
-//FOR SKELETAL ANIMATION, from LiteScene engine
+//FOR SKELETAL ANIMATION, from ONECore engine
 
 // By Javi Agenjo (@tamat)
 // ***************************************
@@ -11566,23 +11590,29 @@ function SkeletalAnimation()
 	this._loading = false;
 
 	//maps from keyframe data bone index to skeleton bone index because it may be that not all skeleton bones are animated
-	this.bones_map = new Uint8Array(64);  //this.bones_map[ i ] => skeleton.bones[ bone_index ]
+	this.bones_map = new Uint8Array(SkeletalAnimation.MAX_BONES);  //this.bones_map[ i ] => skeleton.bones[ bone_index ]
 
 	this.keyframes = null; //bidimensional array of mat4, it contains a num.bones X num. keyframes, bones in local space
 }
+
+SkeletalAnimation.MAX_BONES = 64;
 
 RD.SkeletalAnimation = SkeletalAnimation;
 
 SkeletalAnimation.prototype.load = function(url, callback)
 {
-	var that =  this;
+	var that = this;
+	var is_binary = url.toLowerCase().indexOf(".abin") != -1;
 	this._loading = true;
 	return HttpRequest(url, null, function(data) {
 		that._loading = false;
-		that.fromData(data);
+		if(data.constructor === String)
+			that.fromData(data);
+		else 
+			that.fromBinary(data);
 		if(callback)
 			callback(that);
-	});
+	},null,{ binary: is_binary });
 }
 
 //change the skeleton to the given pose according to time
@@ -11804,6 +11834,150 @@ SkeletalAnimation.prototype.fromTracksAnimation = function( skeleton, animation,
 		this.assignPoseToKeyframe( this.skeleton, i );
 	}
 }
+
+//generate a bin file
+SkeletalAnimation.prototype.toBinary = function()
+{
+	var header_size = 7*4 + 128 + 16; 
+	var bone_size = 1 + 32 + 16*4 + 18;
+	var num_bones = this.skeleton.bones.length;
+	var data = new Uint8Array( 4 + header_size + bone_size * num_bones + this.num_keyframes * this.num_animated_bones * 16*4 );
+	var view = new DataView(data.buffer);
+	var le = true; //little endian
+	//HEADER
+	for(var i = 0; i < 4; ++i)//BOM
+		view.setUint8(i,"ABIN".charCodeAt(i));
+	view.setInt32(4,3,le);
+	view.setInt32(8,header_size,le);
+	view.setFloat32(12,this.duration,le);
+	view.setUint32(16,this.samples_per_second,le);
+	view.setUint32(20,this.num_animated_bones,le);
+	view.setUint32(24,this.num_keyframes,le);
+	view.setUint32(28,num_bones,le);
+	for(var i = 0; i < this.bones_map.length; ++i)
+		view.setUint8(32+i,this.bones_map[i]);
+
+	var index = 32+128+16; //header
+
+	//SKELETON
+	for(var i = 0; i < this.skeleton.bones.length; ++i)
+	{
+		var bone = this.skeleton.bones[i];
+		view.setInt8( index, bone.parent )// //id of the parent bone
+		for(var j = 0; j < 32; ++j)
+			view.setInt8( index + j + 1, bone.name.charCodeAt(j) || 0);//fixed size bone name
+		for(var j = 0; j < 16; ++j)
+			view.setFloat32( index + 32 + 1 + j*4, bone.model[j],le); //local transformation (according to its parent bone)
+		view.setUint8( index + 32 + 1 + 16*4, bone.layer );//which layers are assigned to this bone (UPPER_BODY, RIGHT_ARM, etc)
+		view.setUint8( index + 32 + 2 + 16*4, bone.num_children );//how many child bones
+		for(var j = 0; j < 16; ++j)
+			view.setInt8( index + 32 + 3 + 16*4 + j, bone.children[j] ); //list of child bone ids (max 16 children )
+		index += bone_size;
+	}
+
+	index = 32+128+16 + bone_size * num_bones;
+
+	//KEYFRAMES
+	//WARNING: endianess here??
+	var keyframes_bytes = new Uint8Array( this.keyframes.buffer );
+	data.set( keyframes_bytes, index );
+
+	return data;
+}
+
+function readViewString( view, start, max_length )
+{
+	var str = "";
+	for(var i = 0; i < max_length; ++i)
+	{
+		var code = view.getUint8(start+i);
+		if(!code)
+			return str;
+		str += String.fromCharCode( code );
+	}
+	return str;
+}
+
+//read from bin file
+SkeletalAnimation.prototype.fromBinary = function(data)
+{
+	if(data.constructor === ArrayBuffer)
+		data = new Uint8Array(data);
+
+	var le = true; //little endian
+	var view = new DataView(data.buffer);
+	var bone_size = 1 + 32 + 16*4 + 18;
+
+	/*
+	struct sAnimHeader {
+		int version;
+		int header_bytes;
+		float duration;
+		float samples_per_second;
+		int num_animated_bones;
+		int num_keyframes;
+		int num_bones;
+		int8 bones_map[128];
+		char extra[16];
+	};*/
+
+	//read header
+	var BOM = readViewString(view,0,4);
+	if( BOM != "ABIN" )
+	{
+		console.error("not an animation file");
+		return false;
+	}
+
+	//header
+	var version = view.getInt32(4,le);
+	var header_size = view.getInt32(8,le);
+	this.duration = view.getFloat32(12,le);
+	this.samples_per_second = view.getUint32(16,le);
+	this.num_animated_bones = view.getUint32(20,le);
+	this.num_keyframes = view.getUint32(24,le);
+	var num_bones = view.getUint32(28,le);
+	for(var i = 0; i < this.bones_map.length; ++i)
+		this.bones_map[i] = view.getUint8(32+i);
+	
+	//bones
+	var index = 32+128+16; //header
+
+	/*
+	struct Bone {
+		int8 parent;	//id of the parent bone
+		char name[32];	//fixed size bone name
+		Matrix44 model; //local transformation (according to its parent bone)
+		uint8 layer;	//which layers are assigned to this bone (UPPER_BODY, RIGHT_ARM, etc)
+		uint8 num_children;	//how many child bones
+		int8 children[16]; //list of child bone ids (max 16 children )
+	};
+	*/
+
+	//SKELETON
+	this.skeleton.resizeBones(num_bones);
+	this.skeleton.bones_by_name.clear();
+	for(var i = 0; i < num_bones; ++i)
+	{
+		var bone = this.skeleton.bones[i];
+		bone.parent = view.getInt8( index )// //id of the parent bone
+		bone.name = readViewString(view,index+1,32);
+		for(var j = 0; j < 16; ++j)
+			bone.model[j] = view.getFloat32( index + 32 + 1 + j*4,le); //local transformation (according to its parent bone)
+		bone.layer = view.getUint8( index + 32 + 1 + 16*4 );//which layers are assigned to this bone (UPPER_BODY, RIGHT_ARM, etc)
+		bone.num_children = view.getUint8( index + 32 + 2 + 16*4 );//how many child bones
+		for(var j = 0; j < 16; ++j)
+			bone.children[j] = view.getInt8( index + 32 + 3 + 16*4 + j ); //list of child bone ids (max 16 children )
+		index += bone_size;
+		this.skeleton.bones_by_name.set( bone.name, i );
+	}
+
+	//KEYFRAMES
+	index = 32+128+16 + bone_size * num_bones;
+	var keyframes_bytes = new Uint8Array( data.subarray( index, index+this.num_keyframes*this.num_animated_bones*16*4) );
+	this.keyframes = new Float32Array( keyframes_bytes.buffer );//num_keyframes * num_animated_bones * 16 );
+}
+
 
 if(RD.SceneNode)
 {
