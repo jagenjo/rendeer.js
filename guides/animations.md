@@ -93,22 +93,22 @@ if(anim.duration)
 {
 	var t = getTime() * 0.001; //get time in seconds
 	anim.assignTime( t, true ); //pose according to time and loop
-  }
+}
 ```
 
 Assign animation skeleton to character:
 ```js
-  character.skeleton = anim.skeleton;
+character.skeleton = anim.skeleton;
 ```
 
 Keep in mind that if you modify ```anim.skeleton``` that will affect every character using that skeleton.
 If you want to have independent skeletons then use ;
 ```js
-  character.assignSkeleton( anim.skeleton );
+character.assignSkeleton( anim.skeleton );
 ```
 or clone the skeleton if you already have one in the node:
 ```js
-  character.skeleton.copyFrom( anim.skeleton );
+character.skeleton.copyFrom( anim.skeleton );
 ```
 
 ## Blending
