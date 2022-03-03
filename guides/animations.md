@@ -10,11 +10,23 @@ Also for skeletal animation it uses its own propieratry format called .SKANIM (A
 
 ## Export animations
 
-To export into Rendeer animated formats you may need to use the converter tool that converts collada files (DAE) into MESH and SKANIM.
+To export into Rendeer animated formats you may need to use the converter tool that converts collada files (DAE) into MESH/WBIN and SKANIM/ABIN.
+MESH and SKANIM formats are ASCII Formats, while WBIN and ABIN are binary formats (less space, faster to parse).
 
 You can find [it in this link](https://tamats.com/projects/character_creator/), drag the files there and export them from the menus.
 
 Or you can integrate it in your system using the [collada.js](https://github.com/jagenjo/collada.js) library, and calling the RD.AnimatedCharacterFromScene function.
+
+There is also the possibility of loading them from GLTF:
+```js
+var that = this;
+RD.GLTF.load( url, inner );
+function inner(node,filename)
+{
+	var info = RD.AnimatedCharacterFromScene( node, filename, true );
+	//info contains mesh and animation
+}
+```
 
 ## RD.Skeleton
 
@@ -27,11 +39,13 @@ You can create a skeleton like this:
 var skeleton = new RD.Skeleton();
 ``` 
 
-Although you do not need it as SkeletalAnimation already contains a skeleton.
+Although you do not need it as ```RD.SkeletalAnimation``` already contains a skeleton.
+
+You may want to create skeletons as a container for interpolated poses from different animations, for animation blending;
 
 ## RD.SkeletalAnimation
 
-The SkeletalAnimation class contains information about the orientation of every bone along time.
+The SkeletalAnimation class contains every pose of the skeleton along time.
 
 You can create one like this:
 
@@ -39,7 +53,7 @@ You can create one like this:
 var anim = new RD.SkeletalAnimation();
 ``` 
 
-And load from a SKAnim file like this:
+And load from a SKAnim or ABIN file like this:
 ```js
 anim.load( "data/idle.skanim", callback );
 ``` 
@@ -65,29 +79,36 @@ character.mesh = "data/girl.wbin";
 scene.root.addChild( character );
 ```
 
-Then you must be sure that the shader assigned to this mesh uses skinning deformation:
-```js
-  character.shader = "texture_skinning";
-```
+If you are using custom shaders, remember to assign a shader that supports skinning.
 
 Then load some animation:
 ```js
-	var anim = new RD.SkeletalAnimation();
-	anim.load("data/idle.skanim");
+var anim = new RD.SkeletalAnimation();
+anim.load("data/idle.skanim");
 ```
 
 Set the animation skeleton in a pose based on time:
 ```js
-	if(anim.duration)
-	{
-    var t = getTime() * 0.001; //get time in seconds
-		anim.assignTime( t, true ); //pose according to time and loop
+if(anim.duration)
+{
+	var t = getTime() * 0.001; //get time in seconds
+	anim.assignTime( t, true ); //pose according to time and loop
   }
 ```
 
 Assign animation skeleton to character:
 ```js
+  character.skeleton = anim.skeleton;
+```
+
+Keep in mind that if you modify ```anim.skeleton``` that will affect every character using that skeleton.
+If you want to have independent skeletons then use ;
+```js
   character.assignSkeleton( anim.skeleton );
+```
+or clone the skeleton if you already have one in the node:
+```js
+  character.skeleton.copyFrom( anim.skeleton );
 ```
 
 ## Blending
