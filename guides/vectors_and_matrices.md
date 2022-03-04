@@ -31,14 +31,26 @@ Also remember that typed arrays are not well stringified when using JSON.stringi
 ```
 
 When using any of the gl-matrix methods to do vector or matrices operations, remember that the syntax of any function that returns a vector or matrix requires to pass
-as first parameter where the result will be stored.
+as first parameter where the result will be stored. Then the function will returns the first parameter as a result.
 
 ```js
-var C = vec3.create();
-vec3.add( C, A, B ); //C = A + B
+//normalize vector in situ
+vec3.normalize(A, A);
+
+//C = A + B
+var C = vec3.create(); //create output
+vec3.add( C, A, B );  //do operation
+
+//the same but using the return
+var C = vec3.add( vec3.create(), A, B); 
 ```
 
 The reason to use this syntax is to allow to reuse containers instead of creating new ones constantly, which will produce garbage for the GC.
+
+When calling methods which outputs is an scalar, you do not pass the output as first parameter, just read the result.
+```js
+var d = vec3.distance( A, B ); //returns the distance between two vectors.
+```
 
 ## Transform
 
@@ -68,6 +80,12 @@ This is required when we modify position, rotation or scaling accesing the value
 node.position = A; //this will call the setter which will update the matrix automatically
 node.position[1] = 10; //this wont call the setter so the matrix wont be updated automatically.
 ```
+
+When accesing the model matrix, always use the method ```node.getLocalMatrix()``` or ```node.getGlobalMatrix()``` that will ensure updating the matrix;
+
+## LiteGL
+
+Besides gl-matrix, litegl (the framework used by Rendeer) also includes another methods for 
 
 ## Avoiding GC
 
