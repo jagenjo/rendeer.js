@@ -28,7 +28,7 @@ About the libraries it uses, some remarks:
 
 Although not mandatory I recommend to also include Canvas2DToWebGL.js, a library that helps using the Canvas2D API inside WebGL, something useful if you want to skip using the DOM.
 
-I recommend checking the [vector and matrices guide](vector_and_matrices.md) to learn how to  use gl-matrix propertly.
+I recommend checking the [vectors and matrices guide](vectors_and_matrices.md) to learn how to  use gl-matrix propertly.
 
 Also check [litegl guides](https://github.com/jagenjo/litegl.js/tree/master/guides) to learn how to access controls, meshes, textures, etc.
 
