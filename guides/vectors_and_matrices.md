@@ -85,7 +85,7 @@ When accesing the model matrix, always use the method ```node.getLocalMatrix()``
 
 ## LiteGL
 
-Besides gl-matrix, litegl (the framework used by Rendeer) also includes another methods for 
+Besides gl-matrix, litegl (the framework used by Rendeer) also includes another method for Bounding Boxes, called BBox which uses the same syntax as gl-matrix.
 
 ## Avoiding GC
 
