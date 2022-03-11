@@ -14171,6 +14171,7 @@ Mesh.parsers["wbin"] = Mesh.fromBinary = function( data_array, options )
 
 Mesh.encoders["wbin"] = function( mesh, options )
 {
+	mesh.updateBoundingBox();
 	return mesh.toBinary( options );
 }
 

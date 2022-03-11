@@ -16,10 +16,10 @@
 	var FLO2BYTE = 4;
 	var BYTE2BITS = 8;
 
-	var U_BYTE		= 01;
-	var HALF_FLOAT	= 02;
-	var FLOAT		= 03;
-	var U_BYTE_RGBE	= 04;
+	var U_BYTE		= 1;
+	var HALF_FLOAT	= 2;
+	var FLOAT		= 3;
+	var U_BYTE_RGBE	= 4;
 
 	var ARRAY_TYPES = {
 		1: Uint8Array,
@@ -160,7 +160,7 @@
 		// "true" for using old environments
         // (not standard flipY)
 		if(this.version < 3.0)
-		flip_Y_sides = true;
+			flip_Y_sides = true;
 
 		if(flip_Y_sides)
 		{
