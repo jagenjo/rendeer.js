@@ -256,7 +256,7 @@ RD.GLTF = {
 		if( json.scenes.length > 1 )
 			console.warn("gltf importer only supports one scene per file, skipping the rest");
 
-		var scene = json.scenes[ json.scene ];
+		var scene = json.scenes[ json.scene || 0 ];
 		var nodes_info = scene.nodes;
 		this.gltf_materials = {};
 
@@ -477,7 +477,7 @@ RD.GLTF = {
 			g.length = prims[i].length;
 		}
 
-		mesh.name = mesh_info.name;
+		mesh.name = mesh_info.name + "_" + index; //we add the mesh index to the name as there could be several meshes with the same name
 		if(!mesh.name || this.rename_assets)
 			mesh.name = json.filename + "::mesh_" + (mesh_info.name || index);
 		//mesh.material = primitive.material;
@@ -751,23 +751,39 @@ RD.GLTF = {
 			return null;
 		}
 
-		if(bufferView.byteStride && bufferView.byteStride != components * databuffer.BYTES_PER_ELEMENT)
-		{
-			console.warn("gltf buffer data is not tightly packed, not supported");
-			return null;
-		}
-
 		var databufferview = new Uint8Array( databuffer.buffer );
 
 		if(bufferView.byteOffset == null)//could happend when is 0
 			bufferView.byteOffset = 0;
 
-		//extract chunk from binary (not using the size from the bufferView because sometimes it doesnt match!)
 		var start = bufferView.byteOffset + (accessor.byteOffset || 0);
-		var chunk = buffer.dataview.subarray( start, start + databufferview.length );
 
-		//copy data to buffer
-		databufferview.set( chunk );
+		//is interlaved, then we need to separate it
+		if(bufferView.byteStride && bufferView.byteStride != components * databuffer.BYTES_PER_ELEMENT)
+		{
+			var item_size = components * databuffer.BYTES_PER_ELEMENT;
+			var chunk = buffer.dataview.subarray( start, start + bufferView.byteLength );
+			var temp = new databuffer.constructor(components);
+			var temp_bytes = new Uint8Array(temp.buffer);
+			var index = 0;
+			for(var i = 0; i < accessor.count; ++i)
+			{
+				temp_bytes.set( chunk.subarray(index,index+item_size) );
+				databuffer.set( temp, i*components );
+				index += bufferView.byteStride;
+			}
+			//console.warn("gltf buffer data is not tightly packed, not supported");
+			//return null;
+		}
+		else
+		{
+			//extract chunk from binary (not using the size from the bufferView because sometimes it doesnt match!)
+			var chunk = buffer.dataview.subarray( start, start + databufferview.length );
+
+			//copy data to buffer
+			databufferview.set( chunk );
+		}
+
 
 		//decode?
 		//if(decoder)
@@ -1130,6 +1146,69 @@ RD.GLTF = {
 					sampler.texture = sampler.texture.substr( ROOM.root_path.length );
 			}
 		}
+	},
+
+	exportToGLB: function( scene, callback )
+	{
+		console.error("export not supported yet");
+		var json = {
+			accessors:[],
+			asset: {},
+			bufferViews: [],
+			buffers:[],
+			filename:"",
+			folder: "",
+			images: [],
+			materials: [],
+			meshes: [],
+			nodes: [],
+			samplers: [],
+			scene: 0,
+			scenes: [],
+			textures: [],
+		};
+
+		//build node list
+		for(var i = 0; i < scene._nodes.length; ++i)
+		{
+			var node = scene._nodes[i];
+			var json_node = {};
+			if(node.name)
+				json_node.name = node.name;
+			if(node.mesh)
+			{
+				//json_node.mesh = index;
+			}
+			if(node.children)
+			{
+				//json_node.children = [];
+			}
+			//json_node.matrix = typedArrayToArray( node._model_matrix );
+		}
+
+		//store meshes
+		//{ name:"", primitives: [ { mode:4, material: 0, indices:0, attributes:{ POSITION: 0, NORMAL: 1, TANGENT: 2, TEXCOORD_0: 3, TEXCOORD_1: 4} } ] }
+
+		//store materials
+		//{ name:"", pbrMetallicRoughness: { baseColorTexture: {index:0}, metallicRoughnessTexture:{}, metallicFactor:0, roughnessFactor: 0 } }
+
+		//samplers
+		//{ magFilter: gl.NEAREST, minFilter: ... }
+
+		//scenes
+		//[{ nodes:[0]}]
+
+		//textures
+		//{source:0, name:"", sampler: 0}
+
+		//accessors
+		//{bufferView:0, byteOffset:0, componentType:GL.FLOAT, count:n, max:, min:, type:"VEC3"}
+
+		//bufferViews
+		//{buffer:0, byteOffset:0, byteLength:0 }
+
+		//buffers
+		//{byteLength:,}
 	}
 };
 

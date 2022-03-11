@@ -469,13 +469,19 @@ Track.prototype.applyTrack = function( root, time, interpolation )
 		else
 			node = root.findNodeByName( this.target_node );
 		if(node)
+		{
+			this._node = node;
 			node[ this.target_property ] = sample;
+		}
 	}
 	else if( root.constructor === RD.Skeleton )
 	{
 		var bone = root.getBone( this.target_node );
 		if( bone && this.type == RD.MAT4 )
+		{
+			this._bone = bone;
 			bone.model.set( sample );
+		}
 	}
 
 	return sample;

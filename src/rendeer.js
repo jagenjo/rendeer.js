@@ -4000,7 +4000,7 @@ void main() {\n\
 }\n\
 ";
 
-//for rendering lines...
+//for rendering lines with width...
 	//stream vertices with pos in triangle strip form (aberrating jumps)
 	//stream extra2 with info about line corner (to inflate)
 
@@ -4579,6 +4579,23 @@ Renderer.prototype.drawLine2D = function( x,y, x2,y2, width, color, shader )
 	shader.setUniform("u_model",m);
 	shader.draw( mesh );
 	this.draw_calls += 1;
+}
+
+Renderer.prototype.renderDebugSceneTree = function( scene, camera )
+{
+	var points = [];
+	for(var i = 0; i < scene._nodes.length; ++i)
+	{
+		var node = scene._nodes[i];
+		if(!node._parent || node._parent == scene.root )
+			continue;
+		var parent_pos = node._parent.getGlobalPosition();
+		var pos = node.getGlobalPosition();
+		points.push( parent_pos[0],parent_pos[1],parent_pos[2],pos[0],pos[1],pos[2] );
+	}
+	points = new Float32Array(points);
+	this.renderPoints( points, null, camera, null, null, null, GL.LINES );
+	this.renderPoints( points, null, camera, null, null, -10, GL.POINTS );
 }
 
 
