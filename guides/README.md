@@ -28,6 +28,10 @@ About the libraries it uses, some remarks:
 
 Although not mandatory I recommend to also include Canvas2DToWebGL.js, a library that helps using the Canvas2D API inside WebGL, something useful if you want to skip using the DOM.
 
+I recommend checking the [vectors and matrices guide](vectors_and_matrices.md) to learn how to  use gl-matrix propertly.
+
+Also check [litegl guides](https://github.com/jagenjo/litegl.js/tree/master/guides) to learn how to access controls, meshes, textures, etc.
+
 ### The WebGL context
 
 Rendeer requires that you pass an existing WebGL Context when creating the renderer (```RD.Renderer```), to create the context you must use LiteGL, you cannot pass another WebGL Context created by another library as Rendeer relies on functions of LiteGL.
@@ -172,6 +176,8 @@ Check the API for some useful functions like move, orbit or rotate
 
 Cameras do not perform frustum culling but they provide methods so you can do it.
 
+To know more about ```RD.Camera```, check the [camera guide](camera.md).
+
 ### The Renderer 
 
 To render the scene we need a ```RD.Renderer```, to create one we must supply an existing WebGLContext created with LiteGL.
@@ -204,6 +210,16 @@ The same with loadMesh:
 
 ```javascript
 renderer.loadMesh( "data/sky.obj", callback ); //callback in case we want to execute  a function when the mesh is loaded
+```
+
+### Using GLTF
+
+You can easily load a GLTF scene. First be sure to include the rendeer-gltf.js library or use the bundled one found in rendeer.js.
+
+```js
+var node = new RD.SceneNode();
+node.loadGLTF("myfile.gltf");
+scene.root.addChild(node);
 ```
 
 ### The shaders
