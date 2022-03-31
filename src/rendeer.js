@@ -626,6 +626,18 @@ SceneNode.prototype.clear = function()
 }
 
 /**
+* Remove this node from its parent
+* @method remove
+*/
+SceneNode.prototype.remove = function()
+{
+	if(!this._parent)
+		return;
+	this._parent.removeChild( this );
+}
+
+
+/**
 * Change the order inside the children, useful when rendering without Depth Test
 * @method setChildIndex
 * @param {RD.SceneNode} child
