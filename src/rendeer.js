@@ -457,7 +457,7 @@ Object.defineProperty( SceneNode.prototype, 'color', {
 });
 
 /**
-* This number is the 4º component of color but can be accessed directly 
+* This number is the 4ï¿½ component of color but can be accessed directly 
 * @property opacity {number}
 */
 Object.defineProperty(SceneNode.prototype, 'opacity', {
@@ -835,6 +835,7 @@ SceneNode.prototype.configure = function(o)
 			case "draw_range":
 			case "submesh":
 			case "skin":
+			case "extra":
 			case "animation":
 				this[i] = o[i];
 				continue;
@@ -1510,7 +1511,7 @@ SceneNode.prototype.propagate = function(method, params)
 	for(var i = 0, l = this.children.length; i < l; i++)
 	{
 		var node = this.children[i];
-		if(!node) //¿?
+		if(!node) //ï¿½?
 			continue;
 		//has method
 		if(node[method])
@@ -3072,7 +3073,7 @@ Object.defineProperty( Material.prototype, "color", {
 });
 
 /**
-* This number is the 4º component of color but can be accessed directly 
+* This number is the 4ï¿½ component of color but can be accessed directly 
 * @property opacity {number}
 */
 Object.defineProperty( Material.prototype, 'opacity', {
@@ -3147,14 +3148,14 @@ Material.prototype.serialize = function()
 	return o;
 }
 
-Material.prototype.render = function( renderer, model, mesh, indices_name, group_index, skeleton )
+Material.prototype.render = function( renderer, model, mesh, indices_name, group_index, skeleton, node )
 {
 	//get shader
 	var shader_name = this.shader_name;
 	if(!shader_name)
 	{
 		if( this.model == "pbrMetallicRoughness" )
-			shader_name = "texture_albedo";
+			shader_name = skeleton ? "texture_albedo_skinning" : "texture_albedo";
 		else
 		{
 			if( skeleton )
@@ -3163,7 +3164,12 @@ Material.prototype.render = function( renderer, model, mesh, indices_name, group
 				shader_name = renderer.default_shader_name || RD.Material.default_shader_name;
 		}
 	}
-	var shader = gl.shaders[ shader_name ];
+	var shader = null;
+	if (renderer.on_getShader)
+		shader = renderer.on_getShader( node, renderer._camera );
+	else
+		shader = gl.shaders[ shader_name ];
+
 	if (!shader) 
 	{
 		var color_texture = this.textures.color || this.textures.albedo;
@@ -3197,6 +3203,13 @@ Material.prototype.render = function( renderer, model, mesh, indices_name, group
 		}
 
 		this.uniforms[ texture_uniform_name ] = texture.bind( slot++ );
+	}
+
+	//weird case of mesh without textures
+	if( !texture)
+	{
+		if(shader.samplers.u_albedo_texture || shader.samplers.u_color_texture )
+			gl.textures[ "white" ].bind(0);
 	}
 
 	//flags
@@ -3366,6 +3379,16 @@ Renderer._sort_by_priority_and_dist_func = function(a,b)
 	if(r != 0)
 		return r;
 	return b._distance - a._distance;
+}
+
+/**
+* clears all resources from GPU
+* @method destroy
+*/
+Renderer.prototype.destroy = function()
+{
+	gl.destroy()
+	RD.Materials = {};
 }
 
 /**
@@ -3617,7 +3640,7 @@ Renderer.prototype.renderNode = function(node, camera)
 				if( this.onFilterByMaterial( material, RD.Materials[ prim.material ] ) == false )
 					continue;
 			}
-			this.renderMeshWithMaterial( node._global_matrix, mesh, material, "triangles", i, node.skeleton );
+			this.renderMeshWithMaterial( node._global_matrix, mesh, material, "triangles", i, node.skeleton, node );
 		}
 		return;
 	}
@@ -3629,7 +3652,7 @@ Renderer.prototype.renderNode = function(node, camera)
 		{
 			if(material.render)
 			{
-				this.renderMeshWithMaterial( node._global_matrix, mesh, material, node.indices, node.submesh, node.skeleton );
+				this.renderMeshWithMaterial( node._global_matrix, mesh, material, node.indices, node.submesh, node.skeleton, node );
 				return;
 			}
 			else
@@ -3719,10 +3742,10 @@ Renderer.prototype.renderNode = function(node, camera)
 	if(node.onRender)
 		node.onRender(this, camera, shader);
 
-	if( this.skeleton )
+	if( node.skeleton )
 	{
-		this.bones = this.skeleton.computeFinalBoneMatrices( this.bones, mesh );
-		shader.setUniform("u_bones", this.bones );
+		node.bones = node.skeleton.computeFinalBoneMatrices( node.bones, mesh );
+		shader.setUniform("u_bones", node.bones );
 	}
 
 	//allows to have several global uniforms containers
@@ -3783,10 +3806,10 @@ Renderer.prototype.renderMesh = function( model, mesh, texture, color, shader, m
 	this.draw_calls += 1;
 }
 
-Renderer.prototype.renderMeshWithMaterial = function( model, mesh, material, index_buffer_name, group_index, skeleton )
+Renderer.prototype.renderMeshWithMaterial = function( model, mesh, material, index_buffer_name, group_index, skeleton, node )
 {
 	if(material.render)
-		material.render( this, model, mesh, index_buffer_name, group_index, skeleton );
+		material.render( this, model, mesh, index_buffer_name, group_index, skeleton, node );
 }
 
 //allows to pass a mesh or a bounding box
@@ -4104,7 +4127,7 @@ Renderer.prototype.renderLines = function( positions, lineWidth, strip, model )
 	shader.setUniform( "u_camera_perspective", camera._projection_matrix[5] );
 	shader.setUniform( "u_viewport", gl.viewport_data );
 	shader.setUniform( "u_viewprojection", camera._viewprojection_matrix );
-	shader.drawRange( mesh, gl.TRIANGLES, 0, num_points * 6);
+	shader.drawRange( mesh, gl.TRIANGLES, 0, num_points * (strip ? 6 : 3 ));
 
 	return mesh;
 }
@@ -5468,6 +5491,7 @@ Renderer.prototype.createShaders = function()
 	
 	gl.shaders["texture"] = this._texture_shader = new GL.Shader( vertex_shader, fragment_shader );
 	gl.shaders["texture_albedo"] = this._texture_albedo_shader = new GL.Shader( vertex_shader, fragment_shader, { ALBEDO:"" } );
+	gl.shaders["texture_albedo_skinning"] = this._texture_albedo_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, { SKINNING:"", ALBEDO:"" } );
 	gl.shaders["texture_instancing"] = this._texture_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { INSTANCING:"" } );
 	gl.shaders["texture_albedo_instancing"] = this._texture_albedo_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { ALBEDO:"",INSTANCING:""  } );
 

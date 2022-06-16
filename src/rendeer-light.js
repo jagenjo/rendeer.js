@@ -4,6 +4,7 @@
 	function Light()
 	{
 		this.intensity = 1;
+		this.area = 1; //frustum
 		this._color = vec3.fromValues(0.9,0.9,0.9);
 		this._position = vec3.fromValues(10,20,5);
 		this._target = vec3.create();
@@ -16,7 +17,7 @@
 		this.shadowmap = {
 			texture:null,
 			resolution: 2048,
-			bias: 0.000005,
+			bias: 0.00001,
 			uniforms: {
 				u_shadowmap_matrix: this.camera._viewprojection_matrix,
 				u_shadowmap_texture: 4,
@@ -97,6 +98,7 @@
 	};
 
 	Light.prototype.setView = function(area,near,far) {
+		this.area = area;
 		this.camera.orthographic(area,near,far,1);
 		this.updateData();
 	};
@@ -135,6 +137,8 @@
 
 		if(!this.shadowmap.fbo)
 			throw("no shadowmap fbo");
+
+		this.camera.view_texel_grid = [this.shadowmap.resolution,this.shadowmap.resolution];
 
 		renderer.generating_shadowmap = true;
 		this.shadowmap.fbo.bind();

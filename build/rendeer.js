@@ -458,7 +458,7 @@ Object.defineProperty( SceneNode.prototype, 'color', {
 });
 
 /**
-* This number is the 4º component of color but can be accessed directly 
+* This number is the 4ï¿½ component of color but can be accessed directly 
 * @property opacity {number}
 */
 Object.defineProperty(SceneNode.prototype, 'opacity', {
@@ -836,6 +836,7 @@ SceneNode.prototype.configure = function(o)
 			case "draw_range":
 			case "submesh":
 			case "skin":
+			case "extra":
 			case "animation":
 				this[i] = o[i];
 				continue;
@@ -1511,7 +1512,7 @@ SceneNode.prototype.propagate = function(method, params)
 	for(var i = 0, l = this.children.length; i < l; i++)
 	{
 		var node = this.children[i];
-		if(!node) //¿?
+		if(!node) //ï¿½?
 			continue;
 		//has method
 		if(node[method])
@@ -3073,7 +3074,7 @@ Object.defineProperty( Material.prototype, "color", {
 });
 
 /**
-* This number is the 4º component of color but can be accessed directly 
+* This number is the 4ï¿½ component of color but can be accessed directly 
 * @property opacity {number}
 */
 Object.defineProperty( Material.prototype, 'opacity', {
@@ -3148,14 +3149,14 @@ Material.prototype.serialize = function()
 	return o;
 }
 
-Material.prototype.render = function( renderer, model, mesh, indices_name, group_index, skeleton )
+Material.prototype.render = function( renderer, model, mesh, indices_name, group_index, skeleton, node )
 {
 	//get shader
 	var shader_name = this.shader_name;
 	if(!shader_name)
 	{
 		if( this.model == "pbrMetallicRoughness" )
-			shader_name = "texture_albedo";
+			shader_name = skeleton ? "texture_albedo_skinning" : "texture_albedo";
 		else
 		{
 			if( skeleton )
@@ -3164,7 +3165,12 @@ Material.prototype.render = function( renderer, model, mesh, indices_name, group
 				shader_name = renderer.default_shader_name || RD.Material.default_shader_name;
 		}
 	}
-	var shader = gl.shaders[ shader_name ];
+	var shader = null;
+	if (renderer.on_getShader)
+		shader = renderer.on_getShader( node, renderer._camera );
+	else
+		shader = gl.shaders[ shader_name ];
+
 	if (!shader) 
 	{
 		var color_texture = this.textures.color || this.textures.albedo;
@@ -3198,6 +3204,13 @@ Material.prototype.render = function( renderer, model, mesh, indices_name, group
 		}
 
 		this.uniforms[ texture_uniform_name ] = texture.bind( slot++ );
+	}
+
+	//weird case of mesh without textures
+	if( !texture)
+	{
+		if(shader.samplers.u_albedo_texture || shader.samplers.u_color_texture )
+			gl.textures[ "white" ].bind(0);
 	}
 
 	//flags
@@ -3367,6 +3380,16 @@ Renderer._sort_by_priority_and_dist_func = function(a,b)
 	if(r != 0)
 		return r;
 	return b._distance - a._distance;
+}
+
+/**
+* clears all resources from GPU
+* @method destroy
+*/
+Renderer.prototype.destroy = function()
+{
+	gl.destroy()
+	RD.Materials = {};
 }
 
 /**
@@ -3618,7 +3641,7 @@ Renderer.prototype.renderNode = function(node, camera)
 				if( this.onFilterByMaterial( material, RD.Materials[ prim.material ] ) == false )
 					continue;
 			}
-			this.renderMeshWithMaterial( node._global_matrix, mesh, material, "triangles", i, node.skeleton );
+			this.renderMeshWithMaterial( node._global_matrix, mesh, material, "triangles", i, node.skeleton, node );
 		}
 		return;
 	}
@@ -3630,7 +3653,7 @@ Renderer.prototype.renderNode = function(node, camera)
 		{
 			if(material.render)
 			{
-				this.renderMeshWithMaterial( node._global_matrix, mesh, material, node.indices, node.submesh, node.skeleton );
+				this.renderMeshWithMaterial( node._global_matrix, mesh, material, node.indices, node.submesh, node.skeleton, node );
 				return;
 			}
 			else
@@ -3720,10 +3743,10 @@ Renderer.prototype.renderNode = function(node, camera)
 	if(node.onRender)
 		node.onRender(this, camera, shader);
 
-	if( this.skeleton )
+	if( node.skeleton )
 	{
-		this.bones = this.skeleton.computeFinalBoneMatrices( this.bones, mesh );
-		shader.setUniform("u_bones", this.bones );
+		node.bones = node.skeleton.computeFinalBoneMatrices( node.bones, mesh );
+		shader.setUniform("u_bones", node.bones );
 	}
 
 	//allows to have several global uniforms containers
@@ -3784,10 +3807,10 @@ Renderer.prototype.renderMesh = function( model, mesh, texture, color, shader, m
 	this.draw_calls += 1;
 }
 
-Renderer.prototype.renderMeshWithMaterial = function( model, mesh, material, index_buffer_name, group_index, skeleton )
+Renderer.prototype.renderMeshWithMaterial = function( model, mesh, material, index_buffer_name, group_index, skeleton, node )
 {
 	if(material.render)
-		material.render( this, model, mesh, index_buffer_name, group_index, skeleton );
+		material.render( this, model, mesh, index_buffer_name, group_index, skeleton, node );
 }
 
 //allows to pass a mesh or a bounding box
@@ -4105,7 +4128,7 @@ Renderer.prototype.renderLines = function( positions, lineWidth, strip, model )
 	shader.setUniform( "u_camera_perspective", camera._projection_matrix[5] );
 	shader.setUniform( "u_viewport", gl.viewport_data );
 	shader.setUniform( "u_viewprojection", camera._viewprojection_matrix );
-	shader.drawRange( mesh, gl.TRIANGLES, 0, num_points * 6);
+	shader.drawRange( mesh, gl.TRIANGLES, 0, num_points * (strip ? 6 : 3 ));
 
 	return mesh;
 }
@@ -5469,6 +5492,7 @@ Renderer.prototype.createShaders = function()
 	
 	gl.shaders["texture"] = this._texture_shader = new GL.Shader( vertex_shader, fragment_shader );
 	gl.shaders["texture_albedo"] = this._texture_albedo_shader = new GL.Shader( vertex_shader, fragment_shader, { ALBEDO:"" } );
+	gl.shaders["texture_albedo_skinning"] = this._texture_albedo_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, { SKINNING:"", ALBEDO:"" } );
 	gl.shaders["texture_instancing"] = this._texture_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { INSTANCING:"" } );
 	gl.shaders["texture_albedo_instancing"] = this._texture_albedo_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { ALBEDO:"",INSTANCING:""  } );
 
@@ -6597,6 +6621,7 @@ Gizmo.SCALE = 1<<15;
 Gizmo.DRAG = 1<<16;
 Gizmo.ROTATE = 1<<17;
 Gizmo.ROTATEFRONT = 1<<18;
+Gizmo.RESIZE = 1<<19;
 
 Gizmo.MOVEAXIS = Gizmo.MOVEX | Gizmo.MOVEY | Gizmo.MOVEZ;
 Gizmo.MOVEPLANAR = Gizmo.MOVEXY | Gizmo.MOVEXZ | Gizmo.MOVEYZ;
@@ -6796,7 +6821,7 @@ Gizmo.prototype.getTargetBaseNodes = function()
 		var n = targets[i];
 		if(!(n.layers & this.layers))
 			continue;
-		if(isParentSelected(n.parentNode))
+		if(n.parentNode && isParentSelected(n.parentNode))
 			continue;
 		r.push(n);
 	}
@@ -6887,6 +6912,7 @@ Gizmo.prototype.applyRotation = function(angle, axis, center)
 	else
 	{
 		var T = mat4.create();
+		//console.log(center,angle);
 		mat4.setTranslation(T,center);
 		mat4.mul( M, M, T );
 		mat4.rotate(M,M, angle, axis );
@@ -7359,6 +7385,7 @@ Gizmo.prototype.render = function(renderer,camera)
 
 	if(!gl.meshes["cone"])
 	{
+		gl.meshes["cube"] = GL.Mesh.cube({size:1});
 		gl.meshes["circle"] = GL.Mesh.circle({radius:1});
 		gl.meshes["cylinder"] = GL.Mesh.cylinder({radius:0.02,height:1});
 		gl.meshes["cone"] = GL.Mesh.cone({radius:0.1,height:0.25});
@@ -7366,6 +7393,7 @@ Gizmo.prototype.render = function(renderer,camera)
 		gl.meshes["quartertorus"] = GL.Mesh.torus({angle:Math.PI*0.5,outerradius:1,innerradius:0.02,outerslices:64,innerslices:8});
 		gl.meshes["halftorus"] = GL.Mesh.torus({angle:Math.PI,outerradius:1,innerradius:0.02,outerslices:64,innerslices:8});
 	}
+	var cube = gl.meshes["cube"];
 	var cone = gl.meshes["cone"];
 	var sphere = gl.meshes["sphere"];
 	var torus = gl.meshes["torus"];
@@ -7652,6 +7680,12 @@ Gizmo.prototype.render = function(renderer,camera)
 	if( mode & Gizmo.SCALE )
 		this.drawInnerSphere(model,"scale");
 
+	if( mode & Gizmo.RESIZE )
+	{
+		this.drawResize(model,"resize");
+	}
+
+
 	gl.enable(gl.DEPTH_TEST);
 }
 
@@ -7803,6 +7837,32 @@ Gizmo.prototype.drawInnerSphere = function(model, action)
 
 	if(action)
 		this.toScreen(tmp,action);
+}
+
+Gizmo.prototype.drawResize = function(model, action)
+{
+	var shader = gl.shaders[this.shader];
+	var cube = gl.meshes["cube"];
+	var hover = this._hover_action;
+
+	var bounding = null;
+	//TODO...
+}
+
+Gizmo.prototype.computeBounding = function(out)
+{
+	out = out || BBox.create();
+
+	for(var i = 0; i < this.targets.length; ++i)
+	{
+		var node = this.targets[i];
+		var bbox = node.updateBoundingBox();
+		if( i == 0 )
+			BBox.copy( out, bbox );
+		else			
+			BBox.merge( out, out, bbox );
+	}
+	return out;
 }
 
 Gizmo.prototype.renderOutline = function( renderer, scene, camera, objects )
@@ -7982,24 +8042,8 @@ RD.GLTF = {
 			json = main.data;
 
 			//gltf
-			for(var i = 0; i < json.buffers.length; ++i)
-			{
-				var buffer = json.buffers[i];
-				var data = null;
-				if( buffer.uri.substr(0,5) == "data:")
-					buffer.data = _base64ToArrayBuffer( buffer.uri.substr(37) );
-				else
-				{
-					var file = files_data[ buffer.uri ];
-					buffer.data = file.data;
-				}
+			this.parseBuffers();
 
-				buffer.dataview = new Uint8Array( buffer.data );
-				/*
-				if(data.byteLength != buffer.byteLength)
-					console.warn("gltf binary doesnt match json size hint");
-				*/
-			}
 			onFetchComplete();
 		}
 
@@ -8042,6 +8086,7 @@ RD.GLTF = {
 			json.filename = filename;
 			json.folder = folder;
 			json.url = url;
+			RD.GLTF.parseBuffers(json,files_data);
 			var node = RD.GLTF.parse( json );
 			var data = node.serialize(); 
 			RD.GLTF.prefabs[ url ] = data;
@@ -8049,6 +8094,7 @@ RD.GLTF = {
 				callback(node);
 		}
 
+		//after fetching the data
 		function onData(data)
 		{
 			if( extension == "gltf" )
@@ -8067,6 +8113,32 @@ RD.GLTF = {
 				}
 				onFetchComplete();
 			}
+		}
+	},
+
+	parseBuffers: function(json, files_data)
+	{
+		for(var i = 0; i < json.buffers.length; ++i)
+		{
+			var buffer = json.buffers[i];
+			if(buffer.data)
+				continue;
+			var data = null;
+			if( buffer.uri && buffer.uri.substr(0,5) == "data:")
+				buffer.data = _base64ToArrayBuffer( buffer.uri.substr(37) );
+			else
+			{
+				if(!files_data)
+					throw("missing data in glb");
+				var file = files_data[ buffer.uri ];
+				buffer.data = file.data;
+			}
+
+			buffer.dataview = new Uint8Array( buffer.data );
+			/*
+			if(data.byteLength != buffer.byteLength)
+				console.warn("gltf binary doesnt match json size hint");
+			*/
 		}
 	},
 
@@ -8142,6 +8214,20 @@ RD.GLTF = {
 		var nodes_info = scene.nodes;
 		this.gltf_materials = {};
 
+		//preparse ASCII Buffer if there is any
+		if(json.buffers && json.buffers.length)
+		{
+			for(var i = 0; i < json.buffers.length;++i)
+			{
+				var buffer = json.buffers[i];
+				if(buffer.uri && !buffer.data && buffer.uri.substr(0,5) == "data:")
+				{
+					buffer.data = _base64ToArrayBuffer( buffer.uri.substr(37) );
+					buffer.dataview = new Uint8Array(buffer.data);
+				}
+			}
+		}
+
 		if(json.skins)
 		{
 			for(var i = 0; i < json.skins.length; ++i)
@@ -8201,6 +8287,9 @@ RD.GLTF = {
 		}
 
 		root.materials = this.gltf_materials;
+		root.meta = {
+			asset: json.asset
+		};
 		return root;
 	},
 
@@ -8827,6 +8916,16 @@ RD.GLTF = {
 				var texture = GL.Texture.fromURL( image_url, this.texture_options );
 				texture.name = image_name;
 				gl.textures[ image_name ] = texture;
+				//special case: this image is lowquality but the highquality is in a folder next to the GLB
+				if(json.asset && json.asset.low_quality) //custom hack in the gltfs
+				{
+					var images_folder = json.folder + "/" + json.filename.replace(/\.[^/.]+$/, "") + "/";
+					var hd_url = images_folder + source.name;
+					//GL.Texture.fromURL( , { texture: texture } );
+					if(!json.asset.hd_textures)
+						json.asset.hd_textures = {};
+					json.asset.hd_textures[ image_name ] = hd_url;
+				}
 			}
 		}
 
@@ -8905,6 +9004,11 @@ RD.GLTF = {
 
 			var timestamps = this.parseAccessor( sampler.input, json );
 			var keyframedata = this.parseAccessor( sampler.output, json );
+			if(!keyframedata)
+			{
+				console.warn("animation accedor missing")
+				continue;
+			}
 			var type = json.accessors[ sampler.output ].type;
 			var type_enum = RD.TYPES[type];
 			if( type_enum == RD.VEC4 && track.target_property == "rotation")
@@ -9005,7 +9109,7 @@ RD.GLTF = {
 	},
 
 	//special case when using a data path
-	removeRootPathFromTextures: function( materials, root_path )
+	removeRootPathFromTextures: function( materials, root_path, root )
 	{
 		if(!root_path)
 			return;
@@ -9562,7 +9666,9 @@ PBRPipeline.prototype.getNodeRenderCalls = function( node, camera, layers )
 
 	if(skinning && skinning.joints)
 	{
-		
+		//at least once
+		if(!skinning._bone_matrices)
+			node.updateSkinningBones( node.parentNode ); //use parent node as root
 	}
 
 	//check if inside frustum (skinned objects are not tested)
@@ -10716,6 +10822,7 @@ RD.RenderCall = RenderCall;
 	function Light()
 	{
 		this.intensity = 1;
+		this.area = 1; //frustum
 		this._color = vec3.fromValues(0.9,0.9,0.9);
 		this._position = vec3.fromValues(10,20,5);
 		this._target = vec3.create();
@@ -10728,7 +10835,7 @@ RD.RenderCall = RenderCall;
 		this.shadowmap = {
 			texture:null,
 			resolution: 2048,
-			bias: 0.000005,
+			bias: 0.00001,
 			uniforms: {
 				u_shadowmap_matrix: this.camera._viewprojection_matrix,
 				u_shadowmap_texture: 4,
@@ -10809,6 +10916,7 @@ RD.RenderCall = RenderCall;
 	};
 
 	Light.prototype.setView = function(area,near,far) {
+		this.area = area;
 		this.camera.orthographic(area,near,far,1);
 		this.updateData();
 	};
@@ -10847,6 +10955,8 @@ RD.RenderCall = RenderCall;
 
 		if(!this.shadowmap.fbo)
 			throw("no shadowmap fbo");
+
+		this.camera.view_texel_grid = [this.shadowmap.resolution,this.shadowmap.resolution];
 
 		renderer.generating_shadowmap = true;
 		this.shadowmap.fbo.bind();
@@ -11576,19 +11686,68 @@ Skeleton.prototype.getBone = function(name)
 
 Skeleton.identity = mat4.create();
 
-Skeleton.prototype.getBoneMatrix = function( name, global )
+//force_update will recompute global from skeleton, otherwise returns last one computed
+Skeleton.prototype.getBoneMatrix = function( name_or_index, global, force_update )
 {
 	var index = -1;
-	if(name.constructor === String)
-		index = this.bones_by_name.get(name);
-	else if(name.constructor === Number)
-		index = name;
+	if(name_or_index.constructor === String)
+		index = this.bones_by_name.get(name_or_index);
+	else if(name_or_index.constructor === Number)
+		index = name_or_index;
 	if( index === undefined )
 		return Skeleton.identity;
-	if(global)
-		return this.global_bone_matrices[ index ];
-	return this.bones[ index ].model;
+	if(!global)
+		return this.bones[ index ].model;
+
+	var m = this.global_bone_matrices[ index ];
+	if(!force_update)
+		return m;
+
+	var aux = this.bones[ index ];
+	m.set( aux.model );
+	aux = this.bones[ aux.parent ];
+
+	while( aux )
+	{
+		m = mat4.mul( m, aux.model, m );
+		aux = this.bones[ aux.parent ];
+	}
+
+	return m;
 }
+
+Skeleton.prototype.updateBoneGlobalMatrix = function( index )
+{
+	var aux = this.bones[ index ];
+	if(!aux)
+		return;
+	var m = this.global_bone_matrices[ index ];
+	m.set( aux.model );
+	aux = this.bones[ aux.parent ];
+	while( aux )
+	{
+		m = mat4.mul( m, aux.model, m );
+		aux = this.bones[ aux.parent ];
+	}
+}
+
+Skeleton.prototype.updateChildBonesGlobalMatrices = function( root )
+{
+	var bone = null;
+	if(root.constructor == Skeleton.Bone )
+		bone = root;
+	else
+		bone = this.getBone( root );
+	if(!bone)
+		return;
+	var m = this.global_bone_matrices[ bone.index ];
+	var parent = this.global_bone_matrices[ bone.parent ];
+	mat4.mul( m, parent, m );
+
+	for(var i = 0; i < this.num_children; ++i )
+		this.updateChildBonesGlobalMatrices( this.children[i] );
+}
+
 
 //imports skeleton from structure following Rendeer
 Skeleton.prototype.importSkeleton = function( root_node, extra_transform )
@@ -12208,6 +12367,29 @@ SkeletalAnimation.prototype.toData = function()
 	return lines.join("\n");
 }
 
+SkeletalAnimation.prototype.fromPose = function( skeleton )
+{
+	this.samples_per_second = 15;
+	this.duration = 1/this.samples_per_second;
+	this.skeleton.copyFrom( skeleton );
+
+	//count animated bones and update bones map
+	var num_animated_bones = skeleton.bones.length;
+	for(var i = 0; i < skeleton.bones.length; ++i)
+	{
+		var bone = skeleton.bones[i];
+		this.bones_map[ i ] = i;
+	}
+
+	//make room for the keyframes
+	var num_frames = 1;
+	this.resize( num_frames, num_animated_bones );
+
+	//sample the skeleton
+	var t = 0;
+	this.assignPoseToKeyframe( this.skeleton, 0 );
+}
+
 //resamples the tracks to get poses over time
 SkeletalAnimation.prototype.fromTracksAnimation = function( skeleton, animation, frames_per_second, extra_transform )
 {
@@ -12591,22 +12773,33 @@ RD.AnimatedCharacterFromScene = function( scene, filename, Z_is_up )
 		animation_name = scene.animations[0].id;
 
 	var animation = null;
-	if( RD.Animations[ animation_name ] )
-		animation = RD.Animations[ animation_name ];
-	else if( scene.resources )
+
+	if(animation_name != null)
 	{
-		var animation_info = scene.resources[ animation_name ];
-		animation = new RD.Animation();
-		animation.configure( animation_info.takes["default"] );
+		if( RD.Animations[ animation_name ] )
+			animation = RD.Animations[ animation_name ];
+		else if( scene.resources )
+		{
+			var animation_info = scene.resources[ animation_name ];
+			animation = new RD.Animation();
+			animation.configure( animation_info.takes["default"] );
+		}
 	}
 
 	if(!animation)
-		throw("no animation in scene");
-
-	//create SkeletalAnimation sampling at 30 fps
-	var skeletal_anim = new RD.SkeletalAnimation();
-	skeletal_anim.fromTracksAnimation( skeleton, animation, 30, up_rotation );
-	skeletal_anim.filename = filename;
+	{
+		console.warn("no animation in scene, creating pose one");
+		var skeletal_anim = new RD.SkeletalAnimation();
+		skeletal_anim.fromPose( skeleton );
+		skeletal_anim.filename = filename;
+	}
+	else
+	{
+		//create SkeletalAnimation sampling at 30 fps
+		var skeletal_anim = new RD.SkeletalAnimation();
+		skeletal_anim.fromTracksAnimation( skeleton, animation, 30, up_rotation );
+		skeletal_anim.filename = filename;
+	}
 
 	return {
 		mesh: final_mesh ? final_mesh.filename : null,

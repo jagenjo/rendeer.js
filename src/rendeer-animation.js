@@ -694,19 +694,68 @@ Skeleton.prototype.getBone = function(name)
 
 Skeleton.identity = mat4.create();
 
-Skeleton.prototype.getBoneMatrix = function( name, global )
+//force_update will recompute global from skeleton, otherwise returns last one computed
+Skeleton.prototype.getBoneMatrix = function( name_or_index, global, force_update )
 {
 	var index = -1;
-	if(name.constructor === String)
-		index = this.bones_by_name.get(name);
-	else if(name.constructor === Number)
-		index = name;
+	if(name_or_index.constructor === String)
+		index = this.bones_by_name.get(name_or_index);
+	else if(name_or_index.constructor === Number)
+		index = name_or_index;
 	if( index === undefined )
 		return Skeleton.identity;
-	if(global)
-		return this.global_bone_matrices[ index ];
-	return this.bones[ index ].model;
+	if(!global)
+		return this.bones[ index ].model;
+
+	var m = this.global_bone_matrices[ index ];
+	if(!force_update)
+		return m;
+
+	var aux = this.bones[ index ];
+	m.set( aux.model );
+	aux = this.bones[ aux.parent ];
+
+	while( aux )
+	{
+		m = mat4.mul( m, aux.model, m );
+		aux = this.bones[ aux.parent ];
+	}
+
+	return m;
 }
+
+Skeleton.prototype.updateBoneGlobalMatrix = function( index )
+{
+	var aux = this.bones[ index ];
+	if(!aux)
+		return;
+	var m = this.global_bone_matrices[ index ];
+	m.set( aux.model );
+	aux = this.bones[ aux.parent ];
+	while( aux )
+	{
+		m = mat4.mul( m, aux.model, m );
+		aux = this.bones[ aux.parent ];
+	}
+}
+
+Skeleton.prototype.updateChildBonesGlobalMatrices = function( root )
+{
+	var bone = null;
+	if(root.constructor == Skeleton.Bone )
+		bone = root;
+	else
+		bone = this.getBone( root );
+	if(!bone)
+		return;
+	var m = this.global_bone_matrices[ bone.index ];
+	var parent = this.global_bone_matrices[ bone.parent ];
+	mat4.mul( m, parent, m );
+
+	for(var i = 0; i < this.num_children; ++i )
+		this.updateChildBonesGlobalMatrices( this.children[i] );
+}
+
 
 //imports skeleton from structure following Rendeer
 Skeleton.prototype.importSkeleton = function( root_node, extra_transform )
@@ -1326,6 +1375,29 @@ SkeletalAnimation.prototype.toData = function()
 	return lines.join("\n");
 }
 
+SkeletalAnimation.prototype.fromPose = function( skeleton )
+{
+	this.samples_per_second = 15;
+	this.duration = 1/this.samples_per_second;
+	this.skeleton.copyFrom( skeleton );
+
+	//count animated bones and update bones map
+	var num_animated_bones = skeleton.bones.length;
+	for(var i = 0; i < skeleton.bones.length; ++i)
+	{
+		var bone = skeleton.bones[i];
+		this.bones_map[ i ] = i;
+	}
+
+	//make room for the keyframes
+	var num_frames = 1;
+	this.resize( num_frames, num_animated_bones );
+
+	//sample the skeleton
+	var t = 0;
+	this.assignPoseToKeyframe( this.skeleton, 0 );
+}
+
 //resamples the tracks to get poses over time
 SkeletalAnimation.prototype.fromTracksAnimation = function( skeleton, animation, frames_per_second, extra_transform )
 {
@@ -1709,22 +1781,33 @@ RD.AnimatedCharacterFromScene = function( scene, filename, Z_is_up )
 		animation_name = scene.animations[0].id;
 
 	var animation = null;
-	if( RD.Animations[ animation_name ] )
-		animation = RD.Animations[ animation_name ];
-	else if( scene.resources )
+
+	if(animation_name != null)
 	{
-		var animation_info = scene.resources[ animation_name ];
-		animation = new RD.Animation();
-		animation.configure( animation_info.takes["default"] );
+		if( RD.Animations[ animation_name ] )
+			animation = RD.Animations[ animation_name ];
+		else if( scene.resources )
+		{
+			var animation_info = scene.resources[ animation_name ];
+			animation = new RD.Animation();
+			animation.configure( animation_info.takes["default"] );
+		}
 	}
 
 	if(!animation)
-		throw("no animation in scene");
-
-	//create SkeletalAnimation sampling at 30 fps
-	var skeletal_anim = new RD.SkeletalAnimation();
-	skeletal_anim.fromTracksAnimation( skeleton, animation, 30, up_rotation );
-	skeletal_anim.filename = filename;
+	{
+		console.warn("no animation in scene, creating pose one");
+		var skeletal_anim = new RD.SkeletalAnimation();
+		skeletal_anim.fromPose( skeleton );
+		skeletal_anim.filename = filename;
+	}
+	else
+	{
+		//create SkeletalAnimation sampling at 30 fps
+		var skeletal_anim = new RD.SkeletalAnimation();
+		skeletal_anim.fromTracksAnimation( skeleton, animation, 30, up_rotation );
+		skeletal_anim.filename = filename;
+	}
 
 	return {
 		mesh: final_mesh ? final_mesh.filename : null,

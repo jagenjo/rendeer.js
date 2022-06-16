@@ -426,7 +426,9 @@ PBRPipeline.prototype.getNodeRenderCalls = function( node, camera, layers )
 
 	if(skinning && skinning.joints)
 	{
-		
+		//at least once
+		if(!skinning._bone_matrices)
+			node.updateSkinningBones( node.parentNode ); //use parent node as root
 	}
 
 	//check if inside frustum (skinned objects are not tested)

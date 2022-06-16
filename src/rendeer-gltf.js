@@ -100,24 +100,8 @@ RD.GLTF = {
 			json = main.data;
 
 			//gltf
-			for(var i = 0; i < json.buffers.length; ++i)
-			{
-				var buffer = json.buffers[i];
-				var data = null;
-				if( buffer.uri.substr(0,5) == "data:")
-					buffer.data = _base64ToArrayBuffer( buffer.uri.substr(37) );
-				else
-				{
-					var file = files_data[ buffer.uri ];
-					buffer.data = file.data;
-				}
+			this.parseBuffers();
 
-				buffer.dataview = new Uint8Array( buffer.data );
-				/*
-				if(data.byteLength != buffer.byteLength)
-					console.warn("gltf binary doesnt match json size hint");
-				*/
-			}
 			onFetchComplete();
 		}
 
@@ -160,6 +144,7 @@ RD.GLTF = {
 			json.filename = filename;
 			json.folder = folder;
 			json.url = url;
+			RD.GLTF.parseBuffers(json,files_data);
 			var node = RD.GLTF.parse( json );
 			var data = node.serialize(); 
 			RD.GLTF.prefabs[ url ] = data;
@@ -167,6 +152,7 @@ RD.GLTF = {
 				callback(node);
 		}
 
+		//after fetching the data
 		function onData(data)
 		{
 			if( extension == "gltf" )
@@ -185,6 +171,32 @@ RD.GLTF = {
 				}
 				onFetchComplete();
 			}
+		}
+	},
+
+	parseBuffers: function(json, files_data)
+	{
+		for(var i = 0; i < json.buffers.length; ++i)
+		{
+			var buffer = json.buffers[i];
+			if(buffer.data)
+				continue;
+			var data = null;
+			if( buffer.uri && buffer.uri.substr(0,5) == "data:")
+				buffer.data = _base64ToArrayBuffer( buffer.uri.substr(37) );
+			else
+			{
+				if(!files_data)
+					throw("missing data in glb");
+				var file = files_data[ buffer.uri ];
+				buffer.data = file.data;
+			}
+
+			buffer.dataview = new Uint8Array( buffer.data );
+			/*
+			if(data.byteLength != buffer.byteLength)
+				console.warn("gltf binary doesnt match json size hint");
+			*/
 		}
 	},
 
@@ -260,6 +272,20 @@ RD.GLTF = {
 		var nodes_info = scene.nodes;
 		this.gltf_materials = {};
 
+		//preparse ASCII Buffer if there is any
+		if(json.buffers && json.buffers.length)
+		{
+			for(var i = 0; i < json.buffers.length;++i)
+			{
+				var buffer = json.buffers[i];
+				if(buffer.uri && !buffer.data && buffer.uri.substr(0,5) == "data:")
+				{
+					buffer.data = _base64ToArrayBuffer( buffer.uri.substr(37) );
+					buffer.dataview = new Uint8Array(buffer.data);
+				}
+			}
+		}
+
 		if(json.skins)
 		{
 			for(var i = 0; i < json.skins.length; ++i)
@@ -319,6 +345,9 @@ RD.GLTF = {
 		}
 
 		root.materials = this.gltf_materials;
+		root.meta = {
+			asset: json.asset
+		};
 		return root;
 	},
 
@@ -945,6 +974,16 @@ RD.GLTF = {
 				var texture = GL.Texture.fromURL( image_url, this.texture_options );
 				texture.name = image_name;
 				gl.textures[ image_name ] = texture;
+				//special case: this image is lowquality but the highquality is in a folder next to the GLB
+				if(json.asset && json.asset.low_quality) //custom hack in the gltfs
+				{
+					var images_folder = json.folder + "/" + json.filename.replace(/\.[^/.]+$/, "") + "/";
+					var hd_url = images_folder + source.name;
+					//GL.Texture.fromURL( , { texture: texture } );
+					if(!json.asset.hd_textures)
+						json.asset.hd_textures = {};
+					json.asset.hd_textures[ image_name ] = hd_url;
+				}
 			}
 		}
 
@@ -1023,6 +1062,11 @@ RD.GLTF = {
 
 			var timestamps = this.parseAccessor( sampler.input, json );
 			var keyframedata = this.parseAccessor( sampler.output, json );
+			if(!keyframedata)
+			{
+				console.warn("animation accedor missing")
+				continue;
+			}
 			var type = json.accessors[ sampler.output ].type;
 			var type_enum = RD.TYPES[type];
 			if( type_enum == RD.VEC4 && track.target_property == "rotation")
@@ -1123,7 +1167,7 @@ RD.GLTF = {
 	},
 
 	//special case when using a data path
-	removeRootPathFromTextures: function( materials, root_path )
+	removeRootPathFromTextures: function( materials, root_path, root )
 	{
 		if(!root_path)
 			return;

@@ -88,6 +88,7 @@ Gizmo.SCALE = 1<<15;
 Gizmo.DRAG = 1<<16;
 Gizmo.ROTATE = 1<<17;
 Gizmo.ROTATEFRONT = 1<<18;
+Gizmo.RESIZE = 1<<19;
 
 Gizmo.MOVEAXIS = Gizmo.MOVEX | Gizmo.MOVEY | Gizmo.MOVEZ;
 Gizmo.MOVEPLANAR = Gizmo.MOVEXY | Gizmo.MOVEXZ | Gizmo.MOVEYZ;
@@ -287,7 +288,7 @@ Gizmo.prototype.getTargetBaseNodes = function()
 		var n = targets[i];
 		if(!(n.layers & this.layers))
 			continue;
-		if(isParentSelected(n.parentNode))
+		if(n.parentNode && isParentSelected(n.parentNode))
 			continue;
 		r.push(n);
 	}
@@ -378,6 +379,7 @@ Gizmo.prototype.applyRotation = function(angle, axis, center)
 	else
 	{
 		var T = mat4.create();
+		//console.log(center,angle);
 		mat4.setTranslation(T,center);
 		mat4.mul( M, M, T );
 		mat4.rotate(M,M, angle, axis );
@@ -850,6 +852,7 @@ Gizmo.prototype.render = function(renderer,camera)
 
 	if(!gl.meshes["cone"])
 	{
+		gl.meshes["cube"] = GL.Mesh.cube({size:1});
 		gl.meshes["circle"] = GL.Mesh.circle({radius:1});
 		gl.meshes["cylinder"] = GL.Mesh.cylinder({radius:0.02,height:1});
 		gl.meshes["cone"] = GL.Mesh.cone({radius:0.1,height:0.25});
@@ -857,6 +860,7 @@ Gizmo.prototype.render = function(renderer,camera)
 		gl.meshes["quartertorus"] = GL.Mesh.torus({angle:Math.PI*0.5,outerradius:1,innerradius:0.02,outerslices:64,innerslices:8});
 		gl.meshes["halftorus"] = GL.Mesh.torus({angle:Math.PI,outerradius:1,innerradius:0.02,outerslices:64,innerslices:8});
 	}
+	var cube = gl.meshes["cube"];
 	var cone = gl.meshes["cone"];
 	var sphere = gl.meshes["sphere"];
 	var torus = gl.meshes["torus"];
@@ -1143,6 +1147,12 @@ Gizmo.prototype.render = function(renderer,camera)
 	if( mode & Gizmo.SCALE )
 		this.drawInnerSphere(model,"scale");
 
+	if( mode & Gizmo.RESIZE )
+	{
+		this.drawResize(model,"resize");
+	}
+
+
 	gl.enable(gl.DEPTH_TEST);
 }
 
@@ -1294,6 +1304,32 @@ Gizmo.prototype.drawInnerSphere = function(model, action)
 
 	if(action)
 		this.toScreen(tmp,action);
+}
+
+Gizmo.prototype.drawResize = function(model, action)
+{
+	var shader = gl.shaders[this.shader];
+	var cube = gl.meshes["cube"];
+	var hover = this._hover_action;
+
+	var bounding = null;
+	//TODO...
+}
+
+Gizmo.prototype.computeBounding = function(out)
+{
+	out = out || BBox.create();
+
+	for(var i = 0; i < this.targets.length; ++i)
+	{
+		var node = this.targets[i];
+		var bbox = node.updateBoundingBox();
+		if( i == 0 )
+			BBox.copy( out, bbox );
+		else			
+			BBox.merge( out, out, bbox );
+	}
+	return out;
 }
 
 Gizmo.prototype.renderOutline = function( renderer, scene, camera, objects )
