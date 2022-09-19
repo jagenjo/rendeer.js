@@ -212,7 +212,7 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 	{
 		if(!this.frame_texture || this.frame_texture.width != w || this.frame_texture.height != h )
 		{
-			this.frame_texture = new GL.Texture( w,h, { format: gl.RGBA, type: gl.HIGH_PRECISION_FORMAT } );
+			this.frame_texture = new GL.Texture( w,h, { format: gl.RGBA, type: gl.HIGH_PRECISION_FORMAT, filter: gl.LINEAR } );
 			if(!this.final_fbo)
 				this.final_fbo = new GL.FBO( [this.frame_texture], null, true );
 			else
@@ -220,7 +220,7 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 			this.frame_texture.name = ":frame_texture";
 			gl.textures[ this.frame_texture.name ] = this.frame_texture;
 
-			this.final_texture = new GL.Texture( w,h, { format: gl.RGB } );
+			this.final_texture = new GL.Texture( w,h, { format: gl.RGB, filter: gl.LINEAR } );
 			this.final_texture.name = ":final_frame_texture";
 			gl.textures[ this.final_texture.name ] = this.final_texture;
 		}

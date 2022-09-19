@@ -3094,7 +3094,19 @@ Object.defineProperty( Material.prototype, "albedo", {
 Material.prototype.configure = function(o)
 {
 	for(var i in o)
-		this[i] = o[i];
+	{
+		var v = o[i];
+		if(v)
+		{
+			if(v.constructor === Object) //avoid sharing objects between materials
+				v = JSON.parse(JSON.stringify(v)); //clone
+			else if(v.constructor === Array)
+				v = v.concat();
+			else if(v.constructor === Float32Array)
+				v = new Float32Array(v);
+		}
+		this[i] = v;
+	}
 }
 
 /**
@@ -3115,8 +3127,8 @@ Material.prototype.register = function(name)
 Material.prototype.serialize = function()
 {
 	var o = {
-		flags: this.flags,
-		textures: this.textures
+		flags: JSON.parse( JSON.stringify(this.flags)),
+		textures: JSON.parse( JSON.stringify(this.textures) ) //clone
 	};
 
 	o.color = typedArrayToArray( this._color );
@@ -3313,7 +3325,8 @@ function Renderer( context, options )
 	this.frame = 0;
 	this.draw_calls = 0;
 
-	this.createShaders();
+	if(!options.ignore_shaders)
+		this.createShaders();
 
 	if(options.shaders_file)
 		this.loadShaders( options.shaders_file, null, options.shaders_macros );

@@ -3095,7 +3095,19 @@ Object.defineProperty( Material.prototype, "albedo", {
 Material.prototype.configure = function(o)
 {
 	for(var i in o)
-		this[i] = o[i];
+	{
+		var v = o[i];
+		if(v)
+		{
+			if(v.constructor === Object) //avoid sharing objects between materials
+				v = JSON.parse(JSON.stringify(v)); //clone
+			else if(v.constructor === Array)
+				v = v.concat();
+			else if(v.constructor === Float32Array)
+				v = new Float32Array(v);
+		}
+		this[i] = v;
+	}
 }
 
 /**
@@ -3116,8 +3128,8 @@ Material.prototype.register = function(name)
 Material.prototype.serialize = function()
 {
 	var o = {
-		flags: this.flags,
-		textures: this.textures
+		flags: JSON.parse( JSON.stringify(this.flags)),
+		textures: JSON.parse( JSON.stringify(this.textures) ) //clone
 	};
 
 	o.color = typedArrayToArray( this._color );
@@ -3314,7 +3326,8 @@ function Renderer( context, options )
 	this.frame = 0;
 	this.draw_calls = 0;
 
-	this.createShaders();
+	if(!options.ignore_shaders)
+		this.createShaders();
 
 	if(options.shaders_file)
 		this.loadShaders( options.shaders_file, null, options.shaders_macros );
@@ -9452,7 +9465,7 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 	{
 		if(!this.frame_texture || this.frame_texture.width != w || this.frame_texture.height != h )
 		{
-			this.frame_texture = new GL.Texture( w,h, { format: gl.RGBA, type: gl.HIGH_PRECISION_FORMAT } );
+			this.frame_texture = new GL.Texture( w,h, { format: gl.RGBA, type: gl.HIGH_PRECISION_FORMAT, filter: gl.LINEAR } );
 			if(!this.final_fbo)
 				this.final_fbo = new GL.FBO( [this.frame_texture], null, true );
 			else
@@ -9460,7 +9473,7 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 			this.frame_texture.name = ":frame_texture";
 			gl.textures[ this.frame_texture.name ] = this.frame_texture;
 
-			this.final_texture = new GL.Texture( w,h, { format: gl.RGB } );
+			this.final_texture = new GL.Texture( w,h, { format: gl.RGB, filter: gl.LINEAR } );
 			this.final_texture.name = ":final_frame_texture";
 			gl.textures[ this.final_texture.name ] = this.final_texture;
 		}
