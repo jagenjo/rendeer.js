@@ -1070,7 +1070,6 @@ SceneNode.prototype.orientTo = function( v, reverse, up, in_local_space, cylindr
 	mat3.setColumn( temp, top, 1 );
 	mat3.setColumn( temp, front, 2 );
 	//convert to quat
-	//quat.fromMat3AndQuat( this._rotation, temp );
 	quat.fromMat3( this._rotation, temp );
 	quat.normalize(this._rotation, this._rotation );
 	this._must_update_matrix = true;
@@ -1610,6 +1609,31 @@ SceneNode.prototype.getMaterial = function(index)
 }
 
 /**
+* sets one bit of the layer to some value
+* @method setLayerBit
+* @param { Number } bit number
+* @param { boolean } value true or false
+*/
+SceneNode.prototype.setLayerBit = function( bit_num, value )
+{
+	var f = 1<<bit_num;
+	this.layers = (this.layers & (~f));
+	if(value)
+		this.layers |= f;
+}
+
+/**
+* checks if this node is in the given layer
+* @method isInLayer
+* @param {number} layer number that specifies the layer bit
+* @return {boolean} true if belongs to this layer
+*/
+SceneNode.prototype.isInLayerBit = function( bit_num )
+{
+	return (this.layers & (1<<bit_num)) !== 0;
+}
+
+/**
 * Tests if the ray collides with this node mesh or the childrens
 * @method testRay
 * @param { GL.Ray } ray the object containing origin and direction of the ray
@@ -1712,6 +1736,7 @@ SceneNode.prototype.testRayWithMesh = (function(){
 	var origin = vec3.create();
 	var direction = vec3.create();
 	var end = vec3.create();
+	var gmatrix = mat4.create();
 	var inv = mat4.create();
 
 	return function( ray, coll_point, max_dist, layers, test_against_mesh )
@@ -1726,7 +1751,8 @@ SceneNode.prototype.testRayWithMesh = (function(){
 		var group_index = this.submesh == null ? -1 : this.submesh;
 
 		//ray to local
-		var model = this._global_matrix;
+		//Warning: if you use this._global_matrix and the object wasnt visible, it wont have the matrix updated
+		var model = this.getGlobalMatrix(gmatrix,true); 
 		mat4.invert( inv, model );
 		vec3.transformMat4( origin, ray.origin, inv );
 		vec3.add( end, ray.origin, ray.direction );
@@ -2832,13 +2858,48 @@ Scene.prototype.testRay = function( ray, result, max_dist, layers, test_against_
 		result = ray.collision_point;
 	if(test_against_mesh === undefined)
 		test_against_mesh = true;
+	return this.root.testRay( ray, result, max_dist, layers, test_against_mesh );
 
 	//TODO
 	//broad phase
 		//get all the AABBs of all objects
 		//store them in an octree
+	/*
+	var objects = this.gatherObjects( this.root, layers );
+	for(var i = 0; i < objects.length; ++i)
+	{
+		var object = objects[i];
+	}
+	*/
+}
 
-	return this.root.testRay( ray, result, max_dist, layers, test_against_mesh );
+//internal function fro broadphase
+Scene.prototype.gatherObjects = function( node, layers, output )
+{
+	output = output || [];
+	node.updateGlobalMatrix(true);
+
+	if( node.mesh && layers & node.layers && !node.skeleton )
+	{
+		if( node.primitives && node.primitives.length )
+		{
+			for(var i = 0; i < node.primitives.length; ++i)
+			{
+				var prim = node.primitives[i];
+				var material = this.overwrite_material || RD.Materials[ prim.material ];
+				if(!material)
+					continue;
+				output.push([node,node._global_matrix,node.mesh,i,node.material]);
+			}
+		}	
+	}
+	else
+		output.push([node,node._global_matrix,node.mesh,-1,node.material]);
+
+	for(var i = 0; i < node.children.length; ++i)
+		this.gatherObjects( node.children[i], layers, output );
+
+	return output;
 }
 
 //it returns to which node of the array collided (even if it collided with a child)
