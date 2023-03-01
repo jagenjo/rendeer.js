@@ -688,7 +688,7 @@ SceneNode.prototype.getAllChildren = function(r)
 SceneNode.prototype.getVisibleChildren = function( result, layers, layers_affect_children )
 {
 	result = result || [];
-	if(layers === undefined)
+	if(layers == null)
 		layers = 0xFFFF;
 
 	if(!this.children)
@@ -1482,7 +1482,7 @@ SceneNode.prototype.findNodeByName = function(name)
 */
 SceneNode.prototype.findNodesByFilter = function( filter_func, layers, result )
 {
-	if(layers === undefined)
+	if(layers == null)
 		layers = 0xFFFF;
 	result = result || [];
 
@@ -1656,8 +1656,8 @@ SceneNode.prototype.testRay = (function(){
 
 	return function( ray, result, max_dist, layers, test_against_mesh, test_primitives )
 	{
-		max_dist = max_dist === undefined ? Number.MAX_VALUE : max_dist;
-		if(layers === undefined)
+		max_dist = max_dist == null ? Number.MAX_VALUE : max_dist;
+		if(layers == null)
 			layers = 0xFFFF;
 		result = result || vec3.create();
 
@@ -1774,6 +1774,51 @@ SceneNode.prototype.testRayWithMesh = (function(){
 	}
 })();
 
+
+/**
+* Tests if the ray collides with the mesh in this node
+* @method testSphereWithMesh
+* @param { vec3 } center the center of the sphere
+* @param { Number } radius the radius of the sphere
+* @param { Number } layers the layers where you want to test
+* @param { Boolean } test_against_mesh if true it will test collision with mesh, otherwise only bounding
+* @return { Boolean } true if it collided
+*/
+SceneNode.prototype.testSphereWithMesh = (function(){ 
+	var local_center = vec3.create();
+	var direction = vec3.create();
+	var end = vec3.create();
+	var gmatrix = mat4.create();
+	var inv = mat4.create();
+
+	return function( center, radius, layers, test_against_mesh )
+	{
+		if( !this.mesh )
+			return false;
+
+		var mesh = gl.meshes[ this.mesh ];
+		if( !mesh || mesh.ready === false) //mesh not loaded
+			return false;
+		var group_index = this.submesh == null ? -1 : this.submesh;
+
+		//Warning: if you use this._global_matrix and the object wasnt visible, it wont have the matrix updated
+		var model = this.getGlobalMatrix(gmatrix,true); 
+		mat4.invert( inv, model );
+		vec3.transformMat4( local_center, center, inv );
+		var local_radius = radius / vec3.length(model); //reads the first three elements
+		var two_sided = this.flags.two_sided;
+
+		if( this.primitives && this.primitives.length )
+		{
+			var material = RD.Materials[ this.primitives[0].material ];
+			if(material)
+				two_sided = material.flags.two_sided;
+		}
+
+		return RD.testSphereMesh( local_center, local_radius, model, mesh, group_index, layers, test_against_mesh, two_sided );
+	}
+})();
+
 /**
 * adjust the rendering range so it renders one specific submesh of the mesh
 * @method setRangeFromSubmesh
@@ -1781,7 +1826,7 @@ SceneNode.prototype.testRayWithMesh = (function(){
 */
 SceneNode.prototype.setRangeFromSubmesh = function( submesh_id )
 {
-	if(submesh_id === undefined || !this.mesh)
+	if(submesh_id == null || !this.mesh)
 	{
 		this.draw_range = null;
 		return;
@@ -1826,7 +1871,7 @@ SceneNode.prototype.setRangeFromSubmesh = function( submesh_id )
 */
 SceneNode.prototype.findNodesInSphere = function( center, radius, layers, out )
 {
-	if(layers === undefined)
+	if(layers == null)
 		layers = 0xFFFF;
 	out = out || [];
 	for(var i = 0; i < this.children.length; ++i)
@@ -2790,7 +2835,7 @@ Scene.prototype.getNodeById = function(id)
 */
 Scene.prototype.findNodesInBBox = function( box, layers, out )
 {
-	if(layers === undefined)
+	if(layers == null)
 		layers = 0xFFFF;
 	out = out || [];
 	for(var i = 0; i < this.nodes.length; ++i)
@@ -2853,11 +2898,11 @@ Object.defineProperty(Scene.prototype, 'root', {
 */
 Scene.prototype.testRay = function( ray, result, max_dist, layers, test_against_mesh  )
 {
-	layers = layers === undefined ? 0xFFFF : layers;
+	layers = layers == null ? 0xFFFF : layers;
 	RD.Scene._ray_tested_objects = 0;
 	if(!result)
 		result = ray.collision_point;
-	if(test_against_mesh === undefined)
+	if(test_against_mesh == null)
 		test_against_mesh = true;
 	return this.root.testRay( ray, result, max_dist, layers, test_against_mesh );
 
@@ -2872,6 +2917,23 @@ Scene.prototype.testRay = function( ray, result, max_dist, layers, test_against_
 		var object = objects[i];
 	}
 	*/
+}
+
+/**
+* test collision of this ray with nodes in the scene
+* @method testSphere
+* @param {vec3} center
+* @param {float} radius 
+* @param {number} layers bitmask to filter by layer, otherwise 0xFFFF is used
+* @param {boolean} test_against_mesh test against every mesh
+* @return {RD.SceneNode} node collided or null
+*/
+Scene.prototype.testSphere = function( center, radius, layers, test_against_mesh  )
+{
+	layers = layers == null ? 0xFFFF : layers;
+	if(test_against_mesh == null)
+		test_against_mesh = true;
+	return this.root.testSphere( center, radius, layers, test_against_mesh );
 }
 
 //internal function fro broadphase
@@ -2909,7 +2971,7 @@ RD.testRayWithNodes = function testRayWithNodes( ray, nodes, coll, max_dist, lay
 {
 	RD.testRayWithNodes.coll_node = null; //hack to store a temp var
 	max_dist = max_dist == null ? Number.MAX_VALUE : max_dist;
-	layers = layers === undefined ? 0xFFFF : layers;
+	layers = layers == null ? 0xFFFF : layers;
 	RD.Scene._ray_tested_objects = 0;
 	if(!coll)
 		coll = ray.collision_point;
@@ -3017,6 +3079,60 @@ RD.testRayMesh = function( ray, local_origin, local_direction, model, mesh, grou
 	//there was a collision but too far
 	if( distance > max_dist )
 		return false; 
+	return true;
+}
+
+RD.testSphereMesh = function( local_center, local_radius, model, mesh, group_index, layers, test_against_mesh )
+{
+	var bb = null;
+	var subgroup = null;
+	if( group_index == -1 )
+	{
+		bb = mesh.getBoundingBox();
+		subgroup = mesh;
+	}
+	else
+	{
+		subgroup = mesh.info.groups[ group_index ];
+		bb = subgroup.bounding;
+		if(!bb)
+		{
+			mesh.computeGroupsBoundingBoxes();
+			bb = subgroup.bounding;
+		}
+	}
+
+	if(!bb) //mesh has no vertices
+		return false;
+
+	//test against object oriented bounding box
+	var r = geo.testSphereBBox( local_center, local_radius, bb );
+	if(!r) //collided with OOBB
+		return false;
+
+	//vec3.transformMat4( result, temp_vec3, model );
+
+	//test agains mesh
+	if( !test_against_mesh )
+		return true;
+
+	//create mesh octree
+	if(!subgroup._octree)
+	{
+		if( subgroup == mesh )
+			subgroup._octree = new GL.Octree( mesh );
+		else
+			subgroup._octree = new GL.Octree( mesh, subgroup.start, subgroup.length );
+	}
+
+	//ray test agains octree
+	var hit_test = subgroup._octree.testSphere( local_center, local_radius );
+
+	//collided the OOBB but not the mesh, so its a not
+	if( !hit_test ) 
+		return false;
+
+	//vec3.transformMat4( result, result, model );
 	return true;
 }
 
@@ -3841,20 +3957,20 @@ Renderer.prototype.renderNode = function(node, camera)
 	{
 		instancing_uniforms.u_model = node._instances;
 		if(group)
-			shader.drawInstanced( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.indices, instancing_uniforms, group.start, group.length );
+			shader.drawInstanced( mesh, node.primitive == null ? gl.TRIANGLES : node.primitive, node.indices, instancing_uniforms, group.start, group.length );
 		else if(node.draw_range)
-			shader.drawInstanced( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.indices, instancing_uniforms, node.draw_range[0], node.draw_range[1] );
+			shader.drawInstanced( mesh, node.primitive == null ? gl.TRIANGLES : node.primitive, node.indices, instancing_uniforms, node.draw_range[0], node.draw_range[1] );
 		else
-			shader.drawInstanced( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.indices, instancing_uniforms );
+			shader.drawInstanced( mesh, node.primitive == null ? gl.TRIANGLES : node.primitive, node.indices, instancing_uniforms );
 	}
 	else
 	{
 		if(group)
-			shader.drawRange( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, group.start, group.length, node.indices );
+			shader.drawRange( mesh, node.primitive == null ? gl.TRIANGLES : node.primitive, group.start, group.length, node.indices );
 		else if(node.draw_range)
-			shader.drawRange( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.draw_range[0], node.draw_range[1] , node.indices );
+			shader.drawRange( mesh, node.primitive == null ? gl.TRIANGLES : node.primitive, node.draw_range[0], node.draw_range[1] , node.indices );
 		else
-			shader.draw( mesh, node.primitive === undefined ? gl.TRIANGLES : node.primitive, node.indices );
+			shader.draw( mesh, node.primitive == null ? gl.TRIANGLES : node.primitive, node.indices );
 	}
 
 	if(!this.ignore_flags)
@@ -3877,7 +3993,7 @@ Renderer.prototype.renderMesh = function( model, mesh, texture, color, shader, m
 	if( texture )
 		this._uniforms.u_texture = texture.bind(0);
 	shader.uniforms(this._uniforms);
-	shader.draw( mesh, mode === undefined ? gl.TRIANGLES : mode, index_buffer_name );
+	shader.draw( mesh, mode == null ? gl.TRIANGLES : mode, index_buffer_name );
 	this.draw_calls += 1;
 }
 
@@ -4051,7 +4167,7 @@ RD.Renderer.prototype.renderPoints = function( positions, extra, camera, num_poi
 	shader.setUniform( "u_viewprojection", camera._viewprojection_matrix );
 	if(texture)
 		shader.setUniform( "u_texture", texture.bind(0) );
-	shader.drawRange( mesh, primitive !== undefined ? primitive : GL.POINTS, 0, num_points );
+	shader.drawRange( mesh, primitive != null ? primitive : GL.POINTS, 0, num_points );
 
 	return mesh;
 }
@@ -5020,7 +5136,7 @@ DynamicMeshNode.prototype.render = function( renderer, camera )
 	var mesh = this._mesh;
 	var range = this._total_indices ? this._total_indices : this._total / 3;
 	renderer.enableItemFlags( this );
-	shader.uniforms( renderer._uniforms ).uniforms( this._uniforms ).drawRange( mesh, this.primitive === undefined ? GL.TRIANGLES : this.primitive, 0, range, this._total_indices ? "triangles" : null );
+	shader.uniforms( renderer._uniforms ).uniforms( this._uniforms ).drawRange( mesh, this.primitive == null ? GL.TRIANGLES : this.primitive, 0, range, this._total_indices ? "triangles" : null );
 	renderer.disableItemFlags( this );
 }
 
