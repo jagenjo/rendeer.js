@@ -1774,6 +1774,53 @@ SceneNode.prototype.testRayWithMesh = (function(){
 	}
 })();
 
+/**
+* Tests if the ray collides with this node mesh or the childrens
+* @method testSphere
+* @param { vec3 } center center of sphere
+* @param { Number } radius 
+* @param { Number } layers the layers bitmask where you want to test
+* @param { Boolean } test_against_mesh if true it will test collision with mesh, otherwise only boundings
+* @return { RD.SceneNode } the node where it collided
+*/
+SceneNode.prototype.testSphere = (function(){ 
+
+	return function( center, radius, layers, test_against_mesh )
+	{
+		if(layers == null)
+			layers = 0xFFFF;
+
+		//test with this node mesh 
+		var collided = null;
+		if(this.flags.visible === false)
+			return null;
+
+		if( (this.layers & layers) && !this.flags.ignore_collisions )
+		{
+			if( this.mesh )
+				collided = this.testSphereWithMesh( center, radius, layers, test_against_mesh );
+		}
+
+		//update closest point if there was a collision
+		if(collided)
+			return this;
+
+		//if no children, then return current collision
+		if( !this.children || !this.children.length )
+			return null;
+
+		//test against children
+		for(var i = 0, l = this.children.length; i < l; ++i )
+		{
+			var child = this.children[i];
+			var child_collided = child.testSphere( center, radius, layers, test_against_mesh );
+			if(child_collided)
+				return child_collided;
+		}
+		
+		return null;
+	}
+})();
 
 /**
 * Tests if the ray collides with the mesh in this node
@@ -4226,11 +4273,16 @@ void main() {\n\
 }\n\
 ";
 
+Renderer.prototype.renderLines = function( positions,  strip, model )
+{
+	this.renderPoints( positions, null, null, null, null, null, gl.LINES, null, model );
+}
+
 //for rendering lines with width...
 	//stream vertices with pos in triangle strip form (aberrating jumps)
 	//stream extra2 with info about line corner (to inflate)
 
-Renderer.prototype.renderLines = function( positions, lineWidth, strip, model )
+Renderer.prototype.render3DLines = function( positions, lineWidth, strip, model )
 {
 	if(!positions || positions.constructor !== Float32Array)
 		throw("RD.renderPoints only accepts Float32Array");
