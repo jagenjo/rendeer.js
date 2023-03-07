@@ -1,0 +1,124 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1" />
+
+<title>rendeer.js: canvas draw</title>
+	<link rel="stylesheet" type="text/css" href="style.css" />
+	<style type='text/css'>
+		html, body { width: 100%; height: 100%; margin: 0; padding: 0 }
+	</style>
+	<script type="text/javascript" src="../external/gl-matrix-min.js"></script>
+	<script type="text/javascript" src="../external/litegl.js"></script>
+	<script type="text/javascript" src="../src/rendeer.js"></script>
+	<script type="text/javascript">
+
+    var subcanvas, texture, subctx;
+	
+	function init()
+	{
+		//create a scene
+		var scene = new RD.Scene();
+
+		//create the rendering context
+		var context = GL.create({ width: window.innerWidth, height:window.innerHeight });
+		var renderer = new RD.Renderer( context );
+		document.body.appendChild( renderer.canvas ); //attach
+
+        //create an offscreen canvas where we will draw
+        subcanvas = document.createElement("canvas");
+        subcanvas.width = 1024;
+        subcanvas.height = 512;
+        subctx = subcanvas.getContext("2d");
+        subctx.fillStyle = "white";
+        subctx.fillRect(0,0,subcanvas.width,subcanvas.height);
+        subctx.clearRect(2,2,subcanvas.width-4,subcanvas.height-4);
+
+        //create a texture to upload the offscreen canvas 
+        texture = GL.Texture.fromImage(subcanvas, { wrap: gl.CLAMP_TO_EDGE });
+        gl.textures[":canvas"] = texture; //give it a name
+
+		//create camera
+		var camera = new RD.Camera();
+		camera.perspective( 45, gl.canvas.width / gl.canvas.height, 1, 1000 );
+		camera.lookAt( [0,10,-40],[0,0,0],[0,1,0] );
+
+		//create a node
+        var panel = new RD.SceneNode({mesh:"plane",scale:[20,10,1],flags:{two_sided:true}});
+        panel.texture = ":canvas"; //assign canvas texture to node
+        scene.root.addChild(panel);
+
+		var ball = new RD.SceneNode({mesh:"sphere",scale:0.1,layers:0b100});
+		scene.root.addChild(ball);
+
+		//global settings
+		var bg_color = vec4.fromValues(0.2,0.3,0.4,1);
+
+		//main render loop
+		var last = now = getTime();
+		requestAnimationFrame(animate);
+		function animate() {
+			requestAnimationFrame( animate );
+
+			last = now;
+			now = getTime();
+			var dt = (now - last) * 0.001;
+			renderer.clear(bg_color);
+			renderer.render(scene, camera);
+			scene.update(dt);
+		}
+
+		//input
+		renderer.context.captureMouse(true);
+		renderer.context.onmousemove = function(e)
+		{
+            //create ray from camera and mouse
+			var ray = camera.getRay( e.canvasx, e.canvasy );
+
+            //test ray collision with scene
+			var result = vec3.create();
+			var node = scene.testRay( ray, result, undefined, 0b1, true );
+
+            //if ray collided with node
+			if(node)
+			{
+                ball.position = result;
+                if(e.dragging) //and draggin the mouse button
+                {
+                    //convert collision point from global to node local
+                    var lpos = panel.globalToLocal( result );
+                    //convert from local (-0.5..0.5) to canvas (0,W)
+                    lpos[0] = Math.remap(lpos[0], -.5,.5, 0, subcanvas.width );
+                    lpos[1] = Math.remap(lpos[1], .5,-.5, 0, subcanvas.height );
+                    //draw something in the canvas
+                    var v = Math.sin(getTime()*0.001)*0.5 + 0.5; //random color
+                    subctx.fillStyle = "rgb(" + ((v*255)|0) + "," + (((1-v)*255)|0) + ",255)";
+                    subctx.fillRect( lpos[0] - 4, lpos[1] - 4, 8, 8 );
+                    //update texture in GPU with canvas image
+                    texture.uploadImage(subcanvas);
+                }
+			}
+            else
+            {
+                if(e.dragging)
+                {
+                    camera.orbit( e.deltax * -0.002, [0,1,0] );
+                    //camera.orbit( e.deltay * 0.002, [1,0,0], null, true );
+                }
+            }
+		}
+		renderer.context.onmousewheel = function(e)
+		{
+			camera.orbitDistanceFactor( 1.0 + (e.wheel * -0.001) );
+		}
+	}
+
+
+	</script>
+</head>
+<body>
+<script>init();</script>
+</body>
+</html>
+
+

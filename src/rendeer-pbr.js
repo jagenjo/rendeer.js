@@ -891,8 +891,11 @@ PBRPipeline.prototype.renderDeferred = function( nodes, camera, skip_fbo, layers
 
 	GB.final_fbo.bind();
 
+	//get  lights
+	var lights = this.gatherLightsFromNodes( nodes, layers );
+
 	//apply lights
-	this.renderFinalPass();
+	this.renderFinalPass(GB, lights, camera);
 	
 	//render blend objects in forward reusing forward pipeline
 	//...
@@ -975,10 +978,11 @@ PBRPipeline.prototype.renderToGBuffers = function( nodes, camera, layers )
 	}
 }
 
-PBRPipeline.prototype.renderFinalPass = function( scene, camera )
+PBRPipeline.prototype.renderFinalPass = function( GB, lights, camera )
 {
 	//for every light...
-	//TODO
+
+	GB.albedo.toViewport();
 }
 
 PBRPipeline.prototype.applyPostFX = function( GB )
@@ -996,8 +1000,11 @@ PBRPipeline.prototype.applyPostFX = function( GB )
 	GB.emissive.toViewport();
 	gl.viewport(w*0.5,h*0.5,w*0.5,h*0.5);
 	GB.normal.toViewport();
-
 	gl.viewport(0,0,w,h);
+}
+
+PBRPipeline.prototype.gatherLightsFromNodes = function( nodes, layers )
+{
 
 }
 

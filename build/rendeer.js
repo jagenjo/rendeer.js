@@ -10373,8 +10373,11 @@ PBRPipeline.prototype.renderDeferred = function( nodes, camera, skip_fbo, layers
 
 	GB.final_fbo.bind();
 
+	//get  lights
+	var lights = this.gatherLightsFromNodes( nodes, layers );
+
 	//apply lights
-	this.renderFinalPass();
+	this.renderFinalPass(GB, lights, camera);
 	
 	//render blend objects in forward reusing forward pipeline
 	//...
@@ -10457,10 +10460,11 @@ PBRPipeline.prototype.renderToGBuffers = function( nodes, camera, layers )
 	}
 }
 
-PBRPipeline.prototype.renderFinalPass = function( scene, camera )
+PBRPipeline.prototype.renderFinalPass = function( GB, lights, camera )
 {
 	//for every light...
-	//TODO
+
+	GB.albedo.toViewport();
 }
 
 PBRPipeline.prototype.applyPostFX = function( GB )
@@ -10478,8 +10482,11 @@ PBRPipeline.prototype.applyPostFX = function( GB )
 	GB.emissive.toViewport();
 	gl.viewport(w*0.5,h*0.5,w*0.5,h*0.5);
 	GB.normal.toViewport();
-
 	gl.viewport(0,0,w,h);
+}
+
+PBRPipeline.prototype.gatherLightsFromNodes = function( nodes, layers )
+{
 
 }
 
@@ -11228,6 +11235,23 @@ RD.RenderCall = RenderCall;
 		}
 	}
 	*/
+
+	Light.shadow_shader_function = "uniform mat4 u_shadowmap_matrix;\n\
+	uniform sampler2D u_shadowmap_texture;\n\
+	\n\
+	float testShadowmap( vec3 pos )\n\
+	{\n\
+		const float bias = 0.004;\n\
+		vec4 proj = u_shadowmap_matrix * vec4(pos, 1.0);\n\
+		vec2 sample = (proj.xy / proj.w) * vec2(0.5) + vec2(0.5);\n\
+		if(sample.x >= 0.0 && sample.x <= 1.0 && sample.y >= 0.0 && sample.y <= 1.0 )\n\
+		{\n\
+			float depth = texture2D( u_shadowmap_texture, sample ).x;\n\
+			if( depth > 0.0 && depth < 1.0 && depth <= ( ((proj.z-bias) / proj.w) * 0.5 + 0.5) )\n\
+				return 0.0;\n\
+		}\n\
+		return 1.0;\n\
+	}";
 
 	RD.Light = Light;
 

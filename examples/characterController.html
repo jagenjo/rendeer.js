@@ -1,0 +1,152 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1" />
+
+<title>rendeer.js: skinning</title>
+	<link rel="stylesheet" type="text/css" href="style.css" />
+	<style type='text/css'>
+		html, body { width: 100%; height: 100%; margin: 0; padding: 0 }
+	</style>
+	<script type="text/javascript" src="../external/gl-matrix-min.js"></script>
+	<script type="text/javascript" src="../external/litegl.js"></script>
+	<script type="text/javascript" src="../src/rendeer.js"></script>
+	<script type="text/javascript" src="../src/rendeer-animation.js"></script>
+	<script type="text/javascript">
+	
+	var renderer = null;
+	var scene = null;
+	var anims = {};
+    var character = null;
+    var velocity = 0;
+
+    function loadAnimation(name,url)
+    {
+        var anim = new RD.SkeletalAnimation();
+        anim.load(url);
+        anims[name] = anim;
+    }
+
+	function init()
+	{
+		//create a scene
+		scene = new RD.Scene();
+
+		//create the rendering context
+		var context = GL.create({ width: window.innerWidth, height:window.innerHeight });
+        context.captureKeys(true);
+        context.captureMouse(true);
+		renderer = new RD.Renderer( context );
+		document.body.appendChild( renderer.canvas ); //attach
+
+		renderer.meshes["circle"] = GL.Mesh.circle({size:5,xz:true});
+
+		//create camera
+		var camera = new RD.Camera();
+		camera.perspective( 45, gl.canvas.width / gl.canvas.height, 1, 2000 );
+		camera.lookAt( [-40,40,80],[0,10,0],[0,1,0] );
+
+		var floor = new RD.SceneNode();
+		floor.color = [0.3,0.3,0.3,1];
+		floor.mesh = "circle";
+		floor.scale(100,100,100);
+		scene.root.addChild(floor);
+
+        //character
+        character = new RD.SceneNode({mesh: "data/male.mesh", texture:"data/casual.png"});
+        character.skeleton = new RD.Skeleton();
+        scene.root.addChild(character);
+
+		loadAnimation("idle", "data/idle.skanim" );
+        loadAnimation("walk", "data/walking.skanim" );
+        loadAnimation("run", "data/running.skanim" );
+
+		//global settings
+		var bg_color = vec4.fromValues(0.0,0.0,0.0,1);
+
+		//main render loop
+		var last = now = getTime();
+		requestAnimationFrame(animate);
+		function animate() {
+			requestAnimationFrame( animate );
+
+			var time = getTime()*0.001;
+			last = now;
+			now = getTime();
+			var dt = (now - last) * 0.001;
+			camera.lookAt(camera.position,character.localToGlobal([0,10,0]),[0,1,0]);
+			renderer.clear(bg_color);
+			renderer.render(scene, camera);
+
+            //read input
+            var delta = [0,0,0];
+            var acc = 0;
+            var delta_angle = 0;
+            if(gl.keys["UP"] || gl.keys["W"])
+                acc = gl.keys["SHIFT"] ? 8 : 3;
+            if(gl.keys["DOWN"] || gl.keys["S"])
+                acc = -3;
+            if(gl.keys["LEFT"] || gl.keys["A"])
+                delta_angle += 1;
+            if(gl.keys["RIGHT"] || gl.keys["D"])
+                delta_angle -= 1;
+
+            velocity += acc * dt; //acceleration
+            velocity *= 0.95; //friction
+          
+            if(velocity)
+                character.moveLocal([0,0,velocity]);
+            character.rotate(delta_angle * DEG2RAD,[0,1,0]);
+
+            var t = getTime()*0.001;
+            var primary_anim, secondary_anim;
+            var w = 0;
+
+            if(velocity < 1) //walking
+            {
+                primary_anim = anims[ "idle" ];
+                secondary_anim = anims[ "walk" ];
+                primary_anim.assignTime(t);
+                secondary_anim.assignTime(velocity > 0 ? t : -t);
+                w = Math.abs( Math.clamp(velocity,-1,1) );
+            }
+            else //running
+            {
+                primary_anim = anims[ "walk" ];
+                secondary_anim = anims[ "run" ];
+                primary_anim.assignTime(t);
+                secondary_anim.assignTime(t);
+                w = Math.clamp(velocity-1,0,1);
+            }
+
+            //assign directly
+            if(!character.skeleton.bones.length && !primary_anim._loading)
+                character.skeleton.copyFrom( primary_anim.skeleton );
+            else if( !primary_anim._loading && !secondary_anim._loading )
+                RD.Skeleton.blend( primary_anim.skeleton, secondary_anim.skeleton, w, character.skeleton );
+
+			scene.update(dt);
+		}
+
+		//input
+		renderer.context.onmousemove = function(e)
+		{
+			if(e.dragging)
+			{
+			}
+		}
+		renderer.context.onmousewheel = function(e)
+		{
+			camera.orbitDistanceFactor( 1.0 + (e.wheel * -0.001) );
+		}
+	}
+
+
+	</script>
+</head>
+<body>
+<script>init();</script>
+</body>
+</html>
+
+
