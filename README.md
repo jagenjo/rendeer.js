@@ -9,6 +9,7 @@ It comes with some common useful classes like:
 * Scene and SceneNode
 * Camera
 * Renderer
+* SkeletalAnimation
 * ParticleEmissor
 
 And because it uses litegl you have all the basic ones (Mesh, Shader and Texture).
