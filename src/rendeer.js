@@ -3390,8 +3390,14 @@ Material.prototype.render = function( renderer, model, mesh, indices_name, group
 	var shader_name = this.shader_name;
 	if(!shader_name)
 	{
+		var shader_name = "texture_albedo";
 		if( this.model == "pbrMetallicRoughness" )
-			shader_name = skeleton ? "texture_albedo_skinning" : "texture_albedo";
+		{
+			if(mesh.vertexBuffers.colors)
+				shader_name += "_color";
+			if(skeleton)
+				shader_name += "_skeleton";
+		}
 		else
 		{
 			if( skeleton )
@@ -5637,6 +5643,10 @@ Renderer.prototype.createShaders = function()
 				varying vec3 v_pos;\n\
 				varying vec3 v_normal;\n\
 				varying vec2 v_coord;\n\
+				#ifdef COLOR\n\
+				attribute vec4 a_color;\n\
+				varying vec4 v_color;\n\
+				#endif\n\
 				"+skinning+"\n\
 				#ifdef INSTANCING\n\
 					attribute mat4 u_model;\n\
@@ -5651,6 +5661,9 @@ Renderer.prototype.createShaders = function()
 					v_pos = (u_model * vec4(v_pos,1.0)).xyz;\n\
 					v_normal = (u_model * vec4(v_normal,0.0)).xyz;\n\
 					v_coord = a_coord;\n\
+					#ifdef COLOR\n\
+					v_color = a_color;\n\
+					#endif\n\
 					gl_Position = u_viewprojection * vec4( v_pos, 1.0 );\n\
 					gl_PointSize = 2.0;\n\
 				}\
@@ -5658,15 +5671,25 @@ Renderer.prototype.createShaders = function()
 		
 	var fragment_shader = this._flat_fragment_shader = "\
 				precision highp float;\
-				uniform vec4 u_color;\
-				void main() {\
-				  gl_FragColor = u_color;\
+				uniform vec4 u_color;\n\
+				#ifdef COLOR\n\
+				varying vec4 v_color;\n\
+				#endif\n\
+				void main() {\n\
+					vec4 color = u_color;\n\
+					#ifdef COLOR\n\
+					color *= a_color;\n\
+					#endif\n\
+				  gl_FragColor = color;\n\
 				}\
 	";
 
 	gl.shaders["flat"] = this._flat_shader = new GL.Shader( vertex_shader, fragment_shader );
+	gl.shaders["flat_color"] = this._flat_instancing_shader = new GL.Shader(vertex_shader, fragment_shader, { COLOR:"" });
 	gl.shaders["flat_instancing"] = this._flat_instancing_shader = new GL.Shader(vertex_shader, fragment_shader, { INSTANCING:"" });
+	gl.shaders["flat_color_instancing"] = this._flat_instancing_shader = new GL.Shader(vertex_shader, fragment_shader, { INSTANCING:"",COLOR:"" });
 	gl.shaders["flat_skinning"] = this._flat_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, {SKINNING:""} );
+	gl.shaders["flat_color_skinning"] = this._flat_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, {SKINNING:"",COLOR:""} );
 	
 	this._point_shader = new GL.Shader("\
 				precision highp float;\
@@ -5713,6 +5736,9 @@ Renderer.prototype.createShaders = function()
 		precision highp float;\
 		varying vec2 v_coord;\
 		uniform vec4 u_color;\n\
+		#ifdef COLOR\n\
+		varying vec4 v_color;\n\
+		#endif\n\
 		#ifdef ALBEDO\n\
 			uniform sampler2D u_albedo_texture;\n\
 		#else\n\
@@ -5725,6 +5751,9 @@ Renderer.prototype.createShaders = function()
 			#else\n\
 				vec4 color = u_color * texture2D(u_color_texture, v_coord);\n\
 			#endif\n\
+			#ifdef COLOR\n\
+				color *= v_color;\n\
+			#endif\n\
 			if(color.w <= u_global_alpha_clip)\n\
 				discard;\n\
 			gl_FragColor = color;\
@@ -5733,9 +5762,12 @@ Renderer.prototype.createShaders = function()
 	
 	gl.shaders["texture"] = this._texture_shader = new GL.Shader( vertex_shader, fragment_shader );
 	gl.shaders["texture_albedo"] = this._texture_albedo_shader = new GL.Shader( vertex_shader, fragment_shader, { ALBEDO:"" } );
+	gl.shaders["texture_albedo_color"] = this._texture_albedo_color_shader = new GL.Shader( vertex_shader, fragment_shader, { ALBEDO:"",COLOR:"" } );
 	gl.shaders["texture_albedo_skinning"] = this._texture_albedo_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, { SKINNING:"", ALBEDO:"" } );
+	gl.shaders["texture_albedo_color_skinning"] = this._texture_albedo_color_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, { SKINNING:"", ALBEDO:"", COLOR:"" } );
 	gl.shaders["texture_instancing"] = this._texture_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { INSTANCING:"" } );
 	gl.shaders["texture_albedo_instancing"] = this._texture_albedo_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { ALBEDO:"",INSTANCING:""  } );
+	gl.shaders["texture_albedo_color_instancing"] = this._texture_albedo_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { ALBEDO:"",INSTANCING:"",COLOR:""} );
 
 	if(RD.Skeleton)
 		gl.shaders["texture_skinning"] = this._texture_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, { SKINNING:"" } );

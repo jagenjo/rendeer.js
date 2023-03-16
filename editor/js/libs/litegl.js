@@ -8,7 +8,26 @@
 var GL = global.GL = global.LiteGL = {};
 
 if(typeof(glMatrix) == "undefined")
-	throw("litegl.js requires gl-matrix to work. It must be included before litegl.");
+{
+	if( typeof(self) != "undefined" ) //worker?
+	{
+		//DONT DO ANYTHING, whoever included this should also include glMatrix
+		//console.log("importing glMatrix from worker");
+		//import * as glMatrix from './core/libs/gl-matrix-min.js';		
+		//importScripts("./gl-matrix-min.js");
+	}
+	else if( typeof(window) == "undefined" ) //nodejs?
+	{
+		console.log("importing glMatrix");
+		//import * as glMatrix from './core/libs/gl-matrix-min.js';		
+		global.glMatrix = require("./gl-matrix-min.js");
+		var glMatrix = global.glMatrix;
+		for(var i in glMatrix)
+			global[i] = glMatrix[i];
+	}
+	else if( typeof(glMatrix) == "undefined" )
+		throw("litegl.js requires gl-matrix to work. It must be included before litegl.");
+}
 else
 {
 	if(!global.vec2)
@@ -1509,9 +1528,17 @@ var DDS = (function () {
 if(typeof(global) != "undefined")
 	global.DDS = DDS;
 
+
 /* this file adds some extra functions to gl-matrix library */
 if(typeof(glMatrix) == "undefined")
-	throw("You must include glMatrix on your project");
+{
+	//detects if in node, and if glMatrix is in this context, and extract all
+	if(typeof(exports) != "undefined" && typeof(process) !== undefined && exports.vec3)
+	{
+		for(var i in exports)
+			global[i] = exports[i];
+	}
+}
 
 Math.clamp = function(v,a,b) { return (a > v ? a : (b < v ? b : v)); }
 Math.lerp =  function(a,b,f) { return a * (1 - f) + b * f; }
@@ -2013,13 +2040,13 @@ quat.toEuler = function(out, quat) {
 	{
 		heading = 2 * Math.atan2(q[0],q[3]);
 		bank = 0;
-		attitude = 0; //¿?
+		attitude = 0; //ï¿½?
 	}
 	else if( (q[0]*q[1] + q[2]*q[3]) == 0.5 )
 	{
 		heading = -2 * Math.atan2(q[0],q[3]);
 		bank = 0;
-		attitude = 0; //¿?
+		attitude = 0; //ï¿½?
 	}
 	else
 	{
@@ -2601,11 +2628,11 @@ global.Mesh = GL.Mesh = function Mesh( vertexbuffers, indexbuffers, options, gl 
 Mesh.common_buffers = {
 	"vertices": { spacing:3, attribute: "a_vertex"},
 	"vertices2D": { spacing:2, attribute: "a_vertex2D"},
-	"normals": { spacing:3, attribute: "a_normal"},
+	"normals": { spacing:3, attribute: "a_normal", normalize: true },
 	"coords": { spacing:2, attribute: "a_coord"},
 	"coords1": { spacing:2, attribute: "a_coord1"},
 	"coords2": { spacing:2, attribute: "a_coord2"},
-	"colors": { spacing:4, attribute: "a_color" }, // cant use Uint8Array, dont know how as data comes in another format
+	"colors": { spacing:4, attribute: "a_color", normalize: true }, // cant use Uint8Array, dont know how as data comes in another format
 	"tangents": { spacing:3, attribute: "a_tangent"},
 	"bone_indices": { spacing:4, attribute: "a_bone_indices", type: Uint8Array },
 	"weights": { spacing:4, attribute: "a_weights", normalize: true }, // cant use Uint8Array, dont know how
@@ -2795,7 +2822,11 @@ Mesh.prototype.createVertexBuffer = function( name, attribute, buffer_spacing, b
 
 	//to convert [255,128,...] into [1,0.5,...]  in the shader
 	if( buffer_data.constructor == Uint8Array || 
-		buffer_data.constructor == Int8Array )
+		buffer_data.constructor == Int8Array ||
+		buffer_data.constructor == Uint16Array || 
+		buffer_data.constructor == Int16Array ||
+		buffer_data.constructor == Uint32Array || 
+		buffer_data.constructor == Int32Array )
 	{
 		if( common && common.normalize )
 			buffer.normalize = true;
@@ -5783,6 +5814,8 @@ Texture.renderbuffer = null;
 Texture.loading_color = new Uint8Array([0,0,0,0]);
 Texture.use_renderbuffer_pool = true; //should improve performance
 
+Texture.CROSS_ORIGIN_CREDENTIALS = "Anonymous";
+
 //because usually you dont want to specify the internalFormat, this tries to guess it from its format
 //check https://webgl2fundamentals.org/webgl/lessons/webgl-data-textures.html for more info
 Texture.prototype.computeInternalFormat = function()
@@ -6038,9 +6071,13 @@ Texture.prototype.uploadImage = function( image, options )
 		}
 		else
 		{
+			var w = image.videoWidth || image.width;
+			var h = image.videoHeight || image.height;
+			if(w != this.width || h != this.height)
+				console.warn("image uploaded has a different size than texture, resizing it.");
 			gl.texImage2D( gl.TEXTURE_2D, 0, this.format, this.format, this.type, image );
-			this.width = image.videoWidth || image.width;
-			this.height = image.videoHeight || image.height;
+			this.width = w;
+			this.height = h;
 		}
 		this.data = image;
 	} catch (e) {
@@ -6877,6 +6914,7 @@ Texture.fromURL = function( url, options, on_complete, gl ) {
 	{
 		var image = new Image();
 		image.src = url;
+		image.crossOrigin = Texture.CROSS_ORIGIN_CREDENTIALS; //to please the CORS gods
 		var that = this;
 		image.onload = function()
 		{
@@ -7785,7 +7823,7 @@ Texture.getTemporary = function( width, height, options, gl )
 	}
 
 	//not found, create it
-	var tex = new GL.Texture( width, height, { type: type, texture_type: texture_type, format: format });
+	var tex = new GL.Texture( width, height, { type: type, texture_type: texture_type, format: format, filter: gl.LINEAR });
 	tex._key = key;
 	tex._pool = 0;
 	return tex;
@@ -8377,6 +8415,24 @@ Shader.parseError = function( error_str, vs_code, fs_code )
 		line_code: ( t[0] == "Fragment" ? fs_code : vs_code ).split("\n")[ parseInt( nums[1] ) ],
 		err: error_str
 	};
+}
+
+/**
+* clears all memory allocated by this shader
+* @method delete
+*/
+Shader.prototype.delete = function()
+{
+	if(this.program)
+		this.gl.deleteProgram(this.program);
+	if(this.vs_shader)
+		this.gl.deleteShader(this.vs_shader);
+	if(this.fs_shader)
+		this.gl.deleteShader(this.fs_shader);
+	this.gl = null;
+	this.attributes = {}; 
+	this.uniformInfo = {};
+	this.samplers = {};	
 }
 
 /**
@@ -9991,7 +10047,7 @@ GL.create = function(options) {
 	}
 	
 	//just some checks
-	if(typeof(glMatrix) == "undefined")
+	if(window.glMatrix == undefined)
 		throw("glMatrix not found, LiteGL requires glMatrix to be included");
 
 	var last_click_time = 0;
@@ -10096,6 +10152,36 @@ GL.create = function(options) {
 			document.removeEventListener("keyup", onkey_handler );
 		}
 
+		if(onmouse_handler)
+		{
+			this.canvas.removeEventListener("mousedown", onmouse_handler );
+			this.canvas.removeEventListener("mousemove", onmouse_handler );
+			this.canvas.removeEventListener("mouseup", onmouse_handler );
+			this.canvas.addEventListener("drag", onmouse_handler);
+			this.canvas.addEventListener("dragstart", onmouse_handler);
+			this.canvas.addEventListener("wheel", onmouse_handler);
+		}
+
+		//clear all containers
+		for(var i in this.shaders)
+		{
+			this.shaders[i].delete();
+			this.shaders[i] = null;
+		}
+		this.shaders = {};
+		for(var i in this.meshes)
+		{
+			this.meshes[i].deleteBuffers();
+			this.meshes[i] = null;
+		}
+		this.meshes = {};
+		for(var i in this.textures)
+		{
+			this.textures[i].delete();
+			this.textures[i] = null;
+		}
+		this.textures = {};
+
 		if(this.canvas.parentNode)
 			this.canvas.parentNode.removeChild(this.canvas);
 		this.destroyed = true;
@@ -10167,6 +10253,7 @@ GL.create = function(options) {
 
 		canvas.addEventListener("mousedown", onmouse);
 		canvas.addEventListener("mousemove", onmouse);
+		canvas.addEventListener("drag", onmouse);
 		canvas.addEventListener("dragstart", onmouse);
 		if(capture_wheel)
 		{
@@ -10280,8 +10367,48 @@ GL.create = function(options) {
 			return false;
 		}
 	}
+	var onmouse_handler = onmouse;
 
 	var translate_touches = false;
+
+	//if Hammer lib available, use it for pinch
+	if(typeof(Hammer) !== "undefined" )
+	{
+		var mc = new Hammer.Manager(canvas);
+		var pinch = new Hammer.Pinch({threshold: 0.3});
+		if (mc && pinch) {
+			mc.add(pinch);
+			mc.on("pinch", pinchZoom );
+		}
+	}
+
+	function pinchZoom(event)
+	{
+		var originalEvent = event.srcEvent;
+		var type = "wheel";
+		var simulatedEvent = document.createEvent("MouseEvent");
+		simulatedEvent.initMouseEvent(type, true, true, window, 1,
+								  originalEvent.screenX, originalEvent.screenY,
+								  originalEvent.clientX, originalEvent.clientY, false,
+								  false, false, false, 0/*left*/, null);
+		simulatedEvent.originalEvent = simulatedEvent;
+		simulatedEvent.is_touch = true;
+		var processPinch = false;
+		if (event.additionalEvent === "pinchin") {
+			simulatedEvent.deltaY = 1;
+			processPinch = true;
+		} else if (event.additionalEvent === "pinchout") {
+			simulatedEvent.deltaY = -1;
+			processPinch = true;
+		}
+		if (processPinch) {
+			simulatedEvent.pinchScaling = event.distance*0.0312;
+			originalEvent.target.dispatchEvent( simulatedEvent );
+		} 
+
+		//if we block this touch (to avoid weird canvas draggings) then we are blocking the gestures
+		originalEvent.preventDefault();
+	}
 
 	gl.captureTouch = function( translate_to_mouse_events )
 	{
@@ -10846,6 +10973,10 @@ GL.augmentEvent = function(e, root_element)
 	e.deltax = 0;
 	e.deltay = 0;
 
+	if (e.is_touch) {
+		gl.mouse.buttons = e.which;
+	}
+
 	if(document.pointerLockElement === root_element)
 	{
 		e.canvasx = e.mousex = b.width * 0.5;
@@ -10867,7 +10998,7 @@ GL.augmentEvent = function(e, root_element)
 			this.dragging = false;
 	}
 
-	if( e.movementX !== undefined && !GL.isMobile() ) //pointer lock (mobile gives always zero)
+	if( e.movementX !== undefined && !e.is_touch && !GL.isMobile() ) //pointer lock (mobile gives always zero)
 	{
 		//console.log( e.movementX )
 		e.deltax = e.movementX;

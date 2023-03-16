@@ -4,27 +4,102 @@
 <meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1" />
 
 <title>rendeer.js: cube mesh example</title>
-	<link rel="stylesheet" type="text/css" href="style.css" />
 	<style type='text/css'>
 		html, body { width: 100%; height: 100%; margin: 0; padding: 0 }
+		button { font-size: 20px; position: fixed; top: 10px; left: 10px; }
 	</style>
 	<script type="text/javascript" src="../external/gl-matrix-min.js"></script>
 	<script type="text/javascript" src="../external/litegl.js"></script>
 	<script type="text/javascript" src="../build/rendeer.js"></script>
 	<script type="text/javascript">
 	
+	// XR globals.
+	let xrButton = document.getElementById("xr-button");
+	let xrSession = null;
+	let xrRefSpace = null;
+
+	function initWebXR() { // our new init function
+		if(navigator.xr) { // checks if our device supports WebXR
+			navigator.xr.isSessionSupported("immersive-vr").then((supported) => { // we check if immersive-vr session is supported
+				if(supported) { // if it is supported
+					xrButton.disabled = false; // enable the button (makes it possible to click it)
+					xrButton.textContent = "Enter VR"; // change text on the button
+					xrButton.addEventListener("click", onButtonClicked); // add a new event to the button, which will run the onButtonClicked function
+				}
+				else
+					console.log("VR not supported");
+			}).catch(function(){
+				console.log("VR not supported");
+			})
+		}
+	}
+
+	function onButtonClicked() { // this function specifies what our button will do when clicked
+		if(!xrSession) { // if our session is null - if it wasn't created
+			navigator.xr.requestSession("immersive-vr").then(onSessionStarted); // request it (start the session), and when the request is handled, call onSessionStarted
+		} else { // if our session was started already
+			xrSession.end(); // request our session to end
+		}
+	}	
+
+	function onSessionStarted(_session) { // this function defines what happens when the session is started
+		xrSession = _session; // we set our session to be the session our request created
+		xrSession.addEventListener("end", onSessionEnded); // we set what happenes when our session is ended
+
+		initWebGL2({xrCompatible: true}); // we initialize WebGL2, in a way that makes it compatible with WebXR
+
+		xrSession.updateRenderState({baseLayer: new XRWebGLLayer(xrSession, gl)}); // this line simply sets our session's WebGL context to our WebGL2 context
+		xrSession.requestReferenceSpace("local").then((refSpace) => { // we request our referance space - an object that defines where the center of our space lies. Here we request a local referance space - that one defines the center of the world to be where player's head is at the start of our application.
+			xrRefSpace = refSpace; // we set our referance space to be the one returned by this function
+			xrSession.requestAnimationFrame(onSessionFrame); // at this point everything has been set up, so we can finally request an animation frame, on a function with the name of onSessionFrame
+		});
+
+		function onSessionFrame(t, frame) { // this function will happen every frame
+			const session = frame.session; // frame is a frame handling object - it's used to get frame sessions, frame WebGL layers and some more things
+			session.requestAnimationFrame(onSessionFrame); // we simply set our animation frame function to be this function again
+		}
+
+		function onSessionEnded() { // this function defines what happens when the session has ended
+			xrSession = null; // we set our xrSession to be null, so that our button will be able to reinitialize it when we click it the next time
+		}
+	}	
+
+	function onSessionFrame(t, frame) { // this function will happen every frame
+		const session = frame.session; // frame is a frame handling object - it's used to get frame sessions, frame WebGL layers and some more things
+		session.requestAnimationFrame( onSessionFrame ); // we simply set our animation frame function to be this function again
+		let pose = frame.getViewerPose(xrRefSpace); // gets the pose of the headset, relative to the previously gotten referance space
+
+		if(pose) { // if the pose was possible to get (if the headset responds)
+			let glLayer = session.renderState.baseLayer; // get the WebGL layer (it contains some important information we need)
+
+			gl.bindFramebuffer( gl.FRAMEBUFFER, glLayer.framebuffer ); // sets the framebuffer (drawing target of WebGL) to be our WebXR display's framebuffer
+			gl.clearColor(0.4, 0.7, 0.9, 1.0);
+			gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); // clears the framebuffer (in the next episode we'll implement our ezgfx renderer here - for now, let's just use vanilla WebGL2, as we're not doing anything else than clearing the screen)
+
+			for(let view of pose.views) { // we go through every single view out of our camera's views
+				let viewport = glLayer.getViewport(view); // we get the viewport of our view (the place on the screen where things will be drawn)
+				gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height); // we set our viewport appropriately
+
+				// Here we will draw our scenes
+				drawFrame( view, glLayer );
+			}
+		}
+	}	
+
+	var scene, renderer, camera, bg_color;
+
 	function init()
 	{
 		//create a scene
-		var scene = new RD.Scene();
+		scene = new RD.Scene();
 
 		//create the rendering context
-		var context = GL.create({width: window.innerWidth, height:window.innerHeight});
-		var renderer = new RD.Renderer(context);
+		var context = GL.create({width: window.innerWidth, height:window.innerHeight, version: 2});
+		renderer = new RD.Renderer(context);
 		document.body.appendChild(renderer.canvas); //attach
 
 		//create camera
-		var camera = new RD.Camera();
+		camera = new RD.Camera();
 		camera.perspective( 45, gl.canvas.width / gl.canvas.height, 1, 1000 );
 		camera.lookAt( [100,100,100],[0,0,0],[0,1,0] );
 
@@ -45,19 +120,21 @@
 		scene.root.addChild(box);
 
 		//global settings
-		var bg_color = vec4.fromValues(0.2,0.3,0.4,1);
+		bg_color = vec4.fromValues(0.2,0.3,0.4,1);
 
 		//main render loop
 		var last = now = getTime();
 		requestAnimationFrame(animate);
 		function animate() {
-			requestAnimationFrame( animate );
+			if(!xrSession)
+				requestAnimationFrame( animate );
 
 			last = now;
 			now = getTime();
 			var dt = (now - last) * 0.001;
+
 			renderer.clear(bg_color);
-			renderer.render(scene, camera);
+			drawFrame();
 			scene.update(dt);
 		}
 
@@ -68,12 +145,21 @@
 			if(e.dragging)
 				box.rotate( e.deltax * 0.01, RD.UP );
 		}
+
+		initWebXR();
+	}
+
+	function drawFrame( view, glLayer )
+	{
+		//renderer.clear(bg_color);
+		renderer.render(scene, camera);
 	}
 
 
 	</script>
 </head>
 <body>
+	<button id="xr-button">VR</button>
 <script>init();</script>
 </body>
 </html>

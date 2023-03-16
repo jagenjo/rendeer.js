@@ -93,7 +93,10 @@
                     //draw something in the canvas
                     var v = Math.sin(getTime()*0.001)*0.5 + 0.5; //random color
                     subctx.fillStyle = "rgb(" + ((v*255)|0) + "," + (((1-v)*255)|0) + ",255)";
-                    subctx.fillRect( lpos[0] - 4, lpos[1] - 4, 8, 8 );
+					subctx.beginPath();
+                    subctx.arc( lpos[0], lpos[1], 8, 0, Math.PI*2 );
+					subctx.fill();
+
                     //update texture in GPU with canvas image
                     texture.uploadImage(subcanvas);
                 }

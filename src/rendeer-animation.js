@@ -1286,6 +1286,8 @@ SkeletalAnimation.prototype.fromData = function(txt)
 	this.duration = Number(header[0]);
 	this.samples_per_second = Number(header[1]);
 	this.num_keyframes = Number(header[2]);
+
+	this._datasize = txt.length;
 	
 	this.skeleton.resizeBones( Number(header[3]) );
 	var current_keyframe = 0;
@@ -1586,6 +1588,8 @@ SkeletalAnimation.prototype.fromBinary = function(data)
 	index = 32+128+16 + bone_size * num_bones;
 	var keyframes_bytes = new Uint8Array( data.subarray( index, index+this.num_keyframes*this.num_animated_bones*16*4) );
 	this.keyframes = new Float32Array( keyframes_bytes.buffer );//num_keyframes * num_animated_bones * 16 );
+
+	this._datasize = data.length;
 }
 
 
