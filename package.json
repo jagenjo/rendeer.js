@@ -25,5 +25,8 @@
   "bugs": {
     "url": "https://github.com/jagenjo/rendeer.js/issues"
   },
-  "homepage": "https://github.com/jagenjo/rendeer.js#readme"
+  "homepage": "https://github.com/jagenjo/rendeer.js#readme",
+  "dependencies": {
+    "google-closure-compiler": "^20231112.0.0"
+  }
 }

@@ -169,22 +169,22 @@
 	}
 	*/
 
-	Light.shadow_shader_function = "uniform mat4 u_shadowmap_matrix;\n\
-	uniform sampler2D u_shadowmap_texture;\n\
-	\n\
-	float testShadowmap( vec3 pos )\n\
-	{\n\
-		const float bias = 0.004;\n\
-		vec4 proj = u_shadowmap_matrix * vec4(pos, 1.0);\n\
-		vec2 sample = (proj.xy / proj.w) * vec2(0.5) + vec2(0.5);\n\
-		if(sample.x >= 0.0 && sample.x <= 1.0 && sample.y >= 0.0 && sample.y <= 1.0 )\n\
-		{\n\
-			float depth = texture2D( u_shadowmap_texture, sample ).x;\n\
-			if( depth > 0.0 && depth < 1.0 && depth <= ( ((proj.z-bias) / proj.w) * 0.5 + 0.5) )\n\
-				return 0.0;\n\
-		}\n\
-		return 1.0;\n\
-	}";
+	Light.shadow_shader_function = `uniform mat4 u_shadowmap_matrix;
+	uniform sampler2D u_shadowmap_texture;
+	
+	float testShadowmap( vec3 pos )
+	{
+		const float bias = 0.004;
+		vec4 proj = u_shadowmap_matrix * vec4(pos, 1.0);
+		vec2 sample = (proj.xy / proj.w) * vec2(0.5) + vec2(0.5);
+		if(sample.x >= 0.0 && sample.x <= 1.0 && sample.y >= 0.0 && sample.y <= 1.0 )
+		{
+			float depth = texture2D( u_shadowmap_texture, sample ).x;
+			if( depth > 0.0 && depth < 1.0 && depth <= ( ((proj.z-bias) / proj.w) * 0.5 + 0.5) )
+				return 0.0;
+		}
+		return 1.0;
+	}`	;
 
 	RD.Light = Light;
 

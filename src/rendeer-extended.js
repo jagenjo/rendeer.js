@@ -15,6 +15,8 @@
 * @class PointCloud
 * @constructor
 */
+
+/*
 function PointCloud()  
 {
 	this._ctor();
@@ -165,7 +167,7 @@ PointCloud._pixel_shader = '\
 			  gl_FragColor = vec4( color.xyz, color.a * v_color.a );\n\
 			}\
 		';
-
+*/
 
 
 
@@ -333,6 +335,7 @@ ParticlesEmissor.prototype.updateVertices = function(mesh)
 	}
 }
 
+/*
 ParticlesEmissor._vertex_shader = '\
 			precision highp float;\
 			attribute vec3 a_vertex;\
@@ -375,6 +378,7 @@ ParticlesEmissor._pixel_shader = '\
 			  gl_FragColor = vec4( color.xyz, color.a * v_color.a );\n\
 			}\
 		';
+*/
 
 /**
 * Billboard class to hold an scene item, used for camera aligned objects
@@ -679,7 +683,7 @@ Sprite.renderSprite = function( renderer, camera, position, texture, frame_index
 }
 */
 
-extendClass( Sprite, SceneNode );
+extendClass( Sprite, RD.SceneNode );
 RD.Sprite = Sprite;
 
 /**
@@ -688,6 +692,7 @@ RD.Sprite = Sprite;
 * @class SpritesBatch
 * @constructor
 */
+/*
 function SpritesBatch(o)
 {
 	this._ctor();
@@ -1026,6 +1031,7 @@ void main() {\n\
 	gl_FragColor = color;\n\
 }\n\
 ";
+*/
 
 //footer
 })( typeof(window) != "undefined" ? window : (typeof(self) != "undefined" ? self : global ) );

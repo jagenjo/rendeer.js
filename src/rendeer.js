@@ -3123,7 +3123,7 @@ Scene.prototype.toJSON = function( on_node_to_json )
 */
 class Material
 {
-	default_shader_name = "texture";
+	static default_shader_name = "texture";
 
 	constructor(o)
 	{
@@ -3497,16 +3497,16 @@ Renderer.prototype.getMasterShader = function( macros )
 	var skinning_vs = "";
 	if( RD.Skeleton && (macros & Material.MACROS.SKINNING) )
 	{	
-		var skinning_header = "\n\
-		#ifdef SKINNING\n\
-			" + RD.Skeleton.shader_code + "\n\
-		#endif\n\
-		";
-		var skinning_body = "\n\
-		#ifdef SKINNING\n\
-			computeSkinning(v_pos,v_normal);\n\
-		#endif\n\
-		";
+		var skinning_header = `
+		#ifdef SKINNING
+			${RD.Skeleton.shader_code} //
+		#endif
+		`;
+		var skinning_body = `
+		#ifdef SKINNING
+			computeSkinning(v_pos,v_normal);
+		#endif
+		`;
 
 		vs = vs.replaceAll("#pragma SKINNING_HEADER",skinning_header);
 		vs = vs.replaceAll("#pragma SKINNING_BODY",skinning_body);
@@ -3529,39 +3529,39 @@ Renderer.prototype.getMasterShader = function( macros )
 	return shader;
 }
 
-Renderer.master_vertex_shader = "\
-	precision highp float;\n\
-	attribute vec3 a_vertex;\n\
-	attribute vec3 a_normal;\n\
-	attribute vec2 a_coord;\n\
-	varying vec3 v_pos;\n\
-	varying vec3 v_normal;\n\
-	varying vec2 v_coord;\n\
-	#ifdef COLOR\n\
-	attribute vec4 a_color;\n\
-	varying vec4 v_color;\n\
-	#endif\n\
-	#pragma SKINNING_HEADER\n\
-	#ifdef INSTANCING\n\
-		attribute mat4 u_model;\n\
-	#else\n\
-		uniform mat4 u_model;\n\
-	#endif\n\
-	uniform mat4 u_viewprojection;\n\
-	void main() {\n\
-		v_pos = a_vertex;\n\
-		v_normal = a_normal;\n\
-		#pragma SKINNING_BODY\n\
-		v_pos = (u_model * vec4(v_pos,1.0)).xyz;\n\
-		v_normal = (u_model * vec4(v_normal,0.0)).xyz;\n\
-		v_coord = a_coord;\n\
-		#ifdef COLOR\n\
-		v_color = a_color;\n\
-		#endif\n\
-		gl_Position = u_viewprojection * vec4( v_pos, 1.0 );\n\
-		gl_PointSize = 2.0;\n\
-	}\
-";
+Renderer.master_vertex_shader = `
+	precision highp float;
+	attribute vec3 a_vertex;
+	attribute vec3 a_normal;
+	attribute vec2 a_coord;
+	varying vec3 v_pos;
+	varying vec3 v_normal;
+	varying vec2 v_coord;
+	#ifdef COLOR
+	attribute vec4 a_color;
+	varying vec4 v_color;
+	#endif
+	#pragma SKINNING_HEADER
+	#ifdef INSTANCING
+		attribute mat4 u_model;
+	#else
+		uniform mat4 u_model;
+	#endif
+	uniform mat4 u_viewprojection;
+	void main() {
+		v_pos = a_vertex;
+		v_normal = a_normal;
+		#pragma SKINNING_BODY
+		v_pos = (u_model * vec4(v_pos,1.0)).xyz;
+		v_normal = (u_model * vec4(v_normal,0.0)).xyz;
+		v_coord = a_coord;
+		#ifdef COLOR
+		v_color = a_color;
+		#endif
+		gl_Position = u_viewprojection * vec4( v_pos, 1.0 );
+		gl_PointSize = 2.0;
+	}
+`;
 
 Renderer.master_fragment_shader = `
 	precision highp float;
@@ -4130,59 +4130,59 @@ RD.Renderer.prototype.renderPoints = function( positions, extra, camera, num_poi
 	return mesh;
 }
 
-RD.points_vs_shader = "\n\
-precision highp float;\n\
-attribute vec3 a_vertex;\n\
-attribute vec4 a_extra4;\n\
-varying vec3 v_pos;\n\
-varying vec4 v_extra4;\n\
-uniform mat4 u_model;\n\
-uniform mat4 u_viewprojection;\n\
-uniform vec4 u_viewport;\n\
-uniform float u_camera_perspective;\n\
-uniform float u_pointSize;\n\
-\n\
-float computePointSize( float radius, float w )\n\
-{\n\
-	if(radius < 0.0)\n\
-		return -radius;\n\
-	return u_viewport.w * u_camera_perspective * radius / w;\n\
-}\n\
-\n\
-void main() {\n\
-	v_pos = (u_model * vec4(a_vertex,1.0)).xyz;\n\
-	v_extra4 = a_extra4;\n\
-	gl_Position = u_viewprojection * vec4(v_pos,1.0);\n\
-	gl_PointSize = computePointSize( u_pointSize, gl_Position.w );\n\
-}\n\
-";
+RD.points_vs_shader = `
+precision highp float;
+attribute vec3 a_vertex;
+attribute vec4 a_extra4;
+varying vec3 v_pos;
+varying vec4 v_extra4;
+uniform mat4 u_model;
+uniform mat4 u_viewprojection;
+uniform vec4 u_viewport;
+uniform float u_camera_perspective;
+uniform float u_pointSize;
 
-RD.points_fs_shader = "\n\
-precision highp float;\n\
-uniform vec4 u_color;\n\
-varying vec4 v_extra4;\n\
-vec2 remap(in vec2 value, in vec2 low1, in vec2 high1, in vec2 low2, in vec2 high2 ) { vec2 range1 = high1 - low1; vec2 range2 = high2 - low2; return low2 + range2 * (value - low1) / range1; }\n\
-#ifdef TEXTURED\n\
-	uniform sampler2D u_texture;\n\
-#endif\n\
-#ifdef FS_UNIFORMS\n\
-	FS_UNIFORMS\n\
-#endif\n\
-\n\
-void main() {\n\
-	vec4 color = u_color;\n\
-	#ifdef COLORED\n\
-		color *= v_extra4;\n\
-	#endif\n\
-	#ifdef TEXTURED\n\
-		color *= texture2D( u_texture, gl_FragCoord );\n\
-	#endif\n\
-	#ifdef FS_CODE\n\
-		FS_CODE\n\
-	#endif\n\
-	gl_FragColor = color;\n\
-}\n\
-";
+float computePointSize( float radius, float w )
+{
+	if(radius < 0.0)
+		return -radius;
+	return u_viewport.w * u_camera_perspective * radius / w;
+}
+
+void main() {
+	v_pos = (u_model * vec4(a_vertex,1.0)).xyz;
+	v_extra4 = a_extra4;
+	gl_Position = u_viewprojection * vec4(v_pos,1.0);
+	gl_PointSize = computePointSize( u_pointSize, gl_Position.w );
+}
+`;
+
+RD.points_fs_shader = `
+precision highp float;
+uniform vec4 u_color;
+varying vec4 v_extra4;
+vec2 remap(in vec2 value, in vec2 low1, in vec2 high1, in vec2 low2, in vec2 high2 ) { vec2 range1 = high1 - low1; vec2 range2 = high2 - low2; return low2 + range2 * (value - low1) / range1; }
+#ifdef TEXTURED
+	uniform sampler2D u_texture;
+#endif
+#ifdef FS_UNIFORMS
+	FS_UNIFORMS
+#endif
+
+void main() {
+	vec4 color = u_color;
+	#ifdef COLORED
+		color *= v_extra4;
+	#endif
+	#ifdef TEXTURED
+		color *= texture2D( u_texture, gl_FragCoord );
+	#endif
+	#ifdef FS_CODE
+		FS_CODE
+	#endif
+	gl_FragColor = color;
+}
+`;
 
 Renderer.prototype.renderLines = function( positions,  strip, model )
 {
@@ -4286,38 +4286,38 @@ Renderer.prototype.render3DLines = function( positions, lineWidth, strip, model 
 	return mesh;
 }
 
-RD.lines_vs_shader = "\n\
-precision highp float;\n\
-attribute vec3 a_vertex;\n\
-attribute vec3 a_normal;\n\
-attribute vec2 a_extra2;\n\
-uniform mat4 u_model;\n\
-uniform mat4 u_viewprojection;\n\
-uniform vec4 u_viewport;\n\
-uniform vec3 u_camera_front;\n\
-uniform vec3 u_camera_position;\n\
-uniform float u_camera_perspective;\n\
-uniform float u_lineWidth;\n\
-\n\
-float computePointSize( float radius, float w )\n\
-{\n\
-	if(radius < 0.0)\n\
-		return -radius;\n\
-	return u_viewport.w * u_camera_perspective * radius / w;\n\
-}\n\
-void main() {\n\
-	vec3 T = normalize( (u_model * vec4(a_normal,0.0)).xyz );\n\
-	vec3 pos = (u_model * vec4(a_vertex,1.0)).xyz;\n\
-	vec3 pos2 = (u_model * vec4(a_vertex + T,1.0)).xyz;\n\
-	vec3 front = u_camera_front;//normalize( a_vertex - u_camera_position );\n\
-	T = normalize( pos2 - pos ) ;\n\
-	//float proj_w = (u_viewprojection * vec4(a_vertex,1.0)).w;\n\
-	//float fixed_size_factor = computePointSize( u_lineWidth, proj_w );\n\
-	vec3 side = normalize( cross(T,front) * a_extra2.x ) * u_lineWidth;\n\
-	pos += side;\n\
-	gl_Position = u_viewprojection * vec4(pos,1.0);\n\
-}\n\
-";
+RD.lines_vs_shader = `
+precision highp float;
+attribute vec3 a_vertex;
+attribute vec3 a_normal;
+attribute vec2 a_extra2;
+uniform mat4 u_model;
+uniform mat4 u_viewprojection;
+uniform vec4 u_viewport;
+uniform vec3 u_camera_front;
+uniform vec3 u_camera_position;
+uniform float u_camera_perspective;
+uniform float u_lineWidth;
+
+float computePointSize( float radius, float w )
+{
+	if(radius < 0.0)
+		return -radius;
+	return u_viewport.w * u_camera_perspective * radius / w;
+}
+void main() {
+	vec3 T = normalize( (u_model * vec4(a_normal,0.0)).xyz );
+	vec3 pos = (u_model * vec4(a_vertex,1.0)).xyz;
+	vec3 pos2 = (u_model * vec4(a_vertex + T,1.0)).xyz;
+	vec3 front = u_camera_front;//normalize( a_vertex - u_camera_position );
+	T = normalize( pos2 - pos ) ;
+	//float proj_w = (u_viewprojection * vec4(a_vertex,1.0)).w;
+	//float fixed_size_factor = computePointSize( u_lineWidth, proj_w );
+	vec3 side = normalize( cross(T,front) * a_extra2.x ) * u_lineWidth;
+	pos += side;
+	gl_Position = u_viewprojection * vec4(pos,1.0);
+}
+`;
 
 /**
 * Returns the path appending the folder where assets are located
@@ -5249,66 +5249,66 @@ Renderer.prototype.createShaders = function()
 	var skinning_vs = "";
 	if(RD.Skeleton)
 	{	
-		skinning = "\n\
-		#ifdef SKINNING\n\
-			" + RD.Skeleton.shader_code + "\n\
-		#endif\n\
-		";
-		skinning_vs = "\n\
-		#ifdef SKINNING\n\
-			computeSkinning(v_pos,v_normal);\n\
-		#endif\n\
-		";
+		skinning = `
+		#ifdef SKINNING
+			${RD.Skeleton.shader_code} //
+		#endif
+		`;
+		skinning_vs = `
+		#ifdef SKINNING
+			computeSkinning(v_pos,v_normal);
+		#endif
+		`;
 	}
 
-	var vertex_shader = this._vertex_shader = "\
-				precision highp float;\n\
-				attribute vec3 a_vertex;\n\
-				attribute vec3 a_normal;\n\
-				attribute vec2 a_coord;\n\
-				varying vec3 v_pos;\n\
-				varying vec3 v_normal;\n\
-				varying vec2 v_coord;\n\
-				#ifdef COLOR\n\
-				attribute vec4 a_color;\n\
-				varying vec4 v_color;\n\
-				#endif\n\
-				"+skinning+"\n\
-				#ifdef INSTANCING\n\
-					attribute mat4 u_model;\n\
-				#else\n\
-					uniform mat4 u_model;\n\
-				#endif\n\
-				uniform mat4 u_viewprojection;\n\
-				void main() {\n\
-					v_pos = a_vertex;\n\
-					v_normal = a_normal;\n\
-					"+skinning_vs+"\n\
-					v_pos = (u_model * vec4(v_pos,1.0)).xyz;\n\
-					v_normal = (u_model * vec4(v_normal,0.0)).xyz;\n\
-					v_coord = a_coord;\n\
-					#ifdef COLOR\n\
-					v_color = a_color;\n\
-					#endif\n\
-					gl_Position = u_viewprojection * vec4( v_pos, 1.0 );\n\
-					gl_PointSize = 2.0;\n\
-				}\
-				";
+	var vertex_shader = this._vertex_shader = `
+				precision highp float;
+				attribute vec3 a_vertex;
+				attribute vec3 a_normal;
+				attribute vec2 a_coord;
+				varying vec3 v_pos;
+				varying vec3 v_normal;
+				varying vec2 v_coord;
+				#ifdef COLOR
+				attribute vec4 a_color;
+				varying vec4 v_color;
+				#endif
+				${skinning}
+				#ifdef INSTANCING
+					attribute mat4 u_model;
+				#else
+					uniform mat4 u_model;
+				#endif
+				uniform mat4 u_viewprojection;
+				void main() {
+					v_pos = a_vertex;
+					v_normal = a_normal;
+					"+skinning_vs+"
+					v_pos = (u_model * vec4(v_pos,1.0)).xyz;
+					v_normal = (u_model * vec4(v_normal,0.0)).xyz;
+					v_coord = a_coord;
+					#ifdef COLOR
+					v_color = a_color;
+					#endif
+					gl_Position = u_viewprojection * vec4( v_pos, 1.0 );
+					gl_PointSize = 2.0;
+				}
+				`;
 		
-	var fragment_shader = this._flat_fragment_shader = "\
-				precision highp float;\
-				uniform vec4 u_color;\n\
-				#ifdef COLOR\n\
-				varying vec4 v_color;\n\
-				#endif\n\
-				void main() {\n\
-					vec4 color = u_color;\n\
-					#ifdef COLOR\n\
-					color *= v_color;\n\
-					#endif\n\
-				  gl_FragColor = color;\n\
-				}\
-	";
+	var fragment_shader = this._flat_fragment_shader = `
+				precision highp float;
+				uniform vec4 u_color;
+				#ifdef COLOR
+				varying vec4 v_color;
+				#endif
+				void main() {
+					vec4 color = u_color;
+					#ifdef COLOR
+					color *= v_color;
+					#endif
+				  gl_FragColor = color;
+				}
+	`;
 
 	gl.shaders["flat"] = this._flat_shader = new GL.Shader( vertex_shader, fragment_shader );
 	gl.shaders["flat_color"] = this._flat_instancing_shader = new GL.Shader(vertex_shader, fragment_shader, { COLOR:"" });
@@ -5317,74 +5317,74 @@ Renderer.prototype.createShaders = function()
 	gl.shaders["flat_skinning"] = this._flat_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, {SKINNING:""} );
 	gl.shaders["flat_color_skinning"] = this._flat_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, {SKINNING:"",COLOR:""} );
 	
-	this._point_shader = new GL.Shader("\
-				precision highp float;\
-				attribute vec3 a_vertex;\
-				uniform mat4 u_mvp;\
-				uniform float u_pointSize;\
-				void main() {\
-					gl_PointSize = u_pointSize;\
-					gl_Position = u_mvp * vec4(a_vertex,1.0);\
-				}\
-				", "\
-				precision highp float;\
-				uniform vec4 u_color;\
-				void main() {\
-				  if( distance( gl_PointCoord, vec2(0.5)) > 0.5)\
-				     discard;\
-				  gl_FragColor = u_color;\
-				}\
-			");
+	this._point_shader = new GL.Shader(`
+				precision highp float;
+				attribute vec3 a_vertex;
+				uniform mat4 u_mvp;
+				uniform float u_pointSize;
+				void main() {
+					gl_PointSize = u_pointSize;
+					gl_Position = u_mvp * vec4(a_vertex,1.0);
+				}
+				`, `
+				precision highp float;
+				uniform vec4 u_color;
+				void main() {
+				  if( distance( gl_PointCoord, vec2(0.5)) > 0.5)
+				     discard;
+				  gl_FragColor = u_color;
+				}
+			`);
 	gl.shaders["point"] = this._point_shader;	
 	
-	this._color_shader = new GL.Shader("\
-		precision highp float;\
-		attribute vec3 a_vertex;\
-		attribute vec4 a_color;\
-		varying vec4 v_color;\
-		uniform vec4 u_color;\
-		uniform mat4 u_mvp;\
-		void main() {\
-			v_color = a_color * u_color;\
-			gl_Position = u_mvp * vec4(a_vertex,1.0);\
-			gl_PointSize = 5.0;\
-		}\
-		", "\
-		precision highp float;\
-		varying vec4 v_color;\
-		void main() {\
-		  gl_FragColor = v_color;\
-		}\
-	");
+	this._color_shader = new GL.Shader(`
+		precision highp float;
+		attribute vec3 a_vertex;
+		attribute vec4 a_color;
+		varying vec4 v_color;
+		uniform vec4 u_color;
+		uniform mat4 u_mvp;
+		void main() {
+			v_color = a_color * u_color;
+			gl_Position = u_mvp * vec4(a_vertex,1.0);
+			gl_PointSize = 5.0;
+		}
+		`, `
+		precision highp float;
+		varying vec4 v_color;
+		void main() {
+		  gl_FragColor = v_color;
+		}
+	`);
 	gl.shaders["color"] = this._color_shader;
 
-	var fragment_shader = "\
-		precision highp float;\
-		varying vec2 v_coord;\
-		uniform vec4 u_color;\n\
-		#ifdef COLOR\n\
-		varying vec4 v_color;\n\
-		#endif\n\
-		#ifdef ALBEDO\n\
-			uniform sampler2D u_albedo_texture;\n\
-		#else\n\
-			uniform sampler2D u_color_texture;\n\
-		#endif\n\
-		uniform float u_global_alpha_clip;\n\
-		void main() {\n\
-			#ifdef ALBEDO\n\
-				vec4 color = u_color * texture2D(u_albedo_texture, v_coord);\n\
-			#else\n\
-				vec4 color = u_color * texture2D(u_color_texture, v_coord);\n\
-			#endif\n\
-			#ifdef COLOR\n\
-				color *= v_color;\n\
-			#endif\n\
-			if(color.w <= u_global_alpha_clip)\n\
-				discard;\n\
-			gl_FragColor = color;\
-		}\
-	";
+	var fragment_shader = `
+		precision highp float;
+		varying vec2 v_coord;
+		uniform vec4 u_color;
+		#ifdef COLOR
+		varying vec4 v_color;
+		#endif
+		#ifdef ALBEDO
+			uniform sampler2D u_albedo_texture;
+		#else
+			uniform sampler2D u_color_texture;
+		#endif
+		uniform float u_global_alpha_clip;
+		void main() {
+			#ifdef ALBEDO
+				vec4 color = u_color * texture2D(u_albedo_texture, v_coord);
+			#else
+				vec4 color = u_color * texture2D(u_color_texture, v_coord);
+			#endif
+			#ifdef COLOR
+				color *= v_color;
+			#endif
+			if(color.w <= u_global_alpha_clip)
+				discard;
+			gl_FragColor = color;
+		}
+	`;
 	
 	gl.shaders["texture"] = this._texture_shader = new GL.Shader( vertex_shader, fragment_shader );
 	gl.shaders["texture_albedo"] = this._texture_albedo_shader = new GL.Shader( vertex_shader, fragment_shader, { ALBEDO:"" } );
@@ -5398,60 +5398,60 @@ Renderer.prototype.createShaders = function()
 	if(RD.Skeleton)
 		gl.shaders["texture_skinning"] = this._texture_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, { SKINNING:"" } );
 
-	this._texture_transform_shader = new GL.Shader("\
-		precision highp float;\n\
-		attribute vec3 a_vertex;\n\
-		attribute vec2 a_coord;\n\
-		varying vec2 v_coord;\n\
-		uniform mat4 u_mvp;\n\
-		uniform mat3 u_texture_matrix;\n\
-		void main() {\n\
-			v_coord = (u_texture_matrix * vec3(a_coord,1.0)).xy;\n\
-			gl_Position = u_mvp * vec4(a_vertex,1.0);\n\
-			gl_PointSize = 5.0;\n\
-		}\n\
-		", "\n\
-		precision highp float;\n\
-		varying vec2 v_coord;\n\
-		uniform vec4 u_color;\n\
-		uniform float u_global_alpha_clip;\n\
-		uniform sampler2D u_color_texture;\n\
-		void main() {\n\
-			vec4 color = u_color * texture2D(u_color_texture, v_coord);\n\
-			if(color.w <= u_global_alpha_clip)\n\
-				discard;\n\
-			gl_FragColor = color;\n\
-		}\
-	");
+	this._texture_transform_shader = new GL.Shader(`
+		precision highp float;
+		attribute vec3 a_vertex;
+		attribute vec2 a_coord;
+		varying vec2 v_coord;
+		uniform mat4 u_mvp;
+		uniform mat3 u_texture_matrix;
+		void main() {
+			v_coord = (u_texture_matrix * vec3(a_coord,1.0)).xy;
+			gl_Position = u_mvp * vec4(a_vertex,1.0);
+			gl_PointSize = 5.0;
+		}
+		`, `
+		precision highp float;
+		varying vec2 v_coord;
+		uniform vec4 u_color;
+		uniform float u_global_alpha_clip;
+		uniform sampler2D u_color_texture;
+		void main() {
+			vec4 color = u_color * texture2D(u_color_texture, v_coord);
+			if(color.w <= u_global_alpha_clip)
+				discard;
+			gl_FragColor = color;
+		}
+	`);
 	gl.shaders["texture_transform"] = this._texture_transform_shader;
 	
-	var fragment_shader = this._fragment_shader = "\
-			precision highp float;\n\
-			varying vec3 v_normal;\n\
-			varying vec2 v_coord;\n\
-			uniform vec3 u_ambient;\n\
-			uniform vec3 u_light_color;\n\
-			uniform vec3 u_light_vector;\n\
-			uniform vec4 u_color;\n\
-			#ifdef TEXTURED\n\
-				uniform sampler2D u_color_texture;\n\
-			#endif\n\
-			#ifdef UNIFORMS\n\
-				UNIFORMS\n\
-			#endif\n\
-			void main() {\n\
-				vec4 color = u_color;\n\
-				#ifdef TEXTURED\n\
-					color *= texture2D( u_color_texture, v_coord );\n\
-				#endif\n\
-				vec3 N = normalize(v_normal);\n\
-				float NdotL = max(0.0, dot(u_light_vector,N));\n\
-				#ifdef EXTRA\n\
-					EXTRA\n\
-				#endif\n\
-				gl_FragColor = color * (vec4(u_ambient,1.0) + NdotL * vec4(u_light_color,1.0));\n\
-			}\
-	";
+	var fragment_shader = this._fragment_shader = `
+			precision highp float;
+			varying vec3 v_normal;
+			varying vec2 v_coord;
+			uniform vec3 u_ambient;
+			uniform vec3 u_light_color;
+			uniform vec3 u_light_vector;
+			uniform vec4 u_color;
+			#ifdef TEXTURED
+				uniform sampler2D u_color_texture;
+			#endif
+			#ifdef UNIFORMS
+				UNIFORMS
+			#endif
+			void main() {
+				vec4 color = u_color;
+				#ifdef TEXTURED
+					color *= texture2D( u_color_texture, v_coord );
+				#endif
+				vec3 N = normalize(v_normal);
+				float NdotL = max(0.0, dot(u_light_vector,N));
+				#ifdef EXTRA
+					EXTRA
+				#endif
+				gl_FragColor = color * (vec4(u_ambient,1.0) + NdotL * vec4(u_light_color,1.0));
+			}
+	`;
 	
 	gl.shaders["phong"] = this._phong_shader = new GL.Shader( vertex_shader, fragment_shader );
 	this._phong_shader._uniforms = this._phong_uniforms;
@@ -5467,22 +5467,22 @@ Renderer.prototype.createShaders = function()
 	gl.shaders["textured_phong_instancing"] = this._textured_phong_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { INSTANCING: "", TEXTURED: "" } );
 	this._textured_phong_instancing_shader.uniforms( this._phong_uniforms );
 
-	var fragment_shader = "\
-			precision highp float;\n\
-			varying vec3 v_normal;\n\
-			void main() {\n\
-				gl_FragColor = vec4( normalize(v_normal),1.0);\n\
-			}\
-	";
+	var fragment_shader = `
+			precision highp float;
+			varying vec3 v_normal;
+			void main() {
+				gl_FragColor = vec4( normalize(v_normal),1.0);
+			}
+	`;
 	gl.shaders["normal"] = this._normal_shader = new GL.Shader( vertex_shader, fragment_shader );
 
-	var fragment_shader = "\
-			precision highp float;\n\
-			varying vec2 v_coord;\n\
-			void main() {\n\
-				gl_FragColor = vec4(v_coord,0.0,1.0);\n\
-			}\
-	";
+	var fragment_shader = `
+			precision highp float;
+			varying vec2 v_coord;
+			void main() {
+				gl_FragColor = vec4(v_coord,0.0,1.0);
+			}
+	`;
 	gl.shaders["uvs"] = this._uvs_shader = new GL.Shader( vertex_shader, fragment_shader );
 
 	gl._shaders_created = true;

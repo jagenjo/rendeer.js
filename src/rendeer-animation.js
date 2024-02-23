@@ -1110,55 +1110,55 @@ Skeleton.blend = function(a, b, w, result, layer, skip_normalize )
 }
 
 //shader block to include
-Skeleton.shader_code = '\n\
-	attribute vec4 a_bone_indices;\n\
-	attribute vec4 a_weights;\n\
-	uniform mat4 u_bones[64];\n\
-	void computeSkinning(inout vec3 vertex, inout vec3 normal)\n\
-	{\n\
-		vec4 v = vec4(vertex,1.0);\n\
-		vertex = (u_bones[int(a_bone_indices.x)] * a_weights.x * v + \n\
-				u_bones[int(a_bone_indices.y)] * a_weights.y * v + \n\
-				u_bones[int(a_bone_indices.z)] * a_weights.z * v + \n\
-				u_bones[int(a_bone_indices.w)] * a_weights.w * v).xyz;\n\
-		vec4 N = vec4(normal,0.0);\n\
-		normal =	(u_bones[int(a_bone_indices.x)] * a_weights.x * N + \n\
-				u_bones[int(a_bone_indices.y)] * a_weights.y * N + \n\
-				u_bones[int(a_bone_indices.z)] * a_weights.z * N + \n\
-				u_bones[int(a_bone_indices.w)] * a_weights.w * N).xyz;\n\
-		normal = normalize(normal);\n\
-	}\n\
-';
+Skeleton.shader_code = `
+	attribute vec4 a_bone_indices;
+	attribute vec4 a_weights;
+	uniform mat4 u_bones[64];
+	void computeSkinning(inout vec3 vertex, inout vec3 normal)
+	{
+		vec4 v = vec4(vertex,1.0);
+		vertex = (u_bones[int(a_bone_indices.x)] * a_weights.x * v + 
+				u_bones[int(a_bone_indices.y)] * a_weights.y * v + 
+				u_bones[int(a_bone_indices.z)] * a_weights.z * v + 
+				u_bones[int(a_bone_indices.w)] * a_weights.w * v).xyz;
+		vec4 N = vec4(normal,0.0);
+		normal =	(u_bones[int(a_bone_indices.x)] * a_weights.x * N + 
+				u_bones[int(a_bone_indices.y)] * a_weights.y * N + 
+				u_bones[int(a_bone_indices.z)] * a_weights.z * N + 
+				u_bones[int(a_bone_indices.w)] * a_weights.w * N).xyz;
+		normal = normalize(normal);
+	}
+`;
 
 //example of full vertex shader that supports skinning
-Skeleton.vertex_shader_code = "\n\
-	precision highp float;\n\
-	attribute vec3 a_vertex;\n\
-	attribute vec3 a_normal;\n\
-	attribute vec2 a_coord;\n\
-	\n\
-	varying vec3 v_wPosition;\n\
-	varying vec3 v_wNormal;\n\
-	varying vec2 v_coord;\n\
-	\n\
-	uniform mat4 u_viewprojection;\n\
-	uniform mat4 u_model;\n\
-	uniform mat4 u_normal_matrix;\n\
-	\n\
-	"+Skeleton.shader_code+"\n\
-	\n\
-	void main() {\n\
-		v_wPosition = a_vertex;\n\
-		v_wNormal = (u_normal_matrix * vec4(a_normal,0.0)).xyz;\n\
-		v_coord = a_coord;\n\
-		\n\
-		computeSkinning( v_wPosition, v_wNormal);\n\
-		\n\
-		v_wPosition = (u_model * vec4(v_wPosition,1.0)).xyz;\n\
-		\n\
-		gl_Position = u_viewprojection * vec4( v_wPosition, 1.0 );\n\
-	}\n\
-";
+Skeleton.vertex_shader_code = `
+	precision highp float;
+	attribute vec3 a_vertex;
+	attribute vec3 a_normal;
+	attribute vec2 a_coord;
+	
+	varying vec3 v_wPosition;
+	varying vec3 v_wNormal;
+	varying vec2 v_coord;
+	
+	uniform mat4 u_viewprojection;
+	uniform mat4 u_model;
+	uniform mat4 u_normal_matrix;
+	
+	${Skeleton.shader_code} //
+	
+	void main() {
+		v_wPosition = a_vertex;
+		v_wNormal = (u_normal_matrix * vec4(a_normal,0.0)).xyz;
+		v_coord = a_coord;
+		
+		computeSkinning( v_wPosition, v_wNormal);
+		
+		v_wPosition = (u_model * vec4(v_wPosition,1.0)).xyz;
+		
+		gl_Position = u_viewprojection * vec4( v_wPosition, 1.0 );
+	}
+`;
 
 //*******************************************************
 

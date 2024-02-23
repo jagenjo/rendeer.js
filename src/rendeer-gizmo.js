@@ -1375,17 +1375,17 @@ Gizmo.prototype.renderOutline = function( renderer, scene, camera, objects )
 	});
 	var outline_shader = gl.shaders["outline"];
 	if(!outline_shader)
-		outline_shader = gl.shaders["outline"] = GL.Shader.createFX("\
-			vec3 colorU = texture2D(u_texture, uv - vec2(0.0,u_res.y)).xyz;\n\
-			vec3 colorUL = texture2D(u_texture, uv - u_res).xyz;\n\
-			vec3 colorUR = texture2D(u_texture, uv + vec2(u_res.x,-u_res.y)).xyz;\n\
-			vec3 colorL = texture2D(u_texture, uv - vec2(u_res.x,0.0)).xyz;\n\
-			vec3 colorDL = texture2D(u_texture, uv - vec2(u_res.x,-u_res.y)).xyz;\n\
-			vec3 outline = abs(color.xyz - colorU) * 0.3 + abs(color.xyz - colorL) * 0.3;\n\
-			outline += (abs(color.xyz - colorUL) + abs(color.xyz - colorDL) + abs(color.xyz - colorUR)) * 0.1;\n\
-			color = vec4( clamp(outline,vec3(0.0),vec3(1.0)),1.0 );\n\
-			//color = texture2D(u_texture, uv);\n\
-		","uniform vec2 u_res;\n");
+		outline_shader = gl.shaders["outline"] = GL.Shader.createFX(`
+			vec3 colorU = texture2D(u_texture, uv - vec2(0.0,u_res.y)).xyz;
+			vec3 colorUL = texture2D(u_texture, uv - u_res).xyz;
+			vec3 colorUR = texture2D(u_texture, uv + vec2(u_res.x,-u_res.y)).xyz;
+			vec3 colorL = texture2D(u_texture, uv - vec2(u_res.x,0.0)).xyz;
+			vec3 colorDL = texture2D(u_texture, uv - vec2(u_res.x,-u_res.y)).xyz;
+			vec3 outline = abs(color.xyz - colorU) * 0.3 + abs(color.xyz - colorL) * 0.3;
+			outline += (abs(color.xyz - colorUL) + abs(color.xyz - colorDL) + abs(color.xyz - colorUR)) * 0.1;
+			color = vec4( clamp(outline,vec3(0.0),vec3(1.0)),1.0 );
+			//color = texture2D(u_texture, uv);
+		`,"uniform vec2 u_res;\n");
 
 	gl.blendFunc(gl.ONE,gl.ONE);
 	gl.enable(gl.BLEND);
