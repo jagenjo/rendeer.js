@@ -43,27 +43,19 @@
 
 		//create a node
 		var node = new RD.SceneNode({
-			color: [1,0,0,0],
 			mesh: "plane",
 			scale: [2,1,1],
-			flags: {two_sided:true}
 		});
+		node.createMaterial({color:[1,0,0,1],flags: {two_sided:true}});
 		scene.root.addChild(node);
 
 		var node2 = new RD.SceneNode({
-			color: [0,1,0,1],
 			mesh: "sphere",
 			scale: 0.2,
 			position: [0,-0.5,0]
 		});
+		node2.createMaterial({color: [0,1,0,1]});
 		scene.root.addChild(node2);
-
-		//inner update
-		node.update = function(dt) { 
-			this.color[0] = 0.2;
-			this.color[1] = (Math.sin( getTime() * 0.001 ) * 0.5 + 0.5) * 0.2;
-			this.color[2] = 0.2;
-		}
 
 		//global settings
 		var bg_color = vec4.fromValues(0,0,0,1);

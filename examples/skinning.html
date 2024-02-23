@@ -27,6 +27,7 @@
 		//create the rendering context
 		var context = GL.create({ width: window.innerWidth, height:window.innerHeight });
 		renderer = new RD.Renderer( context );
+		renderer.light_model = 'phong'
 		document.body.appendChild( renderer.canvas ); //attach
 
 		renderer.meshes["circle"] = GL.Mesh.circle({size:5,xz:true});
@@ -39,39 +40,6 @@
 			return camera.testSphere( center, 16 ) != CLIP_OUTSIDE;
 		}
 
-		var vertex_shader = '\
-					precision highp float;\n\
-					attribute vec3 a_vertex;\n\
-					attribute vec3 a_normal;\n\
-					attribute vec2 a_coord;\n\
-					varying vec3 v_pos;\n\
-					varying vec3 v_normal;\n\
-					varying vec2 v_coord;\n\
-					uniform mat4 u_model;\n\
-					uniform mat4 u_viewprojection;\n\
-					'+RD.Skeleton.shader_code+'\n\
-					void main() {\n\
-						vec3 vertex = a_vertex;\n\
-						vec3 normal = a_normal;\n\
-						computeSkinning(vertex,normal);\n\
-						v_pos = (u_model * vec4(vertex,1.0)).xyz;\n\
-						v_normal = (u_model * vec4(normal,0.0)).xyz;\n\
-						v_coord = a_coord;\n\
-						gl_Position = u_viewprojection * vec4( v_pos , 1.0 );\n\
-					}\
-					';
-		var fragment_shader = '\
-					precision highp float;\
-					uniform vec4 u_color;\
-					uniform sampler2D u_color_texture;\
-					varying vec2 v_coord;\n\
-					void main() {\
-					  gl_FragColor = u_color * texture2D(u_color_texture,v_coord);\
-					}\
-		';
-
-		gl.shaders["skinning"] = new GL.Shader( vertex_shader, fragment_shader );
-
 		//create camera
 		var camera = new RD.Camera();
 		camera.perspective( 45, gl.canvas.width / gl.canvas.height, 1, 2000 );
@@ -82,23 +50,21 @@
 		for(var i = 0 ; i < 625; ++i )
 		{
 			var man = new RD.SceneNode();
-			man.color = [1,1,1,1];
 			man.mesh = "data/male.mesh";
-			man.texture = "data/casual.png";
-			man.shader = "skinning";
+			man.skeleton = new RD.Skeleton();
 			man.id = i;
 			man.phase = Math.random();
 			man.x = (i%25) * 20 - 250 + Math.random() * 10 - 5;
 			man.z = Math.floor(i/25) * 20 - 250 + Math.random() * 10 - 5;
 			man.scaling = 1 + Math.random()*0.2;
 			man.rotate(Math.random() * 360 * DEG2RAD,RD.UP);
-			man.color = [0.5 + Math.random()*0.5,0.5 + Math.random()*0.5,0.5 + Math.random()*0.5,1];
+			man.createMaterial({ texture: "data/casual.png", color: [0.5 + Math.random()*0.5,0.5 + Math.random()*0.5,0.5 + Math.random()*0.5,1] });
 			scene.root.addChild(man);
 			people.push(man);
 		}
 
 		var floor = new RD.SceneNode();
-		floor.color = [0.3,0.3,0.3,1];
+		floor.createMaterial({color:[0.3,0.3,0.3,1]});
 		floor.mesh = "circle";
 		floor.scale(100,100,100);
 		scene.root.addChild(floor);
@@ -138,10 +104,7 @@
 				if(skanim2.duration)
 					skanim2.assignTime( time + i);
 				if(skanim.duration && skanim2.duration )
-					RD.Skeleton.blend( skanim.skeleton, skanim2.skeleton, Math.sin(time + person.phase*2*Math.PI)*0.5+0.5, skanim.skeleton );
-				person.bones = skanim.skeleton.computeFinalBoneMatrices( person.bones, gl.meshes[ person.mesh ] );
-				if(person.bones && person.bones.length)
-					person.uniforms.u_bones = person.bones;
+					RD.Skeleton.blend( skanim.skeleton, skanim2.skeleton, Math.sin(time + person.phase*2*Math.PI)*0.5+0.5, person.skeleton );
 			}
 
 			scene.update(dt);

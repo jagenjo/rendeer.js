@@ -412,6 +412,277 @@ Billboard.prototype.render = function(renderer, camera )
 }
 
 /**
+* Sprite class , inherits from SceneNode but helps to render 2D planes (in 3D Space)
+* @class Sprite
+* @constructor
+*/
+function Sprite(o)
+{
+	this._ctor();
+	if(o)
+		this.configure(o);
+}
+
+Sprite.prototype._ctor = function()
+{
+	SceneNode.prototype._ctor.call(this);
+
+	this.mesh = "plane";
+	this.size = vec2.fromValues(0,0); //size of the 
+	this.sprite_pivot = RD.TOP_LEFT;
+	this.blend_mode = RD.BLEND_ALPHA;
+	this.flags.two_sided = true;
+	this.flags.flipX = false;
+	this.flags.flipY = false;
+	this.flags.pixelated = false;
+	//this.flags.depth_test = false;
+	this.shader = "texture_transform";
+	this._angle = 0;
+
+	this.frame = null;
+	this.frames = {};
+	this.texture_matrix = mat3.create();
+	
+	this._uniforms["u_texture_matrix"] = this.texture_matrix;
+}
+
+Object.defineProperty(Sprite.prototype, 'angle', {
+	get: function() { return this._angle; },
+	set: function(v) { this._angle = v; quat.setAxisAngle( this._rotation, RD.FRONT, this._angle * DEG2RAD ); this._must_update_matrix = true; },
+	enumerable: true //avoid problems
+});
+
+Sprite.prototype.setSize = function(w,h)
+{
+	this.size[0] = w;
+	this.size[1] = h;
+}
+
+//static version
+//num is the number of elements per row and column, if array then [columns,rows]
+Sprite.createFrames = function( num, names, frames )
+{
+	frames = frames || {};
+	var num_rows;
+	var num_colums;
+	if(num.constructor != Number)
+	{
+		num_columns = num[0];
+		num_rows = num[1];
+	}
+	else
+		num_rows = num_columns = num;
+
+	var x = 0;
+	var y = 0;
+	var offsetx = 1/num_columns;
+	var offsety = 1/num_rows;
+	var total = num_columns * num_rows;
+
+	if(!names)
+	{
+		names = [];
+		for(var i = 0; i < total; ++i)
+			names.push( String(i) );
+	}
+
+	for( var i = 0; i < names.length; ++i )
+	{
+		frames[ names[i] ] = { pos:[x,y], size:[offsetx,offsety], normalized: true };
+		x += offsetx;
+		if(x >= 1)
+		{
+			x = 0;
+			y += offsety;
+		}
+		if(y >= 1)
+			return frames;
+	}
+	return frames;
+}
+
+Sprite.prototype.createFrames = function(num, names)
+{
+	Sprite.createFrames(num, names, this.frames );
+}
+
+Sprite.prototype.addFrame = function(name, x,y, w,h, normalized )
+{
+	this.frames[ name ] = { pos: vec2.fromValues(x,y), size: vec2.fromValues(w,h), normalized: !!normalized };
+}
+
+Sprite.prototype.updateTextureMatrix = function( renderer )
+{
+	mat3.identity( this.texture_matrix );
+	//no texture
+	if(!this.texture)
+		return false;
+	
+	var texture = renderer.textures[ this.texture ];
+	if(!texture && renderer.autoload_assets) 
+	{
+		var that = this;
+		if(this.texture.indexOf(".") != -1)
+			renderer.loadTexture( this.texture, renderer.default_texture_settings, function(tex){
+				if(tex && that.size[0] == 0 && that.size[0] == 0 )
+					that.setSize( tex.width, tex.height );	
+			});
+		texture = gl.textures[ "white" ];
+	}
+	if(!texture) //texture not found
+		return false;
+		
+	//adapt texture matrix
+	var matrix = this.texture_matrix;
+		
+	var frame = this.current_frame = this.frames[ this.frame ];
+	
+	//frame not found
+	if(this.frame !== null && !frame)
+		return false;
+	
+	if(!frame)
+	{
+		if(this.flags.flipX)
+		{
+			temp_vec2[0] = this.flags.flipX ? 1 : 0; 
+			temp_vec2[1] = 0;
+			mat3.translate( matrix, matrix, temp_vec2 );
+			temp_vec2[0] = (this.flags.flipX ? -1 : 1); 
+			temp_vec2[1] = 1;
+			mat3.scale( matrix, matrix, temp_vec2 );
+		}
+		return true;
+	}
+	
+	if(frame.normalized)
+	{
+		temp_vec2[0] = this.flags.flipX ? frame.pos[0] + frame.size[0] : frame.pos[0]; 
+		temp_vec2[1] = 1 - frame.pos[1] - frame.size[1];
+		mat3.translate( matrix, matrix, temp_vec2 );
+		temp_vec2[0] = frame.size[0] * (this.flags.flipX ? -1 : 1); 
+		temp_vec2[1] = frame.size[1];
+		mat3.scale( matrix, matrix, temp_vec2 );
+	}
+	else
+	{
+		var tw = texture.width;
+		var th = texture.height;
+		temp_vec2[0] = (this.flags.flipX ? frame.pos[0] + frame.size[0] : frame.pos[0]) / tw; 
+		temp_vec2[1] = (th - frame.pos[1] - frame.size[1]) / th;
+		mat3.translate( matrix, matrix, temp_vec2 );
+		temp_vec2[0] = (frame.size[0] * (this.flags.flipX ? -1 : 1)) / texture.width; 
+		temp_vec2[1] = frame.size[1] / texture.height;
+		mat3.scale( matrix, matrix, temp_vec2 );
+	}
+	
+	return true;
+}
+
+Sprite.prototype.render = function(renderer, camera)
+{
+	if(!this.texture)
+		return;	
+
+	//this autoloads
+	if(!this.updateTextureMatrix(renderer)) //texture or frame not found
+		return;
+
+	var tex = renderer.textures[ this.texture ];
+	if(!tex)
+		return;
+	
+	if( this.flags.pixelated )
+	{
+		tex.bind(0);
+		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, this.flags.pixelated ? gl.NEAREST : gl.LINEAR );
+		gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, this.flags.pixelated ? gl.NEAREST_MIPMAP_NEAREST : gl.LINEAR_MIPMAP_LINEAR );
+	}
+
+	if(this.billboard_mode)
+		RD.orientNodeToCamera( this.billboard_mode, this, camera, renderer );
+	if(this.size[0] == 0 && tex.ready !== false)
+		this.size[0] = tex.width;
+	if(this.size[1] == 0 && tex.ready !== false)
+		this.size[1] = tex.height;
+	var size = this.size;
+	var offsetx = 0;
+	var offsety = 0;
+	temp_mat4.set( this._global_matrix );
+
+	var normalized_size = false;
+	if(this.current_frame && this.current_frame.size)
+	{
+		size = this.current_frame.size;
+		normalized_size = this.current_frame.normalized;
+	}
+
+	if (this.sprite_pivot)
+	{
+		switch( this.sprite_pivot )
+		{
+			//case RD.CENTER: break;
+			case RD.TOP_LEFT: offsetx = 0.5; offsety = -0.5; break;
+			case RD.TOP_CENTER: offsety = -0.5; break;
+			case RD.TOP_RIGHT: offsetx = -0.5; break;
+			case RD.BOTTOM_LEFT: offsetx = 0.5; offsety = 0.5; break;
+			case RD.BOTTOM_CENTER: offsety = 0.5; break;
+			case RD.BOTTOM_RIGHT: offsetx = -0.5; offsety = 0.5; break;
+		}
+		mat4.translate( temp_mat4, temp_mat4, [offsetx * tex.width * size[0], offsety * tex.height * size[1], 0 ] );
+	}
+	
+	//mat4.scale( temp_mat4, temp_mat4, [size[0] * (normalized_size ? this.size[0] : 1), size[1] * (normalized_size ? this.size[1] : 1), 1 ] );
+	if(normalized_size)
+		mat4.scale( temp_mat4, temp_mat4, [tex.width * size[0], tex.height * size[1], 1 ] );
+		//mat4.scale( temp_mat4, temp_mat4, [this.size[0] * size[0], this.size[1] * size[1], 1 ] );
+	else
+		mat4.scale( temp_mat4, temp_mat4, [this.size[0], this.size[1], 1 ] );
+	renderer.setModelMatrix( temp_mat4 );
+
+	renderer.renderNode( this, renderer, camera );
+}
+
+/*
+Sprite.renderSprite = function( renderer, camera, position, texture, frame_index, atlas_size, scale, billboard_mode, pivot )
+{
+	if(!texture)
+		return;	
+
+	//this autoloads
+	if(!this.updateTextureMatrix(renderer)) //texture or frame not found
+		return;
+
+	if(billboard_mode)
+		RD.orientNodeToCamera( billboard_mode, this, camera, renderer );
+
+	var offsetx = 0;
+	var offsety = 0;
+	temp_mat4.set( this._global_matrix );
+
+	if (pivot)
+	{
+		switch( pivot )
+		{
+			//case RD.CENTER: break;
+			case RD.TOP_LEFT: offsetx = 0.5; offsety = -0.5; break;
+			case RD.TOP_CENTER: offsety = -0.5; break;
+			case RD.TOP_RIGHT: offsetx = -0.5; break;
+			case RD.BOTTOM_LEFT: offsetx = 0.5; offsety = 0.5; break;
+			case RD.BOTTOM_CENTER: offsety = 0.5; break;
+			case RD.BOTTOM_RIGHT: offsetx = -0.5; offsety = 0.5; break;
+		}
+		mat4.translate( temp_mat4, temp_mat4, [offsetx * w, offsety * h, 0 ] );
+	}
+	renderer.setModelMatrix( temp_mat4 );
+	renderer.renderNode( this, renderer, camera );
+}
+*/
+
+extendClass( Sprite, SceneNode );
+RD.Sprite = Sprite;
+
+/**
 * To render several sprites from a texture atlas
 * It can be used as a scene node or a helper class
 * @class SpritesBatch

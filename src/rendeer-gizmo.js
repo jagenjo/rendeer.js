@@ -67,6 +67,10 @@ function Gizmo(o)
 	this.click_2D_norm = vec3.create();
 	this.center_2D = vec3.create();
 	this.click_dist = 1;
+
+	this.mesh = "sphere";
+
+	this.createMaterial({name:"gizmo"}).render = Gizmo.prototype.render.bind(this)
 }
 
 Gizmo.MOVEX = 1<<0;
@@ -418,7 +422,9 @@ Gizmo.prototype.setColor = function(color)
 		var n = this.targets[i];
 		if(!(n.layers & this.layers))
 			continue;
-		n.color = color;
+		var mat = n.getMaterial();
+		if(mat)
+			mat.color = color;
 	}	
 }
 
@@ -835,10 +841,10 @@ Gizmo.prototype.cancel = function()
 
 //rendering ********************************
 
-Gizmo.prototype.render = function(renderer,camera)
+Gizmo.prototype.render = function(renderer)
 {
 	this._last_renderer = renderer;
-	this._last_camera = camera;
+	var camera = this._last_camera = renderer._camera;
 
 	//mark as not rendered
 	for(var i in this.actions)

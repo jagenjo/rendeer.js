@@ -10,7 +10,8 @@
 	</style>
 	<script type="text/javascript" src="../external/gl-matrix-min.js"></script>
 	<script type="text/javascript" src="../external/litegl.js"></script>
-	<script type="text/javascript" src="../build/rendeer.js"></script>
+	<script type="text/javascript" src="../src/rendeer.js"></script>
+	<script type="text/javascript" src="../src/rendeer-gltf.js"></script>
 	<script type="text/javascript">
 	
 	function init()
@@ -21,11 +22,12 @@
 		//create the rendering context
 		var context = GL.create({width: window.innerWidth, height:window.innerHeight});
 		var renderer = new RD.Renderer( context );
+		renderer.light_model = "phong";
 		document.body.appendChild(renderer.canvas); //attach
 
 		//create camera
 		var camera = new RD.Camera();
-		camera.perspective( 45, gl.canvas.width / gl.canvas.height, 1, 1000 );
+		camera.perspective( 30, gl.canvas.width / gl.canvas.height, 1, 1000 );
 		camera.lookAt( [0,1,2],[0,0,0],[0,1,0] );
 
 		//create a node

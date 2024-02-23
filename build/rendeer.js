@@ -3385,33 +3385,64 @@ Material.prototype.serialize = function()
 	return o;
 }
 
+Material.MACROS = {
+	TEXTURE:	1,	
+	ALBEDO:		1<<1,
+	COLOR:		1<<2,
+	INSTANCING: 1<<3,
+	SKINNING:	1<<4,
+	PHONG:		1<<5,
+	POINTS:		1<<6
+};
+
 Material.prototype.render = function( renderer, model, mesh, indices_name, group_index, skeleton, node )
 {
 	//get shader
-	var shader_name = this.shader_name;
-	if(!shader_name)
-	{
-		var shader_name = "texture_albedo";
-		if( this.model == "pbrMetallicRoughness" )
-		{
-			if(mesh.vertexBuffers.colors)
-				shader_name += "_color";
-			if(skeleton)
-				shader_name += "_skeleton";
-		}
-		else
-		{
-			if( skeleton )
-				shader_name = null;
-			else
-				shader_name = renderer.default_shader_name || RD.Material.default_shader_name;
-		}
-	}
-	var shader = null;
 	if (renderer.on_getShader)
 		shader = renderer.on_getShader( node, renderer._camera );
 	else
-		shader = gl.shaders[ shader_name ];
+	{
+		var shader_name = this.shader_name;
+		if(shader_name)
+			shader = gl.shaders[ shader_name ];
+		else
+		{
+			//generate automatic shader
+			var shader_hash = 0;
+			if( this.textures.color )
+				shader_hash |= Material.MACROS.TEXTURE;
+			if( this.textures.albedo )
+				shader_hash = Material.MACROS.ALBEDO;
+			if( mesh.vertexBuffers.colors )
+				shader_hash |= Material.MACROS.COLOR;
+			if( skeleton )
+				shader_hash |= Material.MACROS.SKINNING;
+			//if(instancing)
+			//	shader_hash |= Material.MACROS.INSTANCING;
+			if( renderer.light_model == "phong" )
+				shader_hash |= Material.MACROS.PHONG;
+	
+			shader = renderer.getMasterShader( shader_hash );
+
+			/*
+			var shader_name = "texture_albedo";
+			if( this.model == "pbrMetallicRoughness" )
+			{
+				if(mesh.vertexBuffers.colors)
+					shader_name += "_color";
+				if(skeleton)
+					shader_name += "_skeleton";
+			}
+			else
+			{
+				if( skeleton )
+					shader_name = null;
+				else
+					shader_name = renderer.default_shader_name || RD.Material.default_shader_name;
+			}
+			*/
+		}
+	}
 
 	if (!shader) 
 	{
@@ -3464,8 +3495,16 @@ Material.prototype.render = function( renderer, model, mesh, indices_name, group
 		this.bones = skeleton.computeFinalBoneMatrices( this.bones, mesh );
 		shader.setUniform("u_bones", this.bones );
 	}
+
+	if(this.alphaCutoff != null && this.alphaMode == "MASK")
+		renderer._uniforms.u_global_alpha_clip = this.alphaCutoff;
+	else
+		renderer._uniforms.u_global_alpha_clip = -1;
+
 	shader.uniforms( renderer._uniforms ); //globals
 	shader.uniforms( this.uniforms ); //locals
+	if( renderer.light_model == "phong" )
+		shader.uniforms( renderer._phong_uniforms ); //light
 
 	var group = null;
 	if( group_index != null && mesh.info && mesh.info.groups && mesh.info.groups[ group_index ] )
@@ -3505,6 +3544,7 @@ function Renderer( context, options )
 	this.reverse_normals = false; //used for reflections
 	this.disable_cull_face = false;
 	this.layers_affect_children = false;
+	this.light_model = "flat"; //change to phong
 	
 	this.assets_folder = "";
 	
@@ -3529,6 +3569,12 @@ function Renderer( context, options )
 	};
 
 	this.global_uniforms_containers = [ this._uniforms ];
+
+	this.ambient_light = vec3.fromValues(0.6,0.67,0.8);
+	this.light_color = vec3.fromValues(0.5,0.4,0.3);
+	this.light_vector = vec3.fromValues(0.5442, 0.6385, 0.544);
+
+	this._phong_uniforms = { u_ambient: this.ambient_light, u_light_vector: this.light_vector, u_light_color: this.light_color };
 	
 	//set some default stuff
 	global.gl = this.gl;
@@ -3538,8 +3584,7 @@ function Renderer( context, options )
 	this.autoload_assets = options.autoload_assets !== undefined ? options.autoload_assets : true;
 	this.default_texture_settings = { wrap: gl.REPEAT, minFilter: gl.LINEAR_MIPMAP_LINEAR, magFilter: gl.LINEAR };
 	this.default_cubemap_settings = { minFilter: gl.LINEAR_MIPMAP_LINEAR, magFilter: gl.LINEAR, is_cross: 1 };
-	
-	
+		
 	//global containers and basic data
 	this.meshes["plane"] = GL.Mesh.plane({size:1});
 	this.meshes["planeXZ"] = GL.Mesh.plane({size:1,xz:true});
@@ -3561,8 +3606,133 @@ function Renderer( context, options )
 
 	if(options.shaders_file)
 		this.loadShaders( options.shaders_file, null, options.shaders_macros );
-	
 }
+
+Renderer.prototype.getMasterShader = function( macros )
+{
+	if(!this.master_shaders_compiled)
+		this.master_shaders_compiled = new Map();
+	var container = this.master_shaders_compiled;
+
+	var shader = container.get( macros );
+	if(shader)
+		return shader;
+
+	var vs = Renderer.master_vertex_shader;
+	var fs = Renderer.master_fragment_shader;
+
+	//this code is added on demand because it could be not be available
+	var skinning = "";
+	var skinning_vs = "";
+	if( RD.Skeleton && (macros & Material.MACROS.SKINNING) )
+	{	
+		var skinning_header = "\n\
+		#ifdef SKINNING\n\
+			" + RD.Skeleton.shader_code + "\n\
+		#endif\n\
+		";
+		var skinning_body = "\n\
+		#ifdef SKINNING\n\
+			computeSkinning(v_pos,v_normal);\n\
+		#endif\n\
+		";
+
+		vs = vs.replaceAll("#pragma SKINNING_HEADER",skinning_header);
+		vs = vs.replaceAll("#pragma SKINNING_BODY",skinning_body);
+	}	
+
+	var macros_info = null;
+	if( macros )
+	{
+		macros_info = {};
+		for( var i in Material.MACROS )
+		{
+			var flag = Material.MACROS[i];
+			if( macros & flag )
+				macros_info[ i ] = "";
+		}
+	}
+
+	var shader = new GL.Shader( vs, fs, macros_info );
+	container.set(macros,shader);
+	return shader;
+}
+
+Renderer.master_vertex_shader = "\
+	precision highp float;\n\
+	attribute vec3 a_vertex;\n\
+	attribute vec3 a_normal;\n\
+	attribute vec2 a_coord;\n\
+	varying vec3 v_pos;\n\
+	varying vec3 v_normal;\n\
+	varying vec2 v_coord;\n\
+	#ifdef COLOR\n\
+	attribute vec4 a_color;\n\
+	varying vec4 v_color;\n\
+	#endif\n\
+	#pragma SKINNING_HEADER\n\
+	#ifdef INSTANCING\n\
+		attribute mat4 u_model;\n\
+	#else\n\
+		uniform mat4 u_model;\n\
+	#endif\n\
+	uniform mat4 u_viewprojection;\n\
+	void main() {\n\
+		v_pos = a_vertex;\n\
+		v_normal = a_normal;\n\
+		#pragma SKINNING_BODY\n\
+		v_pos = (u_model * vec4(v_pos,1.0)).xyz;\n\
+		v_normal = (u_model * vec4(v_normal,0.0)).xyz;\n\
+		v_coord = a_coord;\n\
+		#ifdef COLOR\n\
+		v_color = a_color;\n\
+		#endif\n\
+		gl_Position = u_viewprojection * vec4( v_pos, 1.0 );\n\
+		gl_PointSize = 2.0;\n\
+	}\
+";
+
+Renderer.master_fragment_shader = "\
+	precision highp float;\
+	varying vec2 v_coord;\
+	varying vec3 v_normal;\
+	uniform vec4 u_color;\n\
+	#ifdef COLOR\n\
+	varying vec4 v_color;\n\
+	#endif\n\
+	#ifdef ALBEDO\n\
+		uniform sampler2D u_albedo_texture;\n\
+	#endif\n\
+	#ifdef TEXTURE\n\
+		uniform sampler2D u_color_texture;\n\
+	#endif\n\
+	#ifdef PHONG\n\
+		uniform vec3 u_ambient;\n\
+		uniform vec3 u_light_color;\n\
+		uniform vec3 u_light_vector;\n\
+	#endif\n\
+	uniform float u_global_alpha_clip;\n\
+	void main() {\n\
+		vec4 color = u_color;\n\
+		#ifdef ALBEDO\n\
+			color *= texture2D(u_albedo_texture, v_coord);\n\
+		#endif\n\
+		#ifdef TEXTURE\n\
+			color *= texture2D(u_color_texture, v_coord);\n\
+		#endif\n\
+		#ifdef COLOR\n\
+			color *= v_color;\n\
+		#endif\n\
+		if(color.w <= u_global_alpha_clip)\n\
+			discard;\n\
+		vec3 N = normalize(v_normal);\n\
+		#ifdef PHONG\n\
+			float NdotL = max(dot(N,u_light_vector),0.0);\n\
+			color.xyz *= u_ambient + NdotL * u_light_color;\n\
+		#endif\n\
+		gl_FragColor = color;\
+	}\
+";	
 
 RD.Renderer = Renderer;
 
@@ -3929,10 +4099,26 @@ Renderer.prototype.renderNode = function(node, camera)
 	}
 	if (!shader)
 	{
+		var shader_hash = 0;
+		if( node.textures.color)
+			shader_hash |= Material.MACROS.TEXTURE;
+		if( node.textures.albedo)
+			shader_hash |= Material.MACROS.ALBEDO;
+		if(mesh.vertexBuffers.colors)
+			shader_hash |= Material.MACROS.COLOR;
+		if(node.skeleton)
+			shader_hash |= Material.MACROS.SKINNING;
+		if(instancing)
+			shader_hash |= Material.MACROS.INSTANCING;
+		if(this.light_model == "phong")
+			shader_hash |= Material.MACROS.PHONG;
+		shader = this.getMasterShader( shader_hash );
+		/*
 		if( node.skeleton )
 			shader = node.textures.color ? this._texture_skinning_shader : this._flat_skinning_shader;
 		else
 			shader = node.textures.color ? this._texture_shader : this._flat_shader;
+		*/
 	}
 
 	//shader doesnt support instancing
@@ -3982,7 +4168,7 @@ Renderer.prototype.renderNode = function(node, camera)
 	//flags
 	if(!this.ignore_flags)
 		this.enableItemFlags( node );
-	
+
 	if(node.onRender)
 		node.onRender(this, camera, shader);
 
@@ -3993,6 +4179,8 @@ Renderer.prototype.renderNode = function(node, camera)
 	}
 
 	//allows to have several global uniforms containers
+	if( this.light_model == "phong" )
+		shader.uniforms( this._phong_uniforms );
 	for(var i = 0; i < this.global_uniforms_containers.length; ++i)
 		shader.uniforms( this.global_uniforms_containers[i] ); //globals
 	if(!this.skip_node_uniforms)
@@ -5601,7 +5789,6 @@ Renderer.prototype.createShaders = function()
 		this._texture_transform_shader = gl.shaders["texture_transform"];
 		
 		//basic phong shader
-		this._phong_uniforms = { u_ambient: vec3.create(), u_light_vector: vec3.fromValues(0.5442, 0.6385, 0.544), u_light_color: RD.WHITE };
 		this._phong_shader = gl.shaders["phong"];
 		this._phong_shader._uniforms = this._phong_uniforms;
 		this._phong_shader.uniforms( this._phong_uniforms );
@@ -5679,7 +5866,7 @@ Renderer.prototype.createShaders = function()
 				void main() {\n\
 					vec4 color = u_color;\n\
 					#ifdef COLOR\n\
-					color *= a_color;\n\
+					color *= v_color;\n\
 					#endif\n\
 				  gl_FragColor = color;\n\
 				}\
@@ -5800,9 +5987,6 @@ Renderer.prototype.createShaders = function()
 	");
 	gl.shaders["texture_transform"] = this._texture_transform_shader;
 	
-	//basic phong shader
-	this._phong_uniforms = { u_ambient: vec3.create(), u_light_vector: vec3.fromValues(0.5442, 0.6385, 0.544), u_light_color: RD.WHITE };
-
 	var fragment_shader = this._fragment_shader = "\
 			precision highp float;\n\
 			varying vec3 v_normal;\n\

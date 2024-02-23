@@ -11,7 +11,7 @@
 	</style>
 	<script type="text/javascript" src="../external/gl-matrix-min.js"></script>
 	<script type="text/javascript" src="../external/litegl.js"></script>
-	<script type="text/javascript" src="../build/rendeer.js"></script>
+	<script type="text/javascript" src="../src/rendeer.js"></script>
 	<script type="text/javascript">
 	
 	function init()
@@ -26,6 +26,10 @@
 		var context2 = GL.create({canvas: document.getElementById("canvas_two") });
 		var renderer2 = new RD.Renderer(context2);
 
+		renderer.light_model = "phong";
+		renderer2.light_model = "phong";
+
+
 		context.makeCurrent();
 
 		//create camera
@@ -38,7 +42,6 @@
 		node.color = [1,0,0,1];
 		node.mesh = "data/man.obj";
 		//node.scale([50,50,50]);
-		node.shader = "phong";
 		//inner update
 		node.update = function(dt) { 
 			this.rotate(dt,RD.UP);
@@ -47,14 +50,6 @@
 			this.color[2] = 1.0 - this.color[1];
 		}
 		scene.root.addChild(node);
-
-		//particles
-		var particles = new RD.ParticlesEmissor();
-		particles.particles_size = 1000;
-		particles.particles_acceleration[1] = 100;
-		particles.color = [0.5,0.5,0.5,1];
-		particles.velocity_variation = 50;
-		scene.root.addChild(particles);
 
 		//global settings
 		var bg_color = vec4.fromValues(0.2,0.3,0.4,1);

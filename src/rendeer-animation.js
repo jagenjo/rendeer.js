@@ -42,7 +42,7 @@ Animation.prototype.applyAnimation = function( root_node, time, interpolation )
 	}
 }
 
-Animation.prototype.serialize = function()
+Animation.prototype.toJSON = function()
 {
 	var o = {
 		name: this.name,
@@ -53,13 +53,13 @@ Animation.prototype.serialize = function()
 	for(var i = 0; i < this.tracks.length; ++i)
 	{
 		var track = this.tracks[i];
-		o.tracks.push( track.serialize() );
+		o.tracks.push( track.toJSON() );
 	}	
 
 	return o;
 }
 
-Animation.prototype.configure = function(o)
+Animation.prototype.fromJSON = function(o)
 {
 	this.name = o.name;
 	this.duration = o.duration;
@@ -68,7 +68,7 @@ Animation.prototype.configure = function(o)
 	for(var i = 0; i < o.tracks.length; ++i)
 	{
 		var track = new RD.Animation.Track();
-		track.configure( o.tracks[i] );
+		track.fromJSON( o.tracks[i] );
 		this.tracks.push( track );
 	}	
 
@@ -487,7 +487,7 @@ Track.prototype.applyTrack = function( root, time, interpolation )
 	return sample;
 }
 
-Track.prototype.serialize = function()
+Track.prototype.toJSON = function()
 {
 	//if( this.packed_data ) //TODO
 		//unpack
@@ -503,7 +503,7 @@ Track.prototype.serialize = function()
 	return o;
 }
 
-Track.prototype.configure = function(o)
+Track.prototype.fromJSON = function(o)
 {
 	this.enabled = o.enabled;
 	this.target_node = o.target_node;
@@ -647,7 +647,7 @@ function Bone()
 
 Skeleton.Bone = Bone;
 
-Bone.prototype.serialize = function()
+Bone.prototype.toJSON = function()
 {
 	return {
 		name: this.name,
@@ -658,7 +658,7 @@ Bone.prototype.serialize = function()
 	};
 }
 
-Bone.prototype.configure = function(o)
+Bone.prototype.fromJSON = function(o)
 {
 	this.name = o.name;
 	this.model.set( o.model );
@@ -675,8 +675,6 @@ Bone.prototype.configure = function(o)
 			this.num_children = o.num_children;
 	}
 }
-
-Bone.prototype.copyFrom = Bone.prototype.configure;
 
 //given a bone name and matrix, it multiplies the matrix to the bone
 Skeleton.prototype.applyTransformToBones = function(root, transform)
@@ -1008,7 +1006,7 @@ Skeleton.prototype.copyFrom = function( skeleton )
 	this.bones_by_name = new Map( skeleton.bones_by_name );
 }
 
-Skeleton.prototype.serialize = function()
+Skeleton.prototype.toJSON = function()
 {
 	var o = {
 		bones: [],
@@ -1016,11 +1014,11 @@ Skeleton.prototype.serialize = function()
 	};
 
 	for(var i = 0; i < this.bones.length; ++i)
-		o.bones.push(this.bones[i].serialize());
+		o.bones.push(this.bones[i].toJSON());
 	return o;
 }
 
-Skeleton.prototype.configure = function(o)
+Skeleton.prototype.fromJSON = function(o)
 {
 	this.resizeBones( o.bones.length );
 	if(o.bones_by_name)
@@ -1183,6 +1181,7 @@ function SkeletalAnimation()
 }
 
 SkeletalAnimation.MAX_BONES = 64;
+SkeletalAnimation.VERSION = 4;
 
 RD.SkeletalAnimation = SkeletalAnimation;
 
@@ -1459,10 +1458,10 @@ SkeletalAnimation.prototype.toBinary = function()
 	//HEADER
 	for(var i = 0; i < 4; ++i)//BOM
 		view.setUint8(i,"ABIN".charCodeAt(i));
-	view.setInt32(4,3,le);
+	view.setInt32(4,SkeletalAnimation.VERSION,le);
 	view.setInt32(8,header_size,le);
 	view.setFloat32(12,this.duration,le);
-	view.setUint32(16,this.samples_per_second,le);
+	view.setFloat32(16,this.samples_per_second,le);
 	view.setUint32(20,this.num_animated_bones,le);
 	view.setUint32(24,this.num_keyframes,le);
 	view.setUint32(28,num_bones,le);
@@ -1524,6 +1523,7 @@ SkeletalAnimation.prototype.fromBinary = function(data)
 	struct sAnimHeader {
 		int version;
 		int header_bytes;
+		//int max_bones;
 		float duration;
 		float samples_per_second;
 		int num_animated_bones;
@@ -1544,8 +1544,12 @@ SkeletalAnimation.prototype.fromBinary = function(data)
 	//header
 	var version = view.getInt32(4,le);
 	var header_size = view.getInt32(8,le);
+	//var max_bones = view.getInt32(12,le); //CHANGE OFFSETS IF ENABLE THIS LINE!!!
 	this.duration = view.getFloat32(12,le);
-	this.samples_per_second = view.getUint32(16,le);
+	if(version == 3) //legacy bug
+		this.samples_per_second = view.getInt32(16,le);
+	else
+		this.samples_per_second = view.getFloat32(16,le);
 	this.num_animated_bones = view.getUint32(20,le);
 	this.num_keyframes = view.getUint32(24,le);
 	var num_bones = view.getUint32(28,le);
@@ -1717,6 +1721,9 @@ RD.AnimatedCharacterFromScene = function( scene, filename, Z_is_up )
 	if(!mesh_nodes.length && root.findNodesByFilter)
 		mesh_nodes = root.findNodesByFilter(function(a){ return a.mesh; });
 
+	if(mesh_nodes.length && mesh_nodes[0].skin && mesh_nodes[0].skin.skeleton_root)
+		hips_node = root.findNodeByName(mesh_nodes[0].skin.skeleton_root)
+
 	if(!hips_node)
 		throw("this scene doesnt contain an animated character");
 
@@ -1794,7 +1801,7 @@ RD.AnimatedCharacterFromScene = function( scene, filename, Z_is_up )
 		{
 			var animation_info = scene.resources[ animation_name ];
 			animation = new RD.Animation();
-			animation.configure( animation_info.takes["default"] );
+			animation.fromJSON( animation_info.takes["default"] );
 		}
 	}
 
@@ -1821,6 +1828,17 @@ RD.AnimatedCharacterFromScene = function( scene, filename, Z_is_up )
 		tracks_anim: animation
 	};
 }
+
+//legacy
+Animation.prototype.serialize = Animation.prototype.toJSON;
+Animation.prototype.configure = Animation.prototype.fromJSON;
+Track.prototype.serialize = Track.prototype.toJSON;
+Track.prototype.configure = Track.prototype.fromJSON;
+Skeleton.prototype.serialize = Skeleton.prototype.toJSON;
+Skeleton.prototype.configure = Skeleton.prototype.fromJSON;
+Bone.prototype.serialize = Bone.prototype.toJSON;
+Bone.prototype.configure = Bone.prototype.fromJSON;
+Bone.prototype.copyFrom = Bone.prototype.configure;
 
 //footer
 })( typeof(window) != "undefined" ? window : (typeof(self) != "undefined" ? self : global ) );

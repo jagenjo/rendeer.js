@@ -21,6 +21,7 @@
 		//create the rendering context
 		var context = GL.create({ width: window.innerWidth, height:window.innerHeight });
 		var renderer = new RD.Renderer( context );
+		renderer.light_model = "phong";
 		document.body.appendChild( renderer.canvas ); //attach
 
 		//create camera
@@ -32,11 +33,11 @@
 		for(var i = 0 ; i < 100; ++i )
 		{
 			var man = new RD.SceneNode();
-			man.color = [1,1,1,1];
 			man.mesh = "data/man.obj";
-			man.shader = "phong";
 			man.x = Math.random() * 400 - 200;
 			man.z = Math.random() * 400 - 200;
+			var material = new RD.Material();
+			man.material = material.register().name
 			scene.root.addChild(man);
 		}
 
@@ -77,7 +78,7 @@
 			if(node)
 			{
 				ball.position = result;
-				node.color = [Math.random(),Math.random(),Math.random(),1];
+				node.getMaterial().color = [Math.random(),Math.random(),Math.random(),1];
 			}
 			var after = getTime();
 			console.log( "Test time:", ((after - before)).toFixed(0), "ms", RD.Scene._ray_tested_objects, "objects" );

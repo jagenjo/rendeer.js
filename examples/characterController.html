@@ -3,10 +3,11 @@
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1" />
 
-<title>rendeer.js: skinning</title>
+<title>rendeer.js: Character Controller</title>
 	<link rel="stylesheet" type="text/css" href="style.css" />
 	<style type='text/css'>
 		html, body { width: 100%; height: 100%; margin: 0; padding: 0 }
+		div { position: fixed; top: 10px; left: 10px; color: white; font-size: 20px; }
 	</style>
 	<script type="text/javascript" src="../external/gl-matrix-min.js"></script>
 	<script type="text/javascript" src="../external/litegl.js"></script>
@@ -37,6 +38,7 @@
         context.captureKeys(true);
         context.captureMouse(true);
 		renderer = new RD.Renderer( context );
+		renderer.light_model = "phong";
 		document.body.appendChild( renderer.canvas ); //attach
 
 		renderer.meshes["circle"] = GL.Mesh.circle({size:5,xz:true});
@@ -53,7 +55,8 @@
 		scene.root.addChild(floor);
 
         //character
-        character = new RD.SceneNode({mesh: "data/male.mesh", texture:"data/casual.png"});
+        character = new RD.SceneNode({mesh: "data/male.mesh"});
+		character.createMaterial({texture:"data/casual.png"});
         character.skeleton = new RD.Skeleton();
         scene.root.addChild(character);
 
@@ -145,6 +148,7 @@
 	</script>
 </head>
 <body>
+<div>WSAD or Cursors : WALK,  Shift : RUN</div>
 <script>init();</script>
 </body>
 </html>

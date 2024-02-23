@@ -31,6 +31,7 @@
 		//create the rendering context
 		var context = GL.create({width: window.innerWidth, height:window.innerHeight});
 		renderer = new RD.Renderer(context);
+		renderer.light_model = 'phong'
 		renderer.sort_by_distance = true;
 		document.body.appendChild(renderer.canvas); //attach
 
@@ -40,37 +41,13 @@
 		camera.lookAt( [10,10,10],[0,0,0],[0,1,0] );
 
 		var floor = new RD.SceneNode();
-		floor.color = [0.6,0.6,0.6,1];
 		floor.mesh = "planeXZ";
-		floor.shader = "phong";
 		floor.scale([50,50,50]);
 		//scene.root.addChild(floor);
-
-		//to visualize roots
-		var pointcloud = new RD.PointCloud();
-		pointcloud.color = [1,0,1,1];
-		pointcloud.flags.depth_test = false;
-		//scene.root.addChild(pointcloud);
 
 		//var url = "data/Fox/glTF/Fox.gltf";
 		//var url = "data/Buggy.glb";
 		var url = "data/DamagedHelmet.glb";
-
-		var default_shader = new GL.Shader( renderer._vertex_shader, "\n\
-		precision highp float;\n\
-		varying vec2 v_coord;\n\
-		uniform vec4 u_color;\n\
-		uniform sampler2D u_albedo_texture;\n\
-		uniform float u_global_alpha_clip;\n\
-		void main() {\n\
-			vec4 color = u_color * texture2D(u_albedo_texture, v_coord);\n\
-			if(color.w < u_global_alpha_clip)\n\n\
-				discard;\n\
-			gl_FragColor = color;\n\
-		}\
-		");
-		gl.shaders["gltf"] = default_shader;
-		renderer.default_shader_name = "gltf";
 
 		RD.GLTF.load(url, function(node){
 			if(!node)
@@ -99,7 +76,7 @@
 			scene.update(dt);
 
 			if(gltf_node && animation)
-				animation.applyAnimation( gltf_node, (getTime()*0.0001) % animation.duration, RD.LINEAR );
+				animation.applyAnimation( gltf_node, (getTime()*0.001) % animation.duration, RD.LINEAR );
 		}
 
 		//input
@@ -125,20 +102,6 @@
 			var direction = (e.wheel > 0) ? 1 : -1;
 			var offset = 1 + direction * -0.1;
 			camera.orbitDistanceFactor( offset );
-		}
-
-		var points = [];
-
-		renderer.onPreRenderNode = function(node)
-		{
-			var pos = node.getGlobalPosition();
-			points.push( pos );
-		}
-
-		renderer.onPostRender = function()
-		{
-			pointcloud.points = points;
-			points.length = 0;
 		}
 
 		enableDrop();

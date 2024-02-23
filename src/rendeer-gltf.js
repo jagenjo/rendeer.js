@@ -532,6 +532,8 @@ RD.GLTF = {
 				if(typeof(DracoDecoderModule) == "undefined")
 					throw("mesh data is compressed using Draco, draco_decoder.js not installed.");
 				buffers = primitive.buffers = this.decompressDraco( primitive_info, json );
+				if(!buffers)
+					return null;
 			}
 			else
 			{
@@ -623,6 +625,12 @@ RD.GLTF = {
 
 	decompressDraco: function( primitive_info, json )
 	{
+		if(!this.decoderModule || !this.decoderModule.Decoder)
+		{
+			console.warn("Mesh with DRACO encoding, DRACO Decoder Module not found");
+			return null;
+		}
+
 		if(!this.draco_decoder)
 			this.draco_decoder = new this.decoderModule.Decoder();
 		var result = this.decodePrimitive( this.draco_decoder, primitive_info, json );

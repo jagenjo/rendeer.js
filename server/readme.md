@@ -1,0 +1,1 @@
+This server allows to handle files for the editor

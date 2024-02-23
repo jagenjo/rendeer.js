@@ -13,7 +13,7 @@
 	<script type="text/javascript" src="../src/rendeer.js"></script>
 	<script type="text/javascript">
 
-    var subcanvas, texture, subctx;
+    var panel, subcanvas, texture, subctx;
 	
 	function init()
 	{
@@ -41,11 +41,11 @@
 		//create camera
 		var camera = new RD.Camera();
 		camera.perspective( 45, gl.canvas.width / gl.canvas.height, 1, 1000 );
-		camera.lookAt( [0,10,-40],[0,0,0],[0,1,0] );
+		camera.lookAt( [0,10,40],[0,0,0],[0,1,0] );
 
 		//create a node
-        var panel = new RD.SceneNode({mesh:"plane",scale:[20,10,1],flags:{two_sided:true}});
-        panel.texture = ":canvas"; //assign canvas texture to node
+        panel = new RD.SceneNode({mesh:"plane",scale:[20,10,1]});
+        panel.createMaterial({texture:":canvas",flags:{two_sided:true}}); //assign canvas texture to node
         scene.root.addChild(panel);
 
 		var ball = new RD.SceneNode({mesh:"sphere",scale:0.1,layers:0b100});
