@@ -47,9 +47,6 @@ var CORE = {
 		this.object2.rotate(-90*DEG2RAD,RD.UP);
 		this.scene.root.addChild(this.object2);
 
-		gl.shaders["phong"] = new GL.Shader( this.renderer._vertex_shader, this.renderer._fragment_shader, { EXTRA: "NdotL = dot(u_light_vector,N) * 0.5 + 0.5;\n" });
-		gl.shaders["phong"].uniforms(this.renderer._phong_uniforms);
-
 		this.gizmo.setTargets( [this.object,this.object2] );
 	},
 

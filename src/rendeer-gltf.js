@@ -1,4 +1,5 @@
 // https://www.khronos.org/files/gltf20-reference-guide.pdf
+// validate export here: https://github.khronos.org/glTF-Validator/
 RD.GLTF = {
 	BYTE: 5120,
 	UNSIGNED_BYTE: 5121,
@@ -215,7 +216,7 @@ RD.GLTF = {
 			return null;
 		}
 		var version = dv.getUint32(4,endianess);
-		//console.log("GLTF Version: " + version);
+		console.log("GLTF Version: " + version);
 
 		var length = dv.getUint32(8,endianess); //full size
 
@@ -233,7 +234,7 @@ RD.GLTF = {
 
 			if(chunk_type == RD.GLTF.JSON_CHUNK)
 			{
-				if (!("TextDecoder" in window))
+				if (typeof(TextDecoder) === "undefined")
 				  throw("Sorry, this browser does not support TextDecoder...");
 
 				var enc = new TextDecoder("utf-8");
@@ -258,7 +259,7 @@ RD.GLTF = {
 
 	parse: function(json, filename)
 	{
-		//console.log(json);
+		console.log(json);
 
 		if(!json.url)
 			json.url = filename || "scene.glb";
@@ -1200,49 +1201,133 @@ RD.GLTF = {
 		}
 	},
 
-	exportToGLB: function( scene, callback )
+	encodeGLTF: function( scene, callback )
 	{
+		var GL = WebGL2RenderingContext;
 		console.error("export not supported yet");
+		var binaries = [];
 		var json = {
 			accessors:[],
-			asset: {},
+			asset: {
+				generator: "RendeerJS",
+				version: "2.0"
+			},
 			bufferViews: [],
-			buffers:[],
-			filename:"",
-			folder: "",
-			images: [],
-			materials: [],
+			buffers:[{}],
 			meshes: [],
 			nodes: [],
-			samplers: [],
 			scene: 0,
-			scenes: [],
-			textures: [],
+			scenes: [ {nodes:[0]} ]
 		};
 
-		//build node list
-		for(var i = 0; i < scene._nodes.length; ++i)
+		//prepare info
+		var last_mesh_id = 0;
+		var meshes = [];
+		var last_material_id = 0;
+		var materials = [];
+
+		var allNodes = scene.root.getAllChildren([scene.root]);
+
+		for(var i = 0; i < allNodes.length; ++i)
 		{
-			var node = scene._nodes[i];
+			var node = allNodes[i];
+			node._index_in_glb = i;
+			if(node.mesh) {
+				var mesh = gl.meshes[ node.mesh ];
+				if(mesh && mesh._index_in_glb == null)
+				{
+					mesh._index_in_glb = last_mesh_id++;
+					meshes[mesh._index_in_glb] = mesh;
+					mesh._glb_attributes = {};
+					mesh._glb_attributes["POSITION"] = addPrimitive("POSITION",mesh.vertexBuffers.vertices);
+					if(mesh.vertexBuffers.normals)
+						mesh._glb_attributes["NORMAL"] = addPrimitive("NORMAL",mesh.vertexBuffers.normals);
+					if(mesh.vertexBuffers.coords)
+						mesh._glb_attributes["TEXCOORD_0"] = addPrimitive("TEXCOORD_0",mesh.vertexBuffers.coords);
+					if(mesh.vertexBuffers.coords1)
+						mesh._glb_attributes["TEXCOORD_1"] = addPrimitive("TEXCOORD_1",mesh.vertexBuffers.coords1);
+					if(mesh.indexBuffers.triangles)
+						mesh._glb_indices = addPrimitive("INDICES",mesh.indexBuffers.triangles);
+				}
+			}
+			if(node.material)
+			{
+				var material = RD.Materials[node.material];
+				if(material && material._index_in_glb == null)
+				{
+					material._index_in_glb = last_material_id++;
+					materials[material._index_in_glb] = material;
+				}
+			}
+		}
+
+
+		for(var i = 0; i < allNodes.length; ++i)
+		{
+			var node = allNodes[i];
 			var json_node = {};
 			if(node.name)
 				json_node.name = node.name;
 			if(node.mesh)
 			{
-				//json_node.mesh = index;
+				var node_material = RD.Materials[ node.material ];
+				var mesh = gl.meshes[node.mesh];
+				if(mesh)
+				{
+					var index = json.meshes.length;
+					var prim_json = { 
+						attributes: mesh._glb_attributes,
+						mode: GL.TRIANGLES
+					};
+					if( node_material )
+						prim_json.material = node_material._index_in_glb;
+					var mesh_json = {
+						primitives: [ prim_json ]
+					};
+					if( mesh._glb_indices != null )
+						prim_json.indices = mesh._glb_indices;
+					json.meshes.push( mesh_json );
+					json_node.mesh = index;
+				}
 			}
-			if(node.children)
+			if(node.children && node.children.length)
 			{
-				//json_node.children = [];
+				json_node.children = [];
+				for(var j = 0; j < node.children.length; j++)
+					json_node.children.push( node.children[j]._index_in_glb );
 			}
-			//json_node.matrix = typedArrayToArray( node._model_matrix );
+			var identity = mat4.create(); //avoid identity matrices
+			for(var j = 0; j < 16; ++j)
+				if( node._local_matrix[j] != identity[j] )
+				{
+					json_node.matrix = typedArrayToArray( node._local_matrix );
+					break;
+				}
+			json.nodes[i] = json_node;  
 		}
 
 		//store meshes
 		//{ name:"", primitives: [ { mode:4, material: 0, indices:0, attributes:{ POSITION: 0, NORMAL: 1, TANGENT: 2, TEXCOORD_0: 3, TEXCOORD_1: 4} } ] }
+	
 
 		//store materials
 		//{ name:"", pbrMetallicRoughness: { baseColorTexture: {index:0}, metallicRoughnessTexture:{}, metallicFactor:0, roughnessFactor: 0 } }
+		if(materials.length)
+		{
+			json.materials = [];
+			for(var i = 0; i < materials.length; i++)
+			{
+				var mat = materials[i];
+				json.materials[i] = {
+					alphaMode: "OPAQUE",
+					doubleSided: mat.two_sided,
+					emissiveFactor:[0,0,0],
+					pbrMetallicRoughness: {
+						baseColorFactor: Array.from( mat.color )
+					}
+				}
+			}	
+		}
 
 		//samplers
 		//{ magFilter: gl.NEAREST, minFilter: ... }
@@ -1260,7 +1345,125 @@ RD.GLTF = {
 		//{buffer:0, byteOffset:0, byteLength:0 }
 
 		//buffers
-		//{byteLength:,}
+		var size = 0, pos = 0;
+		for(var i = 0; i < binaries.length; i++)
+			size += binaries[i].byteLength;
+		json.buffers[0].byteLength = size;
+		var binBuffer = new Uint8Array(size);
+		for(var i = 0; i < binaries.length; i++)
+		{
+			var bin = binaries[i];
+			var u8Buffer = new Uint8Array(bin.buffer);
+			binBuffer.set(u8Buffer,pos);
+			var bufferView = {
+				buffer: 0,
+				byteOffset: pos,
+				byteLength: u8Buffer.byteLength,
+			};
+			if( bin.constructor === Float32Array )
+				bufferView.target = GL.ARRAY_BUFFER;
+			else if( bin.constructor === Uint16Array || bin.constructor === Uint32Array )
+				bufferView.target = GL.ELEMENT_ARRAY_BUFFER;
+			json.bufferViews.push( bufferView );
+			pos += u8Buffer.byteLength;
+		}
+
+		//pack json and bin to build GLB
+		//console.log(json, binBuffer);
+
+		function addPrimitive( name, prim_data )
+		{
+			var data = prim_data.data;
+			var count = data.length;
+			var components = 1;
+			var type = "SCALAR";
+			var componentType = GL.FLOAT;
+			if( data.constructor === Uint32Array)
+			{
+				componentType = GL.UNSIGNED_INT;
+				type = "SCALAR";
+			}
+			else if( data.constructor === Uint16Array )
+			{
+				componentType = GL.UNSIGNED_SHORT;
+				type = "SCALAR";
+			}
+			else if( name == "TEXCOORD_0" || name == "TEXCOORD_1" )
+			{
+				components = 2;
+				type = "VEC2";
+			}
+			else 
+			{
+				components = 3;
+				type = "VEC3";
+			}
+			count /= components;
+
+			var min,max;
+			min = Array.from(data.subarray(0,components));
+			max = Array.from(data.subarray(0,components));
+			for(var i = 0; i < data.length; i++)
+			{
+				min[i%components] = Math.min( data[i], min[i%components] );
+				max[i%components] = Math.max( data[i], max[i%components] );
+			}
+
+			//create accessor
+			var accessor = { bufferView: binaries.push(data) - 1, byteOffset: 0, componentType, count, type,max,min };
+			return json.accessors.push(accessor) - 1;
+		}
+
+		//clear
+		for(var i = 0; i < meshes.length; ++i)
+		{
+			delete meshes[i]._glb_indices;
+			delete meshes[i]._index_in_glb;
+			delete meshes[i]._glb_attributes;
+		}
+		for(var i = 0; i < allNodes.length; ++i)
+		{
+			delete allNodes[i]._index_in_glb;
+		}
+
+		return { json, binary: binBuffer };
+	},
+
+	encodeGLB: function( json, binary )
+	{
+		var json_str = JSON.stringify(json);
+		var enc = new TextEncoder(); // always utf-8
+		var json_bytes = enc.encode( json_str );
+		var version = 2;
+		var padded_json_size = Math.ceil( json_bytes.byteLength / 4 ) * 4;
+		var padded_binary_size = Math.ceil( binary.byteLength / 4 ) * 4;
+
+		var data = new Uint8Array( 12 + 8 + padded_json_size + 8 + padded_binary_size );
+
+		//write header
+		var endianess = true;
+		var dv = new DataView( data.buffer );
+		dv.setUint32(0,0x46546C67,endianess); //set magic
+		dv.setUint32(4,version,endianess);
+		dv.setUint32(8,data.byteLength, endianess);
+		var byteOffset = 12;
+
+		console.log("JSON CHUNK START",byteOffset)
+		dv.setUint32(byteOffset,padded_json_size, endianess); //chunk size
+		dv.setUint32(byteOffset+4,RD.GLTF.JSON_CHUNK,endianess); //chunk type
+		data.set(json_bytes,byteOffset+8); //chunk data
+		for(var i = json_bytes.byteLength; i < padded_json_size; ++i)
+			data[ byteOffset + 8 + i ] = 32; //add padding in the form of spaces
+		byteOffset += 8 + padded_json_size;
+
+		console.log("BIN CHUNK START",byteOffset)
+		dv.setUint32(byteOffset,padded_binary_size, endianess); //chunk size
+		dv.setUint32(byteOffset+4,RD.GLTF.BINARY_CHUNK,endianess);
+		data.set(binary,byteOffset+8);
+		byteOffset += 8 + binary.byteLength;
+
+		console.log(data);
+		return data;
 	}
 };
 

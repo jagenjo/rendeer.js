@@ -174,8 +174,6 @@ var temp_quat = quat.create();
 * @constructor
 */
 class SceneNode {
-
-
 	/**
 	* A unique identifier, useful to retrieve nodes by name
 	* @property id {string}
@@ -483,9 +481,17 @@ class SceneNode {
 				case "primitives":
 					this.primitives = o.primitives.map(function(a){ return Object.assign({}, a); }); //clone first level
 					continue;
+				case "material":
+					if( o[i] && o[i].constructor === Object )
+					{
+						var mat = new Material(o[i]);
+						this.material = mat.register().name;
+					}
+					else
+						this.material = o[i];
+					break;
 				case "name":
 				case "mesh":
-				case "material":
 				case "ref":
 				case "draw_range":
 				case "submesh":
@@ -4993,7 +4999,7 @@ RD.Factory = function Factory( name, parent, extra_options )
 }
 
 RD.Factory.templates = {
-	grid: { mesh:"grid", primitive: 1, color: [0.5,0.5,0.5,0.5], material:{ blend_mode: RD.BLEND_ALPHA } },
+	grid: { mesh:"grid", material: { primitive: 1, color: [0.5,0.5,0.5,0.5], blend_mode: RD.BLEND_ALPHA } },
 	sphere: { mesh:"sphere" },
 	floor: { mesh:"planeXZ", scaling: 10 }
 };
@@ -5283,7 +5289,7 @@ Renderer.prototype.createShaders = function()
 				void main() {
 					v_pos = a_vertex;
 					v_normal = a_normal;
-					"+skinning_vs+"
+					${skinning_vs}
 					v_pos = (u_model * vec4(v_pos,1.0)).xyz;
 					v_normal = (u_model * vec4(v_normal,0.0)).xyz;
 					v_coord = a_coord;
