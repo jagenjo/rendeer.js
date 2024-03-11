@@ -263,6 +263,24 @@ class SceneNode {
 		this._pivot.set(v);
 		this.flags.pivot = true;
 	}
+
+	set color(v) {
+		if(this.material)
+		{
+			var mat = this.getMaterial();
+			if(mat)
+				mat.color = v;
+		}
+		else
+			console.warn("cannot set color of node without material");
+	}
+	get color() {
+		var mat = this.getMaterial();
+		if(mat)
+			mat.color;
+		console.warn("cannot get color of node without material");
+		return null;
+	}
 	
 	//to work with tween
 	get mustUpdate() { return this._must_update_matrix; }
@@ -489,6 +507,7 @@ class SceneNode {
 					}
 					else
 						this.material = o[i];
+					continue;
 					break;
 				case "name":
 				case "mesh":
@@ -3089,12 +3108,12 @@ Scene.prototype.toJSON = function( on_node_to_json )
 				data.draw_range = node.draw_range.concat();
 			if(node.material)
 				data.material = node.material;
-			if(node.shader)
-				data.shader = node.shader;
-			if(node.color[0] != 1 || node.color[1] != 1 || node.color[2] != 1 || node.color[3] != 1 )
-				data.color = typedArrayToArray(node.color);
-			if(Object.values(node.textures).filter(function(a){return a;}) > 0)
-				data.shader = node.shader;
+			//if(node.shader)
+			//	data.shader = node.shader;
+			//if(node.color[0] != 1 || node.color[1] != 1 || node.color[2] != 1 || node.color[3] != 1 )
+			//	data.color = typedArrayToArray(node.color);
+			//if(Object.values(node.textures).filter(function(a){return a;}) > 0)
+			//	data.shader = node.shader;
 			if(node.extra)
 				data.extra = node.extra;
 
@@ -3353,6 +3372,8 @@ class Material
 		shader.uniforms( this.uniforms ); //locals
 		if( renderer.light_model == "phong" )
 			shader.uniforms( renderer._phong_uniforms ); //light
+		if( renderer.onNodeShaderUniforms )
+			renderer.onNodeShaderUniforms( renderer, shader, node );
 
 		var group = null;
 		if( group_index != null && mesh.info && mesh.info.groups && mesh.info.groups[ group_index ] )

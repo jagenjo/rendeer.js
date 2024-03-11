@@ -401,6 +401,8 @@ RD.GLTF = {
 								material: material ? material.name : null, //meshes without material can exists
 								mode: group.mode
 							});
+							if(!node.material && material)
+								node.material = material.name;
 						}
 					}
 					break;
@@ -1204,7 +1206,6 @@ RD.GLTF = {
 	encodeGLTF: function( scene, callback )
 	{
 		var GL = WebGL2RenderingContext;
-		console.error("export not supported yet");
 		var binaries = [];
 		var json = {
 			accessors:[],
@@ -1232,24 +1233,46 @@ RD.GLTF = {
 		{
 			var node = allNodes[i];
 			node._index_in_glb = i;
-			if(node.mesh) {
-				var mesh = gl.meshes[ node.mesh ];
-				if(mesh && mesh._index_in_glb == null)
+			var mesh = node.mesh ? gl.meshes[ node.mesh ] : null;
+			if(mesh && mesh._index_in_glb == null) {
+				mesh._index_in_glb = last_mesh_id++;
+				meshes[mesh._index_in_glb] = mesh;
+				mesh._glb_attributes = {};
+				mesh._glb_attributes["POSITION"] = addPrimitive("POSITION",mesh.vertexBuffers.vertices);
+				if(mesh.vertexBuffers.normals)
 				{
-					mesh._index_in_glb = last_mesh_id++;
-					meshes[mesh._index_in_glb] = mesh;
-					mesh._glb_attributes = {};
-					mesh._glb_attributes["POSITION"] = addPrimitive("POSITION",mesh.vertexBuffers.vertices);
-					if(mesh.vertexBuffers.normals)
-						mesh._glb_attributes["NORMAL"] = addPrimitive("NORMAL",mesh.vertexBuffers.normals);
-					if(mesh.vertexBuffers.coords)
-						mesh._glb_attributes["TEXCOORD_0"] = addPrimitive("TEXCOORD_0",mesh.vertexBuffers.coords);
-					if(mesh.vertexBuffers.coords1)
-						mesh._glb_attributes["TEXCOORD_1"] = addPrimitive("TEXCOORD_1",mesh.vertexBuffers.coords1);
-					if(mesh.indexBuffers.triangles)
-						mesh._glb_indices = addPrimitive("INDICES",mesh.indexBuffers.triangles);
+					for(var j = 0; j < mesh.vertexBuffers.normals.data.length; j+=3)
+					{
+						var N = mesh.vertexBuffers.normals.data.subarray(j,j+3); //GLB wants normalized normals
+						vec3.normalize(N,N);
+					}
+					mesh._glb_attributes["NORMAL"] = addPrimitive("NORMAL",mesh.vertexBuffers.normals);
+				}
+				if(mesh.vertexBuffers.coords)
+					mesh._glb_attributes["TEXCOORD_0"] = addPrimitive("TEXCOORD_0",mesh.vertexBuffers.coords);
+				if(mesh.vertexBuffers.coords1)
+					mesh._glb_attributes["TEXCOORD_1"] = addPrimitive("TEXCOORD_1",mesh.vertexBuffers.coords1);
+				if(mesh.indexBuffers.triangles)
+					mesh._glb_indices = addPrimitive("INDICES",mesh.indexBuffers.triangles);
+				//for each group create indices
+				if( mesh.indexBuffers.triangles && mesh.info && mesh.info.groups )
+				{
+					var triangles = mesh.indexBuffers.triangles;
+					var glb_indices_group = [];
+					for(var j = 0; j < mesh.info.groups.length; ++j)
+					{
+						var group = mesh.info.groups[j];
+						var glb_indices = [];
+						//get range
+						var subindices = new triangles.data.constructor( triangles.data.subarray(group.start, group.start + group.length) );
+						//make accessor from range
+						var acc = addPrimitive("INDICES",subindices);
+						glb_indices_group.push(acc);
+					}
+					mesh._glb_indices_group = glb_indices_group;
 				}
 			}
+
 			if(node.material)
 			{
 				var material = RD.Materials[node.material];
@@ -1274,20 +1297,54 @@ RD.GLTF = {
 				var mesh = gl.meshes[node.mesh];
 				if(mesh)
 				{
-					var index = json.meshes.length;
-					var prim_json = { 
-						attributes: mesh._glb_attributes,
-						mode: GL.TRIANGLES
-					};
-					if( node_material )
-						prim_json.material = node_material._index_in_glb;
-					var mesh_json = {
-						primitives: [ prim_json ]
-					};
-					if( mesh._glb_indices != null )
-						prim_json.indices = mesh._glb_indices;
-					json.meshes.push( mesh_json );
-					json_node.mesh = index;
+					if(node.primitives && node.primitives.length)
+					{
+						var mesh_json = {
+							primitives: []
+						};
+						for(var k = 0;k < node.primitives.length; ++k)
+						{
+							var prim = node.primitives[i];
+							var prim_json = { 
+								attributes: mesh._glb_attributes,
+								mode: GL.TRIANGLES
+							};
+							var prim_material = RD.Materials[ prim.material ] || node_material;
+							if( prim_material )
+								prim_json.material = prim_material._index_in_glb;
+							if( mesh._glb_indices_group[k] != null )
+							{
+								prim_json.indices = mesh._glb_indices_group[k];
+							}
+							mesh_json.primitives.push(prim_json);
+						}
+						var index = json.meshes.length;
+						json.meshes.push( mesh_json );
+						json_node.mesh = index;
+					}
+					else
+					{
+						var index = json.meshes.length;
+						var prim_json = { 
+							attributes: mesh._glb_attributes,
+							mode: GL.TRIANGLES
+						};
+						if( node_material )
+							prim_json.material = node_material._index_in_glb;
+						var mesh_json = {
+							primitives: [ prim_json ]
+						};
+						if( node.submesh != null && mesh._glb_indices_group )
+						{
+							prim_json.indices = mesh._glb_indices_group[ node.submesh ];
+						}
+						else if( mesh._glb_indices != null )
+						{
+							prim_json.indices = mesh._glb_indices;
+						}
+						json.meshes.push( mesh_json );
+						json_node.mesh = index;
+					}
 				}
 			}
 			if(node.children && node.children.length)
@@ -1303,6 +1360,8 @@ RD.GLTF = {
 					json_node.matrix = typedArrayToArray( node._local_matrix );
 					break;
 				}
+			if( node.extra && node.extra.info )
+				json_node.extras = node.extra.info;
 			json.nodes[i] = json_node;  
 		}
 
@@ -1320,7 +1379,7 @@ RD.GLTF = {
 				var mat = materials[i];
 				json.materials[i] = {
 					alphaMode: "OPAQUE",
-					doubleSided: mat.two_sided,
+					doubleSided: mat.flags.two_sided,
 					emissiveFactor:[0,0,0],
 					pbrMetallicRoughness: {
 						baseColorFactor: Array.from( mat.color )
@@ -1373,7 +1432,7 @@ RD.GLTF = {
 
 		function addPrimitive( name, prim_data )
 		{
-			var data = prim_data.data;
+			var data = prim_data.data ? prim_data.data : prim_data;
 			var count = data.length;
 			var components = 1;
 			var type = "SCALAR";
@@ -1448,7 +1507,7 @@ RD.GLTF = {
 		dv.setUint32(8,data.byteLength, endianess);
 		var byteOffset = 12;
 
-		console.log("JSON CHUNK START",byteOffset)
+		// console.log("JSON CHUNK START",byteOffset)
 		dv.setUint32(byteOffset,padded_json_size, endianess); //chunk size
 		dv.setUint32(byteOffset+4,RD.GLTF.JSON_CHUNK,endianess); //chunk type
 		data.set(json_bytes,byteOffset+8); //chunk data
@@ -1456,13 +1515,12 @@ RD.GLTF = {
 			data[ byteOffset + 8 + i ] = 32; //add padding in the form of spaces
 		byteOffset += 8 + padded_json_size;
 
-		console.log("BIN CHUNK START",byteOffset)
+		// console.log("BIN CHUNK START",byteOffset)
 		dv.setUint32(byteOffset,padded_binary_size, endianess); //chunk size
 		dv.setUint32(byteOffset+4,RD.GLTF.BINARY_CHUNK,endianess);
 		data.set(binary,byteOffset+8);
 		byteOffset += 8 + binary.byteLength;
 
-		console.log(data);
 		return data;
 	}
 };
