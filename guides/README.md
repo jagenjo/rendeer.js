@@ -212,6 +212,19 @@ The same with loadMesh:
 renderer.loadMesh( "data/sky.obj", callback ); //callback in case we want to execute  a function when the mesh is loaded
 ```
 
+
+## Materials
+
+Rendeer objects are rendered based on the properties of the node (mesh, shader, textures and uniforms), but you can redirect the rendering to a Material class
+if you prefeer to.
+
+You can assign a material name to the node.material, and have a material registered in RD.Materials that will handle the rendering.
+
+Materials should have a material.render method in charge of the rendering.
+
+Check ```Material.prototype.render = function( renderer, model, mesh, indices_name, group_index )``` to know more.
+
+
 ### Using GLTF
 
 You can easily load a GLTF scene. First be sure to include the rendeer-gltf.js library or use the bundled one found in rendeer.js.
@@ -221,87 +234,6 @@ var node = new RD.SceneNode();
 node.loadGLTF("myfile.gltf");
 scene.root.addChild(node);
 ```
-
-### The shaders
-
-Rendeer only comes with a very basic flat and phong shader, if you want to use more interesting shaders you must code them by yourself using the shaders system.
-
-When creating a shader here are some considerations:
-
-* Global parameters passed to the shader: float u_time
-* Camera parameters: mat4 u_view, mat4 u_viewprojection, mat4 u_mvp
-* Node parameters: mat4 u_model
-* Textures will have "u_" + channel_name + "_texture" (like u_color_texture)
-* Other parameters stored in node._uniforms will be passed as they are.
-
-Here is an example of a basic vertex shader:
-```glsl
-precision highp float;
-attribute vec3 a_vertex;
-attribute vec3 a_normal;
-attribute vec2 a_coord;
-varying vec3 v_pos;
-varying vec3 v_normal;
-varying vec2 v_coord;
-uniform mat4 u_model;
-uniform mat4 u_viewprojection;
-void main() {
-	v_pos = (u_model * vec4(a_vertex,1.0)).xyz;
-	v_normal = (u_model * vec4(a_normal,0.0)).xyz;
-	v_coord = a_coord;
-	gl_Position = u_viewprojection * vec4( v_pos , 1.0 );
-}
-```
-
-And a basic fragment shader:
-```glsl
-precision highp float;
-uniform vec4 u_color;
-void main() {
-  gl_FragColor = u_color;
-}
-```
-
-To compile and store shaders in the renderer you can use the old approach of compiling your own shaders manually using LiteGL and storing them in ```renderer.shaders```:
-
-```javascript
-renderer.shaders["flat"] = new GL.Shader( my_vertex_shader_code, my_fragment_shader_code );
-```
-
-or use our build-in system to compile several shaders that come from a single text file.
-
-To do so you must create what we call an Files Atlas (every back-slash creates a new virtual file with the given name and its content).
-Here is an example of a file atlas and its syntax:
-
-```
-\shaders
-flat flat.vs flat.fs
-phong phong.vs phong.fs
-
-\flat.vs
-//your vertex shader...
-
-\flat.fs
-//your fragment shader...
-
-\phong.vs
-//your vertex shader...
-
-\phong.fs
-//your fragment shader...
-```
-
-To load it just call loadShaders from the renderer:
-
-```javascript
-renderer.loadShaders( atlas_url );
-```
-
-This function will load the file in the url, and parse it to create a virtual files object, then fetch for the virtual file called 'shaders' and for every line it will compile a shader, where the first word is the name of the shader, the second the name of the vertex shader and the thirth is the name of the fragment shader.
-
-It also allows to pass a fourth parameter per shader with some given macros in this format: {"USE_ALPHA":""}
-
-This way it is very easy to develop shaders. You can call the function again to reload shaders during runtime without problem.
 
 ### The input
 
@@ -378,18 +310,6 @@ var node = scene.testRay( ray );
 But keep in mind this method is slow as it must test agains all object in the scene.
 
 Check [the picking guide](picking.md) in the repo to know more about this.
-
-## Materials
-
-Rendeer objects are rendered based on the properties of the node (mesh, shader, textures and uniforms), but you can redirect the rendering to a Material class
-if you prefeer to.
-
-You can assign a material name to the node.material, and have a material registered in RD.Materials that will handle the rendering.
-
-Materials should have a material.render method in charge of the rendering.
-
-Check ```Material.prototype.render = function( renderer, model, mesh, indices_name, group_index )``` to know more.
-
 
 ## Overwritting the rendering methods
 

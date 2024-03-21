@@ -2,8 +2,8 @@
 	//based on https://catlikecoding.com/unity/tutorials/advanced-rendering/bloom/
 	function FXGlow()
 	{
-		this.intensity = 0.5;
-		this.persistence = 0.6;
+		this.intensity = 1;
+		this.persistence = 1;
 		this.iterations = 8;
 		this.threshold = 0.8;
 		this.scale = 1;
@@ -59,7 +59,7 @@
 		var currentSource = currentDestination;
 
 		var iterations = this.iterations;
-		iterations = clamp(iterations, 1, 16) | 0;
+		iterations = Math.clamp(iterations, 1, 16) | 0;
 		var texel_size = uniforms.u_texel_size;
 		var intensity = this.intensity;
 
@@ -136,43 +136,55 @@
 		}
 
 		//final composition
-		if ( output_texture ) {
-			var final_texture = output_texture;
-			var dirt_texture = this.dirt_texture;
-			var dirt_factor = this.dirt_factor;
-			uniforms.u_intensity = intensity;
+		if ( !output_texture )
+		{
+			if(!FXGlow._final_shader)
+				FXGlow._final_shader = new GL.Shader(GL.Shader.SCREEN_VERTEX_SHADER,FXGlow.final_pixel_shader);
 
-			shader = dirt_texture
-				? FXGlow._dirt_final_shader
-				: FXGlow._final_shader;
-			if (!shader) {
-				if (dirt_texture) {
-					shader = FXGlow._dirt_final_shader = new GL.Shader(
-						GL.Shader.SCREEN_VERTEX_SHADER,
-						FXGlow.final_pixel_shader,
-						{ USE_DIRT: "" }
-					);
-				} else {
-					shader = FXGlow._final_shader = new GL.Shader(
-						GL.Shader.SCREEN_VERTEX_SHADER,
-						FXGlow.final_pixel_shader
-					);
-				}
-			}
-
-			final_texture.drawTo(function() {
-				tex.bind(0);
-				currentSource.bind(1);
-				if (dirt_texture) {
-					shader.setUniform("u_dirt_factor", dirt_factor);
-					shader.setUniform(
-						"u_dirt_texture",
-						dirt_texture.bind(2)
-					);
-				}
-				shader.toViewport(uniforms);
-			});
+			gl.disable(gl.BLEND);
+			tex.bind(0);
+			currentSource.bind(1);
+			FXGlow._final_shader.toViewport(uniforms);
+			GL.Texture.releaseTemporary(currentSource);
+			gl.disable(gl.BLEND);
+			return;
 		}
+
+		var final_texture = output_texture;
+		var dirt_texture = this.dirt_texture;
+		var dirt_factor = this.dirt_factor;
+		uniforms.u_intensity = intensity;
+
+		shader = dirt_texture
+			? FXGlow._dirt_final_shader
+			: FXGlow._final_shader;
+		if (!shader) {
+			if (dirt_texture) {
+				shader = FXGlow._dirt_final_shader = new GL.Shader(
+					GL.Shader.SCREEN_VERTEX_SHADER,
+					FXGlow.final_pixel_shader,
+					{ USE_DIRT: "" }
+				);
+			} else {
+				shader = FXGlow._final_shader = new GL.Shader(
+					GL.Shader.SCREEN_VERTEX_SHADER,
+					FXGlow.final_pixel_shader
+				);
+			}
+		}
+
+		final_texture.drawTo(function() {
+			tex.bind(0);
+			currentSource.bind(1);
+			if (dirt_texture) {
+				shader.setUniform("u_dirt_factor", dirt_factor);
+				shader.setUniform(
+					"u_dirt_texture",
+					dirt_texture.bind(2)
+				);
+			}
+			shader.toViewport(uniforms);
+		});
 
 		GL.Texture.releaseTemporary(currentSource);
 	};

@@ -1822,86 +1822,89 @@ SceneNode.prototype.testSphereWithMesh = (function(){
 * @class Camera
 * @constructor
 */
-function Camera( options )
-{
-	/**
-	* the camera type, RD.Camera.PERSPECTIVE || RD.Camera.ORTHOGRAPHIC
-	* @property type {number} 
-	* @default RD.Camera.PERSPECTIVE
-	*/
-	this.type = RD.Camera.PERSPECTIVE;
+class Camera {
 
-	this._position = vec3.fromValues(0,100, 100);
-	this._target = vec3.fromValues(0,0,0);
-	this._up = vec3.fromValues(0,1,0);
-	
-	/**
-	* near distance 
-	* @property near {number} 
-	* @default 0.1
-	*/
-	this._near = 0.1;
-	/**
-	* far distance 
-	* @property far {number} 
-	* @default 10000
-	*/
-	this._far = 10000;
-	/**
-	* aspect (width / height)
-	* @property aspect {number} 
-	* @default 1
-	*/
-	this._aspect = 1.0;
-	/**
-	* fov angle in degrees
-	* @property fov {number}
-	* @default 45
-	*/
-	this._fov = 45; //persp
-	/**
-	* size of frustrum when working in orthographic (could be also an array with [left,right,top,bottom]
-	* @property frustum_size {number} 
-	* @default 50
-	*/
-	this._frustum_size = 50; //ortho (could be also an array with [left,right,top,bottom]
-	this.flip_y = false;
+	static PERSPECTIVE = 1;
+	static ORTHOGRAPHIC = 2;
 
-	//if set to [w,h] of the screen (or framebuffer) it will align the viewmatrix to the texel if it is in orthographic mode
-	//useful for shadowmaps in directional lights
-	this.view_texel_grid = null;
+	constructor( options )
+	{
+		/**
+		* the camera type, RD.Camera.PERSPECTIVE || RD.Camera.ORTHOGRAPHIC
+		* @property type {number} 
+		* @default RD.Camera.PERSPECTIVE
+		*/
+		this.type = RD.Camera.PERSPECTIVE;
 
-	this._view_matrix = mat4.create();
-	this._projection_matrix = mat4.create();
-	this._viewprojection_matrix = mat4.create();
-	this._model_matrix = mat4.create(); //inverse of view
-	
-	this._autoupdate_matrices = true;
-	this._must_update_matrix = false;
+		this._position = vec3.fromValues(0,100, 100);
+		this._target = vec3.fromValues(0,0,0);
+		this._up = vec3.fromValues(0,1,0);
+		
+		/**
+		* near distance 
+		* @property near {number} 
+		* @default 0.1
+		*/
+		this._near = 0.1;
+		/**
+		* far distance 
+		* @property far {number} 
+		* @default 10000
+		*/
+		this._far = 10000;
+		/**
+		* aspect (width / height)
+		* @property aspect {number} 
+		* @default 1
+		*/
+		this._aspect = 1.0;
+		/**
+		* fov angle in degrees
+		* @property fov {number}
+		* @default 45
+		*/
+		this._fov = 45; //persp
+		/**
+		* size of frustrum when working in orthographic (could be also an array with [left,right,top,bottom]
+		* @property frustum_size {number} 
+		* @default 50
+		*/
+		this._frustum_size = 50; //ortho (could be also an array with [left,right,top,bottom]
+		this.flip_y = false;
 
-	this._top = vec3.create();
-	this._right = vec3.create();
-	this._front = vec3.create();
+		//if set to [w,h] of the screen (or framebuffer) it will align the viewmatrix to the texel if it is in orthographic mode
+		//useful for shadowmaps in directional lights
+		this.view_texel_grid = null;
 
-	this.uniforms = {
-		u_view_matrix: this._view_matrix,
-		u_projection_matrix: this._projection_matrix,
-		u_viewprojection_matrix: this._viewprojection_matrix,
-		u_camera_front: this._front,
-		u_camera_position: this._position,
-		u_camera_planes: vec2.fromValues(0.1,1000),
-	};
+		this._view_matrix = mat4.create();
+		this._projection_matrix = mat4.create();
+		this._viewprojection_matrix = mat4.create();
+		this._model_matrix = mat4.create(); //inverse of view
+		
+		this._autoupdate_matrices = true;
+		this._must_update_matrix = false;
 
-	if(options)
-		this.fromJSON( options );
+		this._top = vec3.create();
+		this._right = vec3.create();
+		this._front = vec3.create();
 
-	this.updateMatrices();
+		this.uniforms = {
+			u_view_matrix: this._view_matrix,
+			u_projection_matrix: this._projection_matrix,
+			u_viewprojection_matrix: this._viewprojection_matrix,
+			u_camera_front: this._front,
+			u_camera_position: this._position,
+			u_camera_planes: vec2.fromValues(0.1,1000),
+		};
+
+		if(options)
+			this.fromJSON( options );
+
+		this.updateMatrices();
+	}
 }
 
 RD.Camera = Camera;
-
-Camera.PERSPECTIVE = 1;
-Camera.ORTHOGRAPHIC = 2;
 
 Camera.prototype.fromJSON = function(o)
 {
@@ -2713,17 +2716,18 @@ Camera.prototype.testSphere = function(center, radius)
 * @class Scene
 * @constructor
 */
-function Scene()
-{
-	this._root = new RD.SceneNode();
-	this._root.flags.no_transform = true; //avoid extra matrix multiplication
-	this._root._scene = this;
-	this._nodes_by_id = {};
-	this._nodes = [];
-	this._to_destroy = [];
+class Scene {
+	constructor(){
+		this._root = new RD.SceneNode();
+		this._root.flags.no_transform = true; //avoid extra matrix multiplication
+		this._root._scene = this;
+		this._nodes_by_id = {};
+		this._nodes = [];
+		this._to_destroy = [];
 
-	this.time = 0;
-	this.frame = 0;
+		this.time = 0;
+		this.frame = 0;
+	}
 }
 
 RD.Scene = Scene;
@@ -3440,85 +3444,87 @@ RD.Material = Material;
 * @class Renderer
 * @constructor
 */
-function Renderer( context, options )
-{
-	options = options || {};
-	
-	var gl = this.gl = this.context = context;
-	if(!gl || !gl.enable)
-		throw("litegl GL context not found.");
-	
-	if(context != global.gl)
-		gl.makeCurrent();
-			
-	this.point_size = 5;
-	this.sort_by_distance = false;
-	this.reverse_normals = false; //used for reflections
-	this.disable_cull_face = false;
-	this.layers_affect_children = false;
-	this.light_model = "flat"; //change to phong
-	
-	this.assets_folder = "";
-	
-	this._view_matrix = mat4.create();
-	this._projection_matrix = mat4.create();
-	this._viewprojection_matrix = mat4.create();
-	this._mvp_matrix = mat4.create();
-	this._model_matrix = mat4.create();
-	this._texture_matrix = mat3.create();
-	this._color = vec4.fromValues(1,1,1,1); //in case we need to set a color
-	this._viewprojection2D_matrix = mat4.create(); //used to 2D rendering
-	
-	this._nodes = [];
-	this._uniforms = {
-		u_view: this._view_matrix,
-		u_viewprojection: this._viewprojection_matrix,
-		u_model: this._model_matrix,
-		u_mvp: this._mvp_matrix,
-		u_global_alpha_clip: 0.0,
-		u_color: this._color,
-		u_texture_matrix: this._texture_matrix
-	};
-
-	this.global_uniforms_containers = [ this._uniforms ];
-
-	this.ambient_light = vec3.fromValues(0.6,0.67,0.8);
-	this.light_color = vec3.fromValues(0.5,0.4,0.3);
-	this.light_vector = vec3.fromValues(0.5442, 0.6385, 0.544);
-
-	this._phong_uniforms = { u_ambient: this.ambient_light, u_light_vector: this.light_vector, u_light_color: this.light_color };
-	
-	//set some default stuff
-	global.gl = this.gl;
-	this.canvas = gl.canvas;
-
-	this.assets_folder = options.assets_folder || "";
-	this.autoload_assets = options.autoload_assets !== undefined ? options.autoload_assets : true;
-	this.default_texture_settings = { wrap: gl.REPEAT, minFilter: gl.LINEAR_MIPMAP_LINEAR, magFilter: gl.LINEAR };
-	this.default_cubemap_settings = { minFilter: gl.LINEAR_MIPMAP_LINEAR, magFilter: gl.LINEAR, is_cross: 1 };
-	this.default_material = new RD.Material();
+class Renderer {
+		constructor( context, options )
+	{
+		options = options || {};
 		
-	//global containers and basic data
-	this.meshes["plane"] = GL.Mesh.plane({size:1});
-	this.meshes["planeXZ"] = GL.Mesh.plane({size:1,xz:true});
-	this.meshes["cube"] = GL.Mesh.cube({size:1,wireframe:true});
-	this.meshes["sphere"] = GL.Mesh.sphere({size:1, subdivisions: 32, wireframe:true});
-	this.meshes["grid"] = GL.Mesh.grid({size:10});
-	
-	this.textures["notfound"] = this.default_texture = new GL.Texture(1,1,{ filter: gl.NEAREST, pixel_data: new Uint8Array([0,0,0,255]) });
-	this.textures["white"] = this.default_texture = new GL.Texture(1,1,{ filter: gl.NEAREST, pixel_data: new Uint8Array([255,255,255,255]) });
-	
-	this.num_assets_loading = 0;
-	this.assets_loading = {};
-	this.assets_not_found = {};
-	this.frame = 0;
-	this.draw_calls = 0;
+		var gl = this.gl = this.context = context;
+		if(!gl || !gl.enable)
+			throw("litegl GL context not found.");
+		
+		if(context != global.gl)
+			gl.makeCurrent();
+				
+		this.point_size = 5;
+		this.sort_by_distance = false;
+		this.reverse_normals = false; //used for reflections
+		this.disable_cull_face = false;
+		this.layers_affect_children = false;
+		this.light_model = "flat"; //change to phong
+		
+		this.assets_folder = "";
+		
+		this._view_matrix = mat4.create();
+		this._projection_matrix = mat4.create();
+		this._viewprojection_matrix = mat4.create();
+		this._mvp_matrix = mat4.create();
+		this._model_matrix = mat4.create();
+		this._texture_matrix = mat3.create();
+		this._color = vec4.fromValues(1,1,1,1); //in case we need to set a color
+		this._viewprojection2D_matrix = mat4.create(); //used to 2D rendering
+		
+		this._nodes = [];
+		this._uniforms = {
+			u_view: this._view_matrix,
+			u_viewprojection: this._viewprojection_matrix,
+			u_model: this._model_matrix,
+			u_mvp: this._mvp_matrix,
+			u_global_alpha_clip: 0.0,
+			u_color: this._color,
+			u_texture_matrix: this._texture_matrix
+		};
 
-	if(!options.ignore_shaders)
-		this.createShaders();
+		this.global_uniforms_containers = [ this._uniforms ];
 
-	if(options.shaders_file)
-		this.loadShaders( options.shaders_file, null, options.shaders_macros );
+		this.ambient_light = vec3.fromValues(0.6,0.67,0.8);
+		this.light_color = vec3.fromValues(0.5,0.4,0.3);
+		this.light_vector = vec3.fromValues(0.5442, 0.6385, 0.544);
+
+		this._phong_uniforms = { u_ambient: this.ambient_light, u_light_vector: this.light_vector, u_light_color: this.light_color };
+		
+		//set some default stuff
+		global.gl = this.gl;
+		this.canvas = gl.canvas;
+
+		this.assets_folder = options.assets_folder || "";
+		this.autoload_assets = options.autoload_assets !== undefined ? options.autoload_assets : true;
+		this.default_texture_settings = { wrap: gl.REPEAT, minFilter: gl.LINEAR_MIPMAP_LINEAR, magFilter: gl.LINEAR };
+		this.default_cubemap_settings = { minFilter: gl.LINEAR_MIPMAP_LINEAR, magFilter: gl.LINEAR, is_cross: 1 };
+		this.default_material = new RD.Material();
+			
+		//global containers and basic data
+		this.meshes["plane"] = GL.Mesh.plane({size:1});
+		this.meshes["planeXZ"] = GL.Mesh.plane({size:1,xz:true});
+		this.meshes["cube"] = GL.Mesh.cube({size:1,wireframe:true});
+		this.meshes["sphere"] = GL.Mesh.sphere({size:1, subdivisions: 32, wireframe:true});
+		this.meshes["grid"] = GL.Mesh.grid({size:10});
+		
+		this.textures["notfound"] = this.default_texture = new GL.Texture(1,1,{ filter: gl.NEAREST, pixel_data: new Uint8Array([0,0,0,255]) });
+		this.textures["white"] = this.default_texture = new GL.Texture(1,1,{ filter: gl.NEAREST, pixel_data: new Uint8Array([255,255,255,255]) });
+		
+		this.num_assets_loading = 0;
+		this.assets_loading = {};
+		this.assets_not_found = {};
+		this.frame = 0;
+		this.draw_calls = 0;
+
+		if(!options.ignore_shaders)
+			this.createShaders();
+
+		if(options.shaders_file)
+			this.loadShaders( options.shaders_file, null, options.shaders_macros );
+	}
 }
 
 Renderer.prototype.getMasterShader = function( macros )
@@ -3856,7 +3862,10 @@ Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, sk
 			node.flags.was_rendered = true;
 			this.setModelMatrix( node._global_matrix );
 			
-			this.renderNode(node, camera);
+			if(node.render)
+				node.render(this,camera);
+			else
+				this.renderNode(node, camera);
 		}
 		
 		//post rendering
@@ -5176,12 +5185,14 @@ extendClass( DynamicMeshNode, SceneNode );
 RD.DynamicMeshNode = DynamicMeshNode;
 
 
-function Skybox(o)
-{
-	SceneNode.prototype._ctor.call(this,o);
-	this._ctor();
-	if(o)
-		this.fromJSON(o);
+class Skybox {
+	constructor(o)
+	{
+		SceneNode.prototype._ctor.call(this,o);
+		this._ctor();
+		if(o)
+			this.fromJSON(o);
+	}
 }
 
 Skybox.prototype._ctor = function()
@@ -5190,12 +5201,20 @@ Skybox.prototype._ctor = function()
 	this.scaling = [10,10,10];
 	this.flags.depth_test = false;
 	this.flags.two_sided = true;
+	var mat = new RD.Material({
+		flags: { depth_test: false, two_sided: true }
+	})
+	mat.register(":skybox");
+	this.material = ":skybox";
+	this.texture = null;
 }
 
 Skybox.prototype.render = function( renderer, camera )
 {
 	this.position = camera.position;
 	this.updateGlobalMatrix(true);
+	var mat = this.getMaterial();
+	mat.textures.color = this.texture;
 	renderer.setModelMatrix( this._global_matrix );
 	renderer.renderNode( this, camera );
 }

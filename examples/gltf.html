@@ -87,7 +87,9 @@
 			{
 				if(e.buttons & 4 )
 				{
-					camera.moveLocal( [-e.deltax, e.deltay, 0], 0.1 );
+					var front = vec3.sub( vec3.create(), camera.position, camera.target );
+                    var l = vec3.length( front ) * 0.001;
+					camera.moveLocal( [-e.deltax, e.deltay, 0], l );
 				}
 				else
 				{

@@ -6084,7 +6084,7 @@ Texture.prototype.uploadImage = function( image, options )
 		{
 			var w = image.videoWidth || image.width;
 			var h = image.videoHeight || image.height;
-			if(w != this.width || h != this.height)
+			if((w != this.width || h != this.height) && (this.width != 1 && this.height != 1))
 				console.warn("image uploaded has a different size than texture, resizing it.");
 			gl.texImage2D( gl.TEXTURE_2D, 0, this.format, this.format, this.type, image );
 			this.width = w;
