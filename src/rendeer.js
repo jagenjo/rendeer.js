@@ -3933,7 +3933,7 @@ Renderer.prototype.renderSkybox = function(camera, texture_name)
 	{
 		if(this.autoload_assets && texture_name.indexOf(".") != -1)
 			this.loadTexture( texture_name, renderer.default_texture_settings );
-		texture = gl.textures[ "white" ];
+		return;
 	}
 	var model = this._model_matrix;
 	mat4.identity(model);

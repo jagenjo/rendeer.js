@@ -3457,12 +3457,12 @@ class Renderer {
 			gl.makeCurrent();
 				
 		this.point_size = 5;
-		this.sort_by_distance = false;
+		this.sort_by_distance = true;
+		this.sort_by_priority = true;
 		this.reverse_normals = false; //used for reflections
 		this.disable_cull_face = false;
 		this.layers_affect_children = false;
-		this.light_model = "flat"; //change to phong
-		
+		this.light_model = "flat"; //"flat" or "phong"
 		this.assets_folder = "";
 		
 		this._view_matrix = mat4.create();
@@ -3735,7 +3735,12 @@ Renderer._sort_by_dist_func = function(a,b)
 
 Renderer._sort_by_priority_func = function(a,b)
 {
-	return b.render_priority - a.render_priority;
+	var A_priority = a.render_priority || 0;
+	var B_priority = b.render_priority || 0;
+	var diff = b.render_priority - a.render_priority;
+	if( diff != 0)
+		return diff;
+	return b._index - a._index;
 }
 
 Renderer._sort_by_priority_and_dist_func = function(a,b)
@@ -3812,17 +3817,27 @@ Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, sk
 	//set globals
 	this._uniforms.u_time = scene.time;
 
-	//precompute distances
-	if(this.sort_by_distance)
-		nodes.forEach( function(a) { a._distance = a.getDistanceTo( camera._position ); } );
-
 	//filter by mustRender (you can do your frustum culling here)
 	var that = this;
 	nodes = nodes.filter( function(n) { return !n.mustRender || n.mustRender(that,camera) != false; }); //GC
-	
-	//sort 
-	if(this.sort_by_distance)
+
+	//precompute distances
+	if(this.sort_by_distance && this.sort_by_priority)
+	{
+		nodes.forEach( (a)=>a._distance = a.getDistanceTo( camera._position ) );
+		nodes.sort( RD.Renderer._sort_by_priority_and_dist_func );
+	}
+	else if(this.sort_by_distance)
+	{
+		nodes.forEach( (a)=>a._distance = a.getDistanceTo( camera._position ) );
 		nodes.sort( RD.Renderer._sort_by_dist_func );
+	}
+	else if(this.sort_by_priority)
+	{
+		nodes.forEach( (a,index)=>a._index = index);
+		nodes.sort( RD.Renderer._sort_by_priority_func );
+	}
+
 	
 	//pre rendering
 	if(this.onPreRender)
@@ -3850,7 +3865,11 @@ Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, sk
 				node.preRender( this, camera );
 		}
 		
-		//rendering	
+		//render skybox
+		if(this.skybox_texture)
+			this.renderSkybox(camera, this.skybox_texture);
+
+		//rendering	nodes
 		for (var i = 0; i < nodes.length; ++i)
 		{
 			var node = nodes[i];
@@ -3905,6 +3924,27 @@ Renderer.prototype.enableCamera = function(camera)
 Renderer.prototype.enable2DView = function()
 {
 	mat4.ortho( this._viewprojection2D_matrix, 0,gl.viewport_data[2], 0, gl.viewport_data[3], -1, 1 );
+}
+
+Renderer.prototype.renderSkybox = function(camera, texture_name)
+{
+	var shader = this._skybox_shader;
+	var mesh = gl.meshes["cube"];
+	var texture = gl.textures[texture_name];
+	if(!texture)
+	{
+		if(this.autoload_assets && texture_name.indexOf(".") != -1)
+			this.loadTexture( texture_name, renderer.default_texture_settings );
+		return;
+	}
+	var model = this._model_matrix;
+	mat4.identity(model);
+	gl.disable( gl.DEPTH_TEST );
+	gl.disable( gl.CULL_FACE );
+	mat4.setTranslation(model,camera.position);
+	var f = camera.far * 0.5 + camera.near * 0.5;
+	mat4.scale(model,model,[f,f,f])
+	this.renderMesh( model, mesh, texture, [1,1,1,1], shader );
 }
 
 
@@ -5184,45 +5224,6 @@ DynamicMeshNode.prototype.preRender = function()
 extendClass( DynamicMeshNode, SceneNode );
 RD.DynamicMeshNode = DynamicMeshNode;
 
-
-class Skybox {
-	constructor(o)
-	{
-		SceneNode.prototype._ctor.call(this,o);
-		this._ctor();
-		if(o)
-			this.fromJSON(o);
-	}
-}
-
-Skybox.prototype._ctor = function()
-{
-	this.mesh = "cube";
-	this.scaling = [10,10,10];
-	this.flags.depth_test = false;
-	this.flags.two_sided = true;
-	var mat = new RD.Material({
-		flags: { depth_test: false, two_sided: true }
-	})
-	mat.register(":skybox");
-	this.material = ":skybox";
-	this.texture = null;
-}
-
-Skybox.prototype.render = function( renderer, camera )
-{
-	this.position = camera.position;
-	this.updateGlobalMatrix(true);
-	var mat = this.getMaterial();
-	mat.textures.color = this.texture;
-	renderer.setModelMatrix( this._global_matrix );
-	renderer.renderNode( this, camera );
-}
-
-extendClass( Skybox, SceneNode );
-RD.Skybox = Skybox;
-
-
 /* used functions */
 
 function distanceToPlane(plane, point)
@@ -5577,6 +5578,51 @@ Renderer.prototype.createShaders = function()
 			}
 	`;
 	gl.shaders["uvs"] = this._uvs_shader = new GL.Shader( vertex_shader, fragment_shader );
+
+	var skybox_vs = `
+	precision highp float;
+	attribute vec3 a_vertex;
+	attribute vec3 a_normal;
+	attribute vec2 a_coord;
+	varying vec3 v_pos;
+	varying vec3 v_wPos;
+	varying vec3 v_wNormal;
+	varying vec2 v_coord;
+	uniform mat4 u_model;
+	uniform mat4 u_viewprojection;
+	
+	void main() {
+		v_coord = a_coord;
+		vec3 vertex = a_vertex;	
+		v_pos = vertex;
+		v_wPos = (u_model * vec4(vertex,1.0)).xyz;
+		v_wNormal = (u_model * vec4(a_normal,0.0)).xyz;
+		gl_Position = u_viewprojection * vec4(v_wPos,1.0);
+	}
+	`;
+	
+	var skybox_fs = `
+	precision highp float;
+	varying vec3 v_pos;
+	varying vec3 v_wPos;
+	varying vec3 v_wNormal;
+	varying vec2 v_coord;
+	
+	uniform vec4 u_color;
+	uniform samplerCube u_color_texture;
+	uniform vec3 u_camera_position;
+	
+	void main() {
+	  vec3 L = normalize(vec3(1.,1.,-1.));
+	  vec3 N = normalize( v_wNormal );
+		vec3 E = normalize( v_wPos - u_camera_position );
+	  vec4 color = u_color;
+	  color.xyz = textureCube( u_color_texture, -E * vec3(1.0,-1.0,1.0) ).xyz;
+	  gl_FragColor = color;
+	}
+	`
+	gl.shaders["skybox"] = this._skybox_shader =  new GL.Shader( skybox_vs, skybox_fs );
+
 
 	gl._shaders_created = true;
 }
