@@ -3155,10 +3155,12 @@ class Material
 	constructor(o)
 	{
 		this._color = vec4.fromValues(1,1,1,1);
+		this._emissive = vec3.fromValues(0,0,0);
 		this.shader_name = null;
 
 		this.uniforms = {
-			u_color: this._color
+			u_color: this._color,
+			u_emissive: this._emissive
 		};
 		this.textures = {};
 
@@ -3180,8 +3182,10 @@ class Material
 	get color(){return this._color; }
 	set albedo(v){ this._color.set(v); }
 	get albedo(){return this._color; }
+	set emissive(v){ this._emissive.set(v); }
+	get emissive(){return this._emissive; }
 	/**
-	* This number is the 4� component of color but can be accessed directly 
+	* This number is the 4th component of color but can be accessed directly 
 	* @property opacity {number}
 	*/
 	set opacity(v) { this._color[3] = v; }
@@ -3261,13 +3265,16 @@ class Material
 	}
 
 	static MACROS = {
-		TEXTURE:	1,	
-		ALBEDO:		1<<1,
-		COLOR:		1<<2,
-		INSTANCING: 1<<3,
-		SKINNING:	1<<4,
+		COLOR:		1,
+		COORD1:		1<<1,
+		INSTANCING: 1<<2,
+		SKINNING:	1<<3,
+		POINTS:		1<<4,
 		PHONG:		1<<5,
-		POINTS:		1<<6
+		TEXTURE:	1<<6,
+		ALBEDO:		1<<7,
+		EMISSIVE:	1<<8,
+		OCCLUSION:	1<<9,
 	}
 
 	render( renderer, model, mesh, indices_name, group_index, skeleton, node )
@@ -3289,18 +3296,24 @@ class Material
 			{
 				//generate automatic shader
 				var shader_hash = 0;
-				if( this.textures.color )
-					shader_hash |= Material.MACROS.TEXTURE;
-				if( this.textures.albedo )
-					shader_hash = Material.MACROS.ALBEDO;
 				if( mesh.vertexBuffers.colors )
 					shader_hash |= Material.MACROS.COLOR;
+				if( mesh.vertexBuffers.coords1 )
+					shader_hash |= Material.MACROS.COORD1;
 				if( skeleton )
 					shader_hash |= Material.MACROS.SKINNING;
 				if( node._instances )
 					shader_hash |= Material.MACROS.INSTANCING;
 				if( renderer.light_model == "phong" )
 					shader_hash |= Material.MACROS.PHONG;
+				if( this.textures.color )
+					shader_hash |= Material.MACROS.TEXTURE;
+				if( this.textures.albedo )
+					shader_hash |= Material.MACROS.ALBEDO;
+				if( this.textures.emissive )
+					shader_hash |= Material.MACROS.EMISSIVE;
+				if( this.textures.occlusion )
+					shader_hash |= Material.MACROS.OCCLUSION;
 		
 				shader = renderer.getMasterShader( shader_hash );
 			}
@@ -3563,6 +3576,10 @@ Renderer.master_vertex_shader = `
 	attribute vec3 a_vertex;
 	attribute vec3 a_normal;
 	attribute vec2 a_coord;
+	#ifdef COORD1
+		attribute vec2 a_coord1;
+		varying vec2 v_coord1;
+	#endif
 	varying vec3 v_pos;
 	varying vec3 v_normal;
 	varying vec2 v_coord;
@@ -3584,6 +3601,9 @@ Renderer.master_vertex_shader = `
 		v_pos = (u_model * vec4(v_pos,1.0)).xyz;
 		v_normal = (u_model * vec4(v_normal,0.0)).xyz;
 		v_coord = a_coord;
+		#ifdef COORD1
+			v_coord1 = a_coord1;
+		#endif
 		#ifdef COLOR
 		v_color = a_color;
 		#endif
@@ -3597,15 +3617,27 @@ Renderer.master_fragment_shader = `
 	varying vec2 v_coord;
 	varying vec3 v_normal;
 	uniform vec4 u_color;
+	uniform vec3 u_emissive;
 	#ifdef COLOR
 	varying vec4 v_color;
-	#endif
-	#ifdef ALBEDO
-		uniform sampler2D u_albedo_texture;
 	#endif
 	#ifdef TEXTURE
 		uniform sampler2D u_color_texture;
 	#endif
+	#ifdef ALBEDO
+		uniform sampler2D u_albedo_texture;
+	#endif
+	#ifdef EMISSIVE
+		uniform sampler2D u_emissive_texture;
+	#endif
+	#ifdef OCCLUSION
+		uniform sampler2D u_occlusion_texture;
+	#endif
+	#ifdef COORD1
+		varying vec2 v_coord1;
+	#else
+		vec2 v_coord1;
+	#endif	
 	#ifdef PHONG
 		uniform vec3 u_ambient;
 		uniform vec3 u_light_color;
@@ -3614,6 +3646,9 @@ Renderer.master_fragment_shader = `
 	uniform float u_global_alpha_clip;
 	void main() {
 		vec4 color = u_color;
+		#ifndef COORD1
+			v_coord1 = v_coord;
+		#endif		
 		#ifdef ALBEDO
 			color *= texture2D(u_albedo_texture, v_coord);
 		#endif
@@ -3626,9 +3661,19 @@ Renderer.master_fragment_shader = `
 		if(color.w <= u_global_alpha_clip)
 			discard;
 		vec3 N = normalize(v_normal);
+		vec3 light = vec3(1.0);
 		#ifdef PHONG
 			float NdotL = max(dot(N,u_light_vector),0.0);
-			color.xyz *= ( u_ambient * (1.0 - max(0.0,-N.y) * 0.5 ) ) + NdotL * u_light_color;
+			light = ( u_ambient * (1.0 - max(0.0,-N.y) * 0.5 ) ) + NdotL * u_light_color;
+		#endif
+		#ifdef OCCLUSION
+			light = texture2D(u_occlusion_texture, v_coord1).xyz;
+		#endif
+		color.xyz *= light;
+		#ifdef EMISSIVE
+			color.xyz += u_emissive * texture2D(u_emissive_texture, v_coord).xyz;
+		#else
+			color.xyz += u_emissive;
 		#endif
 		gl_FragColor = color;
 	}
@@ -9078,6 +9123,11 @@ RD.GLTF = {
 			material.textures.emissive = this.parseTexture( info.emissiveTexture, json );
 		if(info.emissiveFactor)
 			material.emissive = info.emissiveFactor;
+		if(info.extensions)
+		{
+			if( info.extensions.KHR_materials_emissive_strength && material.emissive)
+				vec3.scale( material.emissive, material.emissive, info.extensions.KHR_materials_emissive_strength.emissiveStrength );
+		}
 
 		RD.Materials[ material.name ] = material;
 		this.gltf_materials[ material.name ] = material;

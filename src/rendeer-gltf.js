@@ -907,6 +907,11 @@ RD.GLTF = {
 			material.textures.emissive = this.parseTexture( info.emissiveTexture, json );
 		if(info.emissiveFactor)
 			material.emissive = info.emissiveFactor;
+		if(info.extensions)
+		{
+			if( info.extensions.KHR_materials_emissive_strength && material.emissive)
+				vec3.scale( material.emissive, material.emissive, info.extensions.KHR_materials_emissive_strength.emissiveStrength );
+		}
 
 		RD.Materials[ material.name ] = material;
 		this.gltf_materials[ material.name ] = material;
