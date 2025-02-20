@@ -215,8 +215,7 @@ renderer.loadMesh( "data/sky.obj", callback ); //callback in case we want to exe
 
 ## Materials
 
-Rendeer objects are rendered based on the properties of the node (mesh, shader, textures and uniforms), but you can redirect the rendering to a Material class
-if you prefeer to.
+Rendeer objects are rendered based on the properties of the node (mesh, transform) and its material (shader, textures and uniforms).
 
 You can assign a material name to the node.material, and have a material registered in RD.Materials that will handle the rendering.
 
@@ -350,31 +349,14 @@ You can create the class following the next steps. Keep in mind that you do not 
 Here is an example:
 
 ```js
-function MyNodeClass(o)
+class MyNodeClass extends RD.SceneNode
 {
-   this._ctor();
-   if(o)
-      this.configure(o);
+	constructor(){
+		super();
+		if(o)
+			this.configure(o);
+	}
 }
-
-MyNodeClass.prototype._ctor = function()
-{
-	RD.SceneNode.prototype._ctor.call(this);
-   
-   //init your vars here
-   //...
-}
-
-MyNodeClass.prototype.render = function( renderer, camera )
-{
-   //here do your render calls
-   //...
-
-   //or you can set up some mesh,texture,shader and uniforms and call
-   renderer.renderNode( this, camera );
-}
-
-extendClass( MyNodeClass, RD.SceneNode );
 ```
 
 

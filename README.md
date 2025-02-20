@@ -17,7 +17,7 @@ And because it uses litegl you have all the basic ones (Mesh, Shader and Texture
 Demo
 -----
 
-Check the examples folder to see the examples, or visit [this website](http://tamats.com/projects/rendeer/examples).
+Check the examples folder to see the examples, or visit [this website](http://tamats.com/projects/rendeer2/examples).
 
 There is a boilerplate to create an application in the folder boilerlate/
 
@@ -85,15 +85,20 @@ var shader = new GL.Shader(vs_code, fs_code);
 renderer.shaders["phong"] = shader;
 ```
 
+Create a material and register it
+```js
+var mat = new RD.Material();
+mat.register("mymaterial");
+```
+
 Add a node to the scene
 ```js
 var node = new RD.SceneNode();
 node.color = [1,0,0,1];
 node.mesh = "mymesh";
-node.texture = "mytexture.png";
-node.shader = "phong";
 node.position = [0,0,0];
 node.scale([10,10,10]);
+node.material = mat;
 scene.root.addChild(node);
 ```
 
