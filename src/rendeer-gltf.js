@@ -421,6 +421,8 @@ RD.GLTF = {
 					}
 					break;
 				case "extras":
+				case "extra":
+					node.extras = v;
 					break;
 				default:
 					if( i[0] != "_" )
@@ -1145,6 +1147,8 @@ RD.GLTF = {
 		{
 			var data = e.target.result;
 			var extension = this.extension;
+			const magFilter = that.texture_options.magFilter;
+			const minFilter = that.texture_options.minFilter;
 			if(extension == "gltf")
 			{
 				data = JSON.parse(data);
@@ -1157,7 +1161,7 @@ RD.GLTF = {
 			else if(extension == "jpeg" || extension == "jpg" || extension == "png")
 			{
 				var image_url = URL.createObjectURL( new Blob([data],{ type : e.target.mimeType }) );
-				var texture = GL.Texture.fromURL( image_url, { wrap: gl.REPEAT, extension: extension } );				
+				var texture = GL.Texture.fromURL( image_url, { wrap: gl.REPEAT, extension: extension, magFilter, minFilter } );				
 				texture.name = this.filename;
 				gl.textures[ texture.name ] = texture;
 				//hack in case we drag textures individually

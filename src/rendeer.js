@@ -351,6 +351,8 @@ class SceneNode {
 			visible: true,
 			collides: true //for testRay
 		};
+
+		this.extras = {}; //custom data
 	
 		//object inside this object
 		this._parent = null;
@@ -383,6 +385,9 @@ class SceneNode {
 			else if(o[i] !== v)
 				o[i] = v;
 		}
+		o.position = this.position;
+		o.rotation = this.rotation;
+		o.scaling = this.scaling;
 		return o;
 	}
 
@@ -412,8 +417,8 @@ class SceneNode {
 			r.submesh = this.submesh;
 		if(this.flags)
 			r.flags = JSON.parse( JSON.stringify( this.flags ) );
-		if(this.extra)
-			r.extra = this.extra;
+		if(this.extras)
+			r.extras = this.extras;
 		if(this.animation)
 			r.animation = this.animation;
 		if(this.animations) //clone anims
@@ -516,6 +521,7 @@ class SceneNode {
 				case "submesh":
 				case "skin":
 				case "extra":
+				case "extras":
 				case "animation":
 					this[i] = o[i];
 					continue;
@@ -1025,6 +1031,10 @@ class SceneNode {
 	* Rotate object to face in one direction
 	* @method orientTo
 	* @param {vec3} v
+	* @param {boolean} reverse to reverse the z orientation
+	* @param {vec3} up the up vector to use
+	* @param {boolean} in_local_space of the V value is a local vector, otherwise it is assumed a world coordinate
+	* @param {boolean} cylindrical to billboard only cylindrically, not spherically (keeping the vertical axis)
 	*/
 	orientTo( v, reverse, up, in_local_space, cylindrical )
 	{
@@ -1056,6 +1066,7 @@ class SceneNode {
 		quat.fromMat3( this._rotation, temp );
 		quat.normalize(this._rotation, this._rotation );
 		this._must_update_matrix = true;
+		return this;
 	}
 
 	/**
@@ -1567,20 +1578,6 @@ SceneNode["@scaling"] = { type: "vec3" };
 SceneNode["@rotation"] = { type: "quat" }; //for tween
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /**
 * Tests if the ray collides with this node mesh or the childrens
 * @method testRay
@@ -1812,6 +1809,45 @@ SceneNode.prototype.testSphereWithMesh = (function(){
 		return RD.testSphereMesh( local_center, local_radius, model, mesh, group_index, layers, test_against_mesh, two_sided );
 	}
 })();
+
+/**
+* finds the nearest point to this node mesh
+* @method findNearestPointToMesh
+* @param { vec3 } point the reference point
+* @param { Number } maxDist the max distance
+* @param { vec3 } out to store the nearest point
+* @param { vec3 } out_normal to store the nearest point normal
+* @return { number } the distance to the nearest point
+*/
+SceneNode.prototype.findNearestPointToMesh = (function(){ 
+	var gmatrix = mat4.create();
+	var inv = mat4.create();
+	var local_point = vec3.create();
+
+	return function( point, maxDist, out, out_normal )
+	{
+		if( !this.mesh )
+			return false;
+
+		var mesh = gl.meshes[ this.mesh ];
+		if( !mesh || mesh.ready === false) //mesh not loaded
+			return Infinity;
+
+		//Warning: if you use this._global_matrix and the object wasnt visible, it wont have the matrix updated
+		var model = this.getGlobalMatrix(gmatrix); 
+		mat4.invert( inv, model );
+		vec3.transformMat4( local_point, point, inv );
+
+		if(!mesh.octree)
+			mesh.octree = new GL.Octree(mesh);
+		var dist = mesh.octree.findNearestPoint(point,out, maxDist, out_normal);
+		if(dist === maxDist)
+			return dist;
+		//convert out from local to gloal
+		vec3.transformMat4( out, out, gmatrix );
+		return dist;//we are not scaling the distance...
+	}
+})();	
 
 
 
