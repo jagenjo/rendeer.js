@@ -3564,9 +3564,15 @@ RD.Material = Material;
 * @constructor
 */
 class Renderer {
-		constructor( context, options )
+		constructor( context_or_canvas, options )
 	{
 		options = options || {};
+		var context = null;
+
+		if( context_or_canvas.constructor === HTMLCanvasElement )
+			context = GL.create({canvas: context_or_canvas, version: 2});
+		else
+			context = context_or_canvas;
 		
 		var gl = this.gl = this.context = context;
 		if(!gl || !gl.enable)
@@ -5676,6 +5682,7 @@ RD.Factory.templates = {
 class DynamicMeshNode extends SceneNode
 {
 	constructor(o){
+		super();
 		this.build();
 		if(o)
 			this.fromJSON(o);
