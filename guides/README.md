@@ -217,11 +217,29 @@ renderer.loadMesh( "data/sky.obj", callback ); //callback in case we want to exe
 
 Rendeer objects are rendered based on the properties of the node (mesh, transform) and its material (shader, textures and uniforms).
 
-You can assign a material name to the node.material, and have a material registered in RD.Materials that will handle the rendering.
+You can create and assign a material name to the node.material, and have a material registered in RD.Materials that will handle the rendering. This way several objects can use the same material (which is optimal for rendering).
 
-Materials should have a material.render method in charge of the rendering.
+```js
+var mat = new RD.Material({color:[1,0,0,1]});
+mat.register("red");
 
-Check ```Material.prototype.render = function( renderer, model, mesh, indices_name, group_index )``` to know more.
+var node = new RD.SceneNode();
+node.material = "red";
+
+var node2 = new RD.SceneNode();
+node2.material = "red";
+```
+
+Or create a unique material for that node:
+
+```js
+var node = new RD.SceneNode();
+node.createMaterial({color:[1,1,1,1]});
+```
+
+You can overwrite the method material.render to create custom materials.
+
+Check ```Material.prototype.render = function( renderer, renderable )``` to know more.
 
 
 ### Using GLTF

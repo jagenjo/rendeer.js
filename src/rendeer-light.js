@@ -1,69 +1,65 @@
 /* This is an example of how a light could be coded */
 (function(global){
 
-	function Light()
+	class Light 
 	{
-		this.intensity = 1;
-		this.area = 1; //frustum
-		this._color = vec3.fromValues(0.9,0.9,0.9);
-		this._position = vec3.fromValues(10,20,5);
-		this._target = vec3.create();
-		this._vector = vec3.create(); //light direction (from light to scene)
+		static DEFAULT_SHADOWMAP_RESOLUTION = 2048;
 
-		this.camera = new RD.Camera(); //for shadowmaps and projective textures
+		constructor()
+		{
+			this.intensity = 1;
+			this.area = 1; //frustum
+			this._color = vec3.fromValues(0.9,0.9,0.9);
+			this._position = vec3.fromValues(10,20,5);
+			this._target = vec3.create();
+			this._vector = vec3.create(); //light direction (from light to scene)
 
-		this._castShadows = false;
+			this.camera = new RD.Camera(); //for shadowmaps and projective textures
 
-		this.shadowmap = {
-			texture:null,
-			resolution: 2048,
-			bias: 0.00001,
-			uniforms: {
-				u_shadowmap_matrix: this.camera._viewprojection_matrix,
-				u_shadowmap_texture: 4,
-				u_shadowbias: 0.00001
-			}
-		};
+			this._castShadows = false;
 
-		this.uniforms = {
-			u_light_position: this._position,
-			u_light_color: vec3.create(),
-			u_light_vector: this._vector,
-		};
+			this.shadowmap = {
+				texture:null,
+				resolution: 2048,
+				bias: 0.00001,
+				uniforms: {
+					u_shadowmap_matrix: this.camera._viewprojection_matrix,
+					u_shadowmap_texture: 4,
+					u_shadowbias: 0.00001
+				}
+			};
 
-		this.flags = {
-			skip_shadows: false	
-		};
-	}
+			this.uniforms = {
+				u_light_position: this._position,
+				u_light_color: vec3.create(),
+				u_light_vector: this._vector,
+			};
 
-	Object.defineProperty( Light.prototype, "color", {
-		set: function(v){
+			this.flags = {
+				skip_shadows: false	
+			};
+		}
+
+	set color(v){
 			this._color.set(v);
-		},
-		get: function() { return this._color; },
-		enumerable: true
-	});
+	}
+	get color() { return this._color; }
 
-	Object.defineProperty( Light.prototype, "castShadows", {
-		set: function(v){
+	set castShadows(v){
 			if(v)
 				this.enableShadows();
 			else
 				this.disableShadows();
-		},
-		get: function() { return this._castShadows; },
-		enumerable: true
-	});
+	}
+	get castShadows() { return this._castShadows; }
 
-	Light.DEFAULT_SHADOWMAP_RESOLUTION = 2048;
-
-	Light.prototype.updateData = function()
+	updateData()
 	{
 		vec3.sub( this._vector, this._target, this._position );
 		vec3.normalize(this._vector, this._vector);
 	}
 
-	Light.prototype.setUniforms = function( shader_or_uniforms )
+	setUniforms( shader_or_uniforms )
 	{
 		this.shadowmap.uniforms.u_shadowbias = this.shadowmap.bias;
 		this.uniforms.u_light_color.set( this._color );
@@ -90,20 +86,20 @@
 		}
 	}
 
-	Light.prototype.lookAt = function(eye, center, up) {
+	lookAt(eye, center, up) {
 		this._position.set(eye);
 		this._target.set(center);
 		this.camera.lookAt( eye, center, up );
 		this.updateData();
-	};
+	}
 
-	Light.prototype.setView = function(area,near,far) {
+	setView(area,near,far) {
 		this.area = area;
 		this.camera.orthographic(area,near,far,1);
 		this.updateData();
-	};
+	}
 
-	Light.prototype.followCamera = function(camera, viewsize) {
+	followCamera(camera, viewsize) {
 		var size = viewsize || 5;
 		
 		var offset = vec3.scaleAndAdd( vec3.create(), camera.target, this._vector, -viewsize );
@@ -112,7 +108,7 @@
 		this.camera.updateMatrices();
 	}
 
-	Light.prototype.enableShadows = function()
+	enableShadows()
 	{
 		this._castShadows = true;
 		var res = this.shadowmap.resolution || Light.DEFAULT_SHADOWMAP_RESOLUTION;
@@ -123,14 +119,14 @@
 		}
 	}
 
-	Light.prototype.disableShadows = function()
+	disableShadows()
 	{
 		this._castShadows = false;
 		this.shadowmap.texture = null;
 		this.shadowmap.fbo = null;
 	}
 
-	Light.prototype.generateShadowmap = function(renderer, scene, layers)
+	generateShadowmap(renderer, scene, layers)
 	{
 		if(!this.castShadows)
 			return;
@@ -169,7 +165,7 @@
 	}
 	*/
 
-	Light.shadow_shader_function = `uniform mat4 u_shadowmap_matrix;
+	static shadow_shader_function = `uniform mat4 u_shadowmap_matrix;
 	uniform sampler2D u_shadowmap_texture;
 	
 	float testShadowmap( vec3 pos )
@@ -185,7 +181,8 @@
 		}
 		return 1.0;
 	}`	;
+}
 
-	RD.Light = Light;
+RD.Light = Light;
 
 })(typeof(window) != "undefined" ? window : (typeof(self) != "undefined" ? self : global ));

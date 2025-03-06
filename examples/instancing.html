@@ -51,6 +51,7 @@
 		box.position = [0,0,0];
 		box.mesh = "cube";
 		box.scale([50,50,50]);
+		box.createMaterial();
 		box._instances = instances_array; //here you could use also instances  (array of mat4)
 
 		scene.root.addChild(box);

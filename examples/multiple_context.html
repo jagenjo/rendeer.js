@@ -39,15 +39,16 @@
 
 		//create a node
 		var node = new RD.SceneNode();
-		node.color = [1,0,0,1];
 		node.mesh = "data/man.obj";
+		node.createMaterial();
 		//node.scale([50,50,50]);
 		//inner update
 		node.update = function(dt) { 
 			this.rotate(dt,RD.UP);
-			this.color[0] = 1.0;
-			this.color[1] = Math.sin( getTime() * 0.001 );
-			this.color[2] = 1.0 - this.color[1];
+			var mat = this.getMaterial();
+			mat.color[0] = 1.0;
+			mat.color[1] = Math.sin( getTime() * 0.001 );
+			mat.color[2] = 1.0 - mat.color[1];
 		}
 		scene.root.addChild(node);
 

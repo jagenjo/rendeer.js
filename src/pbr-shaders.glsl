@@ -461,7 +461,7 @@ void computeSkinning(inout vec4 vertex, inout vec4 normal)
 	// Mat properties *********
 
 	uniform vec3 u_albedo;
-	uniform vec4 u_emissive;
+	uniform vec3 u_emissive;
 	uniform float u_roughness;
 	uniform float u_metalness;
 	uniform float u_alpha;
@@ -908,19 +908,14 @@ float dither4x4(vec2 position, float brightness)
 			alpha *= v_color.a;
 		#endif
 
-		vec3 emissive = u_emissive.xyz;	
+		vec3 emissive = u_emissive;	
 		if(u_maps_info[EMISSIVEMAP] != -1)
 		{
 			vec2 emissive_uv = getUV(u_maps_info[EMISSIVEMAP]);
-			if( u_emissive.w == 0.0 || (emissive_uv.x > 0.0 && emissive_uv.x < 1.0 && emissive_uv.y > 0.0 && emissive_uv.y < 1.0) )
-			{
-				vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
-				emissive_tex.xyz = pow(emissive_tex.xyz, vec3(u_gamma)); //degamma
-				emissive *= emissive_tex.xyz;
-				alpha *= emissive_tex.a;
-			}
-			else
-				emissive = vec3(0.0);
+			vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
+			emissive_tex.xyz = pow(emissive_tex.xyz, vec3(u_gamma)); //degamma
+			emissive *= emissive_tex.xyz;
+			alpha *= emissive_tex.a;
 		}
 
 		if( alpha <= u_alpha_cutoff )
@@ -978,19 +973,14 @@ void main()
 		baseColor *= max( albedo_tex.xyz, vec3(0.01) );
 	}
 
-	vec3 emissive = u_emissive.xyz;	
+	vec3 emissive = u_emissive;	
 	if(u_maps_info[ EMISSIVEMAP ] != -1)
 	{
 		vec2 emissive_uv = getUV(u_maps_info[EMISSIVEMAP]);
-		if( u_emissive.w == 0.0 || (emissive_uv.x > 0.0 && emissive_uv.x < 1.0 && emissive_uv.y > 0.0 && emissive_uv.y < 1.0) )
-		{
-			vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
-			emissive_tex.xyz = pow( emissive_tex.xyz, vec3(u_gamma) ); //degamma
-			emissive *= emissive_tex.xyz;
-			alpha *= emissive_tex.a;
-		}
-		else //outside of 0..1 range
-			emissive = vec3(0.0);
+		vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
+		emissive_tex.xyz = pow( emissive_tex.xyz, vec3(u_gamma) ); //degamma
+		emissive *= emissive_tex.xyz;
+		alpha *= emissive_tex.a;
 	}
 
 	if(u_maps_info[OPACITYMAP] != -1)
@@ -1097,19 +1087,14 @@ void main()
 		if(u_maps_info[ OPACITYMAP ] != -1)
 			alpha *= texture2D( u_opacity_texture, getUV(u_maps_info[OPACITYMAP]) ).r;
 
-		vec3 emissive = u_emissive.xyz;	
+		vec3 emissive = u_emissive;	
 		if(u_maps_info[ EMISSIVEMAP ] != -1)
 		{
 			vec2 emissive_uv = getUV(u_maps_info[EMISSIVEMAP]);
-			if( u_emissive.w == 0.0 || (emissive_uv.x > 0.0 && emissive_uv.x < 1.0 && emissive_uv.y > 0.0 && emissive_uv.y < 1.0) )
-			{
-				vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
-				emissive_tex.xyz = pow( emissive_tex.xyz, vec3(u_gamma) ); //degamma
-				emissive *= emissive_tex.xyz;
-				alpha *= emissive_tex.a;
-			}
-			else //outside of 0..1 range
-				emissive = vec3(0.0);
+			vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
+			emissive_tex.xyz = pow( emissive_tex.xyz, vec3(u_gamma) ); //degamma
+			emissive *= emissive_tex.xyz;
+			alpha *= emissive_tex.a;
 		}
 
 		if( alpha <= u_alpha_cutoff)
@@ -1263,18 +1248,13 @@ void main()
 		if(u_maps_info[ OPACITYMAP ] != -1)
 			alpha *= texture2D( u_opacity_texture, getUV(u_maps_info[OPACITYMAP]) ).r;
 
-		vec3 emissive = u_emissive.xyz;	
+		vec3 emissive = u_emissive;	
 		if(u_maps_info[ EMISSIVEMAP ] != -1)
 		{
 			vec2 emissive_uv = getUV(u_maps_info[EMISSIVEMAP]);
-			if( u_emissive.w == 0.0 || (emissive_uv.x > 0.0 && emissive_uv.x < 1.0 && emissive_uv.y > 0.0 && emissive_uv.y < 1.0) )
-			{
-				vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
-				emissive *= emissive_tex.xyz;
-				alpha *= emissive_tex.a;
-			}
-			else
-				emissive = vec3(0.0);
+			vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
+			emissive *= emissive_tex.xyz;
+			alpha *= emissive_tex.a;
 		}
 
 		if( alpha <= u_alpha_cutoff)

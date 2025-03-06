@@ -31,8 +31,12 @@
 
 		//create a node
 		var node = new RD.SceneNode({
-			mesh: "data/man.obj"
+			mesh: "data/man.obj",
+			material: "white"
 		});
+
+		var material = new RD.Material();
+		material.register("white");
 
 		//inner update
 		node.update = function(dt) { 

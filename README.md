@@ -73,21 +73,10 @@ var mesh = GL.Mesh.fromURL("data/mesh.obj");
 renderer.meshes["mymesh"] = mesh;
 ```
 
-load and register texture
-```js
-var texture = GL.Texture.fromURL("mytexture.png", { minFilter: gl.LINEAR_MIPMAP_LINEAR, magFilter: gl.LINEAR });
-renderer.textures["mytexture.png"] = texture;
-```
-
-Compile and register shader
-```js
-var shader = new GL.Shader(vs_code, fs_code);
-renderer.shaders["phong"] = shader;
-```
-
 Create a material and register it
 ```js
 var mat = new RD.Material();
+mat.textures.albedo = "mytexture.png";
 mat.register("mymaterial");
 ```
 
@@ -98,7 +87,7 @@ node.color = [1,0,0,1];
 node.mesh = "mymesh";
 node.position = [0,0,0];
 node.scale([10,10,10]);
-node.material = mat;
+node.material = mat.name;
 scene.root.addChild(node);
 ```
 

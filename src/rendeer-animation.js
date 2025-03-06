@@ -31,13 +31,15 @@ Animation.prototype.addTrack = function(track, group)
 	this.tracks.push(track);
 }
 
-Animation.prototype.applyAnimation = function( root_node, time, interpolation )
+Animation.prototype.applyAnimation = function( root_node, time, interpolation, loop )
 {
 	for(var i = 0; i < this.tracks.length; ++i)
 	{
 		var track = this.tracks[i];
 		if(track.enabled === false)
 			continue;
+		if( loop )
+			time = time % this.duration;
 		track.applyTrack( root_node, time, interpolation );
 	}
 }

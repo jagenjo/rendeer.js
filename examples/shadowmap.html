@@ -10,97 +10,99 @@
 	</style>
 	<script type="text/javascript" src="../external/gl-matrix-min.js"></script>
 	<script type="text/javascript" src="../external/litegl.js"></script>
-	<script type="text/javascript" src="../build/rendeer.js"></script>
+	<script type="text/javascript" src="../src/rendeer.js"></script>
+	<script type="text/javascript" src="../src/rendeer-light.js"></script>
 
 	<script id="shaders" type="x-shader/x-glsl">
-\shaders
-
-phong_shadow basic.vs phong_shadow.fs
-
-\basic.vs 
-
-	precision highp float;
-	attribute vec3 a_vertex;
-	attribute vec3 a_normal;
-	attribute vec2 a_coord;
-
-	varying vec3 v_wPosition;
-	varying vec3 v_wNormal;
-	varying vec2 v_coord;
-
-	uniform mat4 u_viewprojection;
-	uniform mat4 u_model;
-
-	void main() {
-		vec3 vertex = a_vertex;
-
-		v_wPosition = (u_model * vec4(vertex,1.0)).xyz;
-		v_wNormal = (u_model * vec4(a_normal,0.0)).xyz;
-		v_coord = a_coord;
-
-		gl_Position = u_viewprojection * vec4( v_wPosition, 1.0 );
-		gl_PointSize = 2.0;
-	}
-
-\phong_shadow.fs
-
-	precision highp float;
-
-	varying vec3 v_wPosition;
-	varying vec3 v_wNormal;
-	varying vec2 v_coord;
-
-	uniform vec3 u_camera_position;
-	uniform vec4 u_background_color;
-	uniform vec3 u_ambient_light;
-	uniform vec3 u_light_color;
-	uniform vec3 u_light_vector;
-
-	uniform vec4 u_color;
-
-	uniform mat4 u_shadowmap_matrix;
-	uniform sampler2D u_shadowmap_texture;
-
-	float testShadowmap( vec3 pos )
-	{
-		const float bias = 0.004;
-		vec4 proj = u_shadowmap_matrix * vec4(pos, 1.0);
-		vec2 sample = (proj.xy / proj.w) * vec2(0.5) + vec2(0.5);
-		if(sample.x >= 0.0 && sample.x <= 1.0 && sample.y >= 0.0 && sample.y <= 1.0 )
-		{
-			float depth = texture2D( u_shadowmap_texture, sample ).x;
-			if( depth > 0.0 && depth < 1.0 && depth <= ( ((proj.z-bias) / proj.w) * 0.5 + 0.5) )
-				return 0.0;
-		}
-		return 1.0;
-	}
-
-	void main() {
-
-		vec3 N = normalize( v_wNormal );
-
-		//compute material
-		vec4 material = u_color;
-
-		//compute light
-		float NdotL = max( dot( N, -u_light_vector ), 0.0 );
-		vec3 light = u_ambient_light;
-		float shadow = 1.0;
-		shadow = testShadowmap( v_wPosition );
-		light += shadow * u_light_color * NdotL;
-
-
-		vec3 E = normalize(v_wPosition - u_camera_position);
-
-		//final
-		vec3 final_color = material.xyz * light;
-
-		//fresnel
-		final_color = mix( final_color, u_background_color.xyz, pow( 1.0 - abs(dot(N,reflect(E,N))), 1.1 ) );
-
-		gl_FragColor = vec4( final_color, material.a );
-	}
-</script>
+		\shaders
+		
+		phong_shadow basic.vs phong_shadow.fs
+		
+		\basic.vs 
+		
+			precision highp float;
+			attribute vec3 a_vertex;
+			attribute vec3 a_normal;
+			attribute vec2 a_coord;
+		
+			varying vec3 v_wPosition;
+			varying vec3 v_wNormal;
+			varying vec2 v_coord;
+		
+			uniform mat4 u_viewprojection;
+			uniform mat4 u_model;
+		
+			void main() {
+				vec3 vertex = a_vertex;
+		
+				v_wPosition = (u_model * vec4(vertex,1.0)).xyz;
+				v_wNormal = (u_model * vec4(a_normal,0.0)).xyz;
+				v_coord = a_coord;
+		
+				gl_Position = u_viewprojection * vec4( v_wPosition, 1.0 );
+				gl_PointSize = 2.0;
+			}
+		
+		\phong_shadow.fs
+		
+			precision highp float;
+		
+			varying vec3 v_wPosition;
+			varying vec3 v_wNormal;
+			varying vec2 v_coord;
+		
+			uniform vec3 u_camera_position;
+			uniform vec4 u_background_color;
+			uniform vec3 u_ambient_light;
+			uniform vec3 u_light_color;
+			uniform vec3 u_light_vector;
+		
+			uniform vec4 u_color;
+		
+			uniform mat4 u_shadowmap_matrix;
+			uniform sampler2D u_shadowmap_texture;
+		
+			float testShadowmap( vec3 pos )
+			{
+				const float bias = 0.004;
+				vec4 proj = u_shadowmap_matrix * vec4(pos, 1.0);
+				vec2 sample = (proj.xy / proj.w) * vec2(0.5) + vec2(0.5);
+				if(sample.x >= 0.0 && sample.x <= 1.0 && sample.y >= 0.0 && sample.y <= 1.0 )
+				{
+					float depth = texture2D( u_shadowmap_texture, sample ).x;
+					if( depth > 0.0 && depth < 1.0 && depth <= ( ((proj.z-bias) / proj.w) * 0.5 + 0.5) )
+						return 0.0;
+				}
+				return 1.0;
+			}
+		
+			void main() {
+		
+				vec3 N = normalize( v_wNormal );
+		
+				//compute material
+				vec4 material = u_color;
+		
+				//compute light
+				float NdotL = max( dot( N, -u_light_vector ), 0.0 );
+				vec3 light = u_ambient_light;
+				float shadow = 1.0;
+				shadow = testShadowmap( v_wPosition );
+				light += shadow * u_light_color * NdotL;
+		
+		
+				vec3 E = normalize(v_wPosition - u_camera_position);
+		
+				//final
+				vec3 final_color = material.xyz * light;
+		
+				//fresnel
+				final_color = mix( final_color, u_background_color.xyz, pow( 1.0 - abs(dot(N,reflect(E,N))), 1.1 ) );
+		
+				gl_FragColor = vec4( final_color, material.a );
+			}
+		</script>
+		
 
 	<script type="text/javascript">
 	
@@ -113,8 +115,6 @@ phong_shadow basic.vs phong_shadow.fs
 		var context = GL.create({width: window.innerWidth, height:window.innerHeight});
 		var renderer = new RD.Renderer(context);
 		document.body.appendChild(renderer.canvas); //attach
-
-		//get shaders code from HTML (please, use the loadShaders system instead of embeding
 		renderer.setShadersFromFile( document.getElementById("shaders").innerHTML );
 
 		//create camera
@@ -131,30 +131,20 @@ phong_shadow basic.vs phong_shadow.fs
 
 		//create the floor
 		var floor = new RD.SceneNode();
-		floor.color = [1,1,1,1];
 		floor.mesh = "planeXZ"; //this mesh comes by default
 		floor.scaling = 500;
+		floor.createMaterial();
 		pivot.addChild(floor);
 
 		//create the human
 		var man = new RD.SceneNode();
-		man.color = [1,1,1,1];
+		man.createMaterial();
 		man.mesh = "data/man.obj";
 		pivot.addChild(man);
 
 		//light with shadowmap 
-		var light = {
-			color: vec3.fromValues(1,1,1),
-			position: vec3.create(),
-			camera: new RD.Camera(),
-			texture: new GL.Texture( 1024,1024, { format: gl.DEPTH_COMPONENT, type: gl.UNSIGNED_INT, filter: gl.NEAREST }),
-			lookAt: function(eye, center, up) {
-				this.position.set(eye);
-				this.camera.lookAt( eye, center, up );
-			}
-		};
-		light.fbo = new GL.FBO( null, light.texture );
-		light.camera.orthographic(100,0,600,1);
+		var light = new RD.Light();
+		light.castShadows = true;
 		light.lookAt([300,400,0],[0,100,0],[0,1,0]);
 
 		//global settings
@@ -181,21 +171,14 @@ phong_shadow basic.vs phong_shadow.fs
 			var dt = (now - last) * 0.001;
 
 			//generate shadowmap
-			light.fbo.bind();
-				gl.clear( gl.DEPTH_BUFFER_BIT );
-				renderer.shader_overwrite = "flat";
-				renderer.render( scene, light.camera );
-			light.fbo.unbind();
+			light.generateShadowmap(renderer, scene);
 
 			//render final pass
-			light.texture.bind(4);
+			light.shadowmap.texture.bind(4);
 			renderer.shaders["phong_shadow"].uniforms( global_uniforms );
 			renderer.shader_overwrite = "phong_shadow";
 			renderer.clear(bg_color);
 			renderer.render(scene, camera);
-
-			//show texture in corner
-			gl.drawTexture( light.texture, 10,10, 256,256 );
 
 			//update
 			scene.update(dt);

@@ -31,8 +31,10 @@
 
 		//create a node
         var man = new RD.SceneNode({mesh:"data/man.obj", shader: "phong", layers: 0b1 });
+		man.createMaterial();
         scene.root.addChild(man);
         var man2 = new RD.SceneNode({mesh:"data/man.obj", position:[60,0,0], shader: "phong", layers: 0b1 });
+		man2.material = man.material;
         scene.root.addChild(man2);
 
         var sphere = new RD.SceneNode({mesh:"sphere",scaling:20,layers:0b1000});

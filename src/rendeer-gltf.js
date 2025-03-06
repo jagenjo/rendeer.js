@@ -915,6 +915,8 @@ RD.GLTF = {
 				vec3.scale( material.emissive, material.emissive, info.extensions.KHR_materials_emissive_strength.emissiveStrength );
 		}
 
+		if(RD.Materials[ material.name ])
+			console.debug("Material overwritten: " + material.name );
 		RD.Materials[ material.name ] = material;
 		this.gltf_materials[ material.name ] = material;
 
@@ -1356,6 +1358,8 @@ RD.GLTF = {
 					}
 				}
 			}
+			if(Object.keys(node.extras).length)
+				json_node.extras = node.extras;
 			if(node.children && node.children.length)
 			{
 				json_node.children = [];
@@ -1369,8 +1373,6 @@ RD.GLTF = {
 					json_node.matrix = typedArrayToArray( node._local_matrix );
 					break;
 				}
-			if( node.extra && node.extra.info )
-				json_node.extras = node.extra.info;
 			json.nodes[i] = json_node;  
 		}
 

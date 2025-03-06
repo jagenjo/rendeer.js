@@ -34,6 +34,10 @@
 		box.position = [0,0,0];
 		box.mesh = "cube";
 		box.scale([50,50,50]);
+		box.material = "red";
+
+		var mat = new RD.Material({color:[1,0,0,1]});
+		mat.register("red");
 
 		//inner update
 		box.update = function(dt) { 

@@ -100,6 +100,24 @@ RD.CUBIC = 2;
 var DEG2RAD = RD.DEG2RAD = 0.0174532925;
 var RAD2DEG = RD.RAD2DEG = 57.295779578552306;
 
+var SHADER_MACROS = {
+	COLOR:		1,
+	COORD1:		1<<1,
+	INSTANCING: 1<<2,
+	SKINNING:	1<<3,
+	POINTS:		1<<4,
+	PHONG:		1<<5,
+	TEXTURE:	1<<6,
+	ALBEDO:		1<<7,
+	EMISSIVE:	1<<8,
+	OCCLUSION:	1<<9,
+	ALPHA_HASH:	1<<10,
+	LIGHTS: 	1<<11,
+	FLAT_NORMAL:1<<12
+}
+
+
+
 //Global Containers (other containers are added from other scripts)
 RD.Materials = {};
 RD.Images = {}; //used for GLTFs embeded images
@@ -171,9 +189,51 @@ var temp_quat = quat.create();
 /**
 * SceneNode class to hold an scene item
 * @class SceneNode
-* @constructor
 */
 class SceneNode {
+
+	_uid = last_object_id++;
+	_id = null;
+
+	//transform info
+	_transform = new Float32Array(10);
+	_position = this._transform.subarray(0,3);
+	_rotation = this._transform.subarray(3,7);
+	_scale = this._transform.subarray(7,10);
+	
+	_local_matrix = mat4.create();
+	_global_matrix = mat4.create(); //in global space
+	_must_update_matrix = false;
+
+	//bounding box in world space
+	bounding_box = null; //use updateBoundingBox to update it
+
+	layers = 0x3|0; //first two layers
+
+	mesh = null;
+
+	instances = null; //array of mat4 with the model for every instance
+	draw_range = null
+	submesh = -1; //used if not primitives used
+
+	//in case this object has multimaterial this will contain { index: submesh index, material: material name, mode: render primitive };
+	primitives = []; 
+	
+	//in case it uses materials
+	material = null;
+
+	flags = {
+		visible: true,
+		collides: true //for testRay
+	};
+
+	extras = {}; //custom data
+
+	//object inside this object
+	_parent = null;
+	children = [];
+
+
 	/**
 	* A unique identifier, useful to retrieve nodes by name
 	* @property id {string}
@@ -307,56 +367,10 @@ class SceneNode {
 	set parentNode(v) { throw("Cannot set parentNode of SceneNode, use addChild on parent"); }
 
 	constructor(o) {
-		if(this.constructor !== RD.SceneNode)
-			throw("You must use new to create RD.SceneNode");
-		this._ctor();
-		if(o)
-			this.fromJSON( o );
-	}
-
-	_ctor()	{
-		this._uid = last_object_id++;
-		this._id = null;
-	
-		//transform info
-		this._transform = new Float32Array(10);
-		this._position = this._transform.subarray(0,3);
-		this._rotation = this._transform.subarray(3,7);
-		this._scale = this._transform.subarray(7,10);
 		quat.identity( this._rotation );
 		this._scale.set( RD.ONE );
-		
-		this._local_matrix = mat4.create();
-		this._global_matrix = mat4.create(); //in global space
-		this._must_update_matrix = false;
-	
-		//bounding box in world space
-		this.bounding_box = null; //use updateBoundingBox to update it
-	
-		this.layers = 0x3|0; //first two layers
-	
-		this._instances = null; //array of mat4 with the model for every instance
-		this.draw_range = null
-
-		//in case this object has multimaterial this will contain { index: submesh index, material: material name, mode: render primitive };
-		this.primitives = []; 
-	
-		//assets
-		this.mesh = null;
-		
-		//in case it uses materials
-		this.material = null;
-	
-		this.flags = {
-			visible: true,
-			collides: true //for testRay
-		};
-
-		this.extras = {}; //custom data
-	
-		//object inside this object
-		this._parent = null;
-		this.children = [];
+		if(o)
+			this.fromJSON( o );
 	}
 
 	clone(depth)
@@ -973,12 +987,13 @@ class SceneNode {
 	*/
 	rotate( angle_in_rad, axis, in_local )
 	{
+		if(in_local)
+			axis = this.getGlobalVector(axis, temp_vec3);
+
 		quat.setAxisAngle( temp_quat, axis, angle_in_rad );
 		
-		if(!in_local)
-			quat.multiply( this._rotation, this._rotation, temp_quat );
-		else
-			quat.multiply( this._rotation, temp_quat, this._rotation );
+		//quat.multiply( this._rotation, this._rotation, temp_quat );
+		quat.multiply( this._rotation, temp_quat, this._rotation );
 		this._must_update_matrix = true;
 	}
 
@@ -1414,7 +1429,7 @@ class SceneNode {
 		var mesh = gl.meshes[ this.mesh ];
 
 		var bb = null;
-		if( mesh ) 
+		if( mesh )
 		{
 			var mesh_bb = mesh.getBoundingBox();
 			if(!this.bounding_box)
@@ -1619,7 +1634,7 @@ SceneNode.prototype.testRay = (function(){
 		if(this.flags.visible === false)
 			return null;
 
-		if( (this.layers & layers) && !this.flags.ignore_collisions )
+		if( (this.layers & layers) && this.flags.collides !== false )
 		{
 			if( this.mesh )
 				collided = this.testRayWithMesh( ray, collision_point, max_dist, layers, test_against_mesh, test_primitives );
@@ -1695,9 +1710,15 @@ SceneNode.prototype.testRayWithMesh = (function(){
 
 		var group_index = this.submesh == null ? -1 : this.submesh;
 
-		//ray to local
 		//Warning: if you use this._global_matrix and the object wasnt visible, it wont have the matrix updated
 		var model = this.getGlobalMatrix(gmatrix,true); 
+
+		//test world ray against bounding sphere only if constant scale
+		var bb = mesh.getBoundingBox();
+		if(model[0] !== 0 && model[0] === model[5] && model[0] === model[10] && !geo.testRaySphere(ray.origin, ray.direction, vec3.transformMat4( origin, bb.subarray(0,3), model ), vec3.length(bb.subarray(3,6)) * model[0],undefined,max_dist))
+			return false;
+
+		//ray to local
 		mat4.invert( inv, model );
 		vec3.transformMat4( origin, ray.origin, inv );
 		vec3.add( end, ray.origin, ray.direction );
@@ -1739,7 +1760,7 @@ SceneNode.prototype.testSphere = (function(){
 		if(this.flags.visible === false)
 			return null;
 
-		if( (this.layers & layers) && !this.flags.ignore_collisions )
+		if( (this.layers & layers) && this.flags.collides !== false )
 		{
 			if( this.mesh )
 				collided = this.testSphereWithMesh( center, radius, layers, test_against_mesh );
@@ -1817,6 +1838,7 @@ SceneNode.prototype.testSphereWithMesh = (function(){
 * @param { Number } maxDist the max distance
 * @param { vec3 } out to store the nearest point
 * @param { vec3 } out_normal to store the nearest point normal
+* @param { boolean } skip_transform to assume is in local space
 * @return { number } the distance to the nearest point
 */
 SceneNode.prototype.findNearestPointToMesh = (function(){ 
@@ -1824,7 +1846,7 @@ SceneNode.prototype.findNearestPointToMesh = (function(){
 	var inv = mat4.create();
 	var local_point = vec3.create();
 
-	return function( point, maxDist, out, out_normal )
+	return function( point, maxDist, out, out_normal, skip_transform )
 	{
 		if( !this.mesh )
 			return false;
@@ -1834,20 +1856,59 @@ SceneNode.prototype.findNearestPointToMesh = (function(){
 			return Infinity;
 
 		//Warning: if you use this._global_matrix and the object wasnt visible, it wont have the matrix updated
-		var model = this.getGlobalMatrix(gmatrix); 
-		mat4.invert( inv, model );
-		vec3.transformMat4( local_point, point, inv );
+		if( skip_transform )
+			vec3.copy( local_point, point );
+		else
+		{
+			this.getGlobalMatrix(gmatrix); 
+			mat4.invert( inv, gmatrix );
+			vec3.transformMat4( local_point, point, inv );
+		}
 
 		if(!mesh.octree)
 			mesh.octree = new GL.Octree(mesh);
-		var dist = mesh.octree.findNearestPoint(point,out, maxDist, out_normal);
+		var dist = mesh.octree.findNearestPoint(local_point,out, maxDist, out_normal);
 		if(dist === maxDist)
 			return dist;
-		//convert out from local to gloal
-		vec3.transformMat4( out, out, gmatrix );
+		//convert out from local to global
+		if( !skip_transform )
+			vec3.transformMat4( out, out, gmatrix );
 		return dist;//we are not scaling the distance...
 	}
 })();	
+
+/**
+* finds the nearest point to this node mesh and its children meshes
+* @method findNearestPointToNode
+* @param { vec3 } point the reference point
+* @param { Number } maxDist the max distance
+* @param { vec3 } out to store the nearest point
+* @param { vec3 } out_normal to store the nearest point normal
+* @return { {node,distance} } the node and the distance to the nearest point
+*/
+SceneNode.prototype.findNearestPointToNode = function( point, maxDist, out, out_normal )
+{
+	var result = null;
+	var dist = maxDist;
+	if(this.mesh && this.flags.collides)
+	{
+		dist = this.findNearestPointToMesh(point, maxDist, out, out_normal);
+		if(dist < maxDist)
+			result = { node: this, distance: dist };
+	}
+
+	for(let i = 0; i < this.children.length; ++i)
+	{
+		var child = this.children[i];
+		if(child.flags.collides)
+		{
+			var res = this.findNearestPointToNode(point, dist, out, out_normal);
+			if(res.distance < dist)
+				result = res;
+		}
+	}
+	return result;
+}
 
 
 
@@ -2562,10 +2623,13 @@ Camera.prototype.applyController = function( dt, event, speed, enable_wsad )
 
 	if(event)
 	{
-		if(event.deltax)
-			this.rotate( event.deltax * -0.005, RD.UP );
-		if(event.deltay)
-			this.rotateLocal( event.deltay * -0.005, RD.RIGHT );
+		const deltax = event.deltax || event.movementX;
+		const deltay = event.deltay || event.movementY;
+
+		if(deltax)
+			this.rotate( deltax * -0.005, RD.UP );
+		if(deltay)
+			this.rotateLocal( deltay * -0.005, RD.RIGHT );
 	}
 }
 
@@ -3180,6 +3244,9 @@ Scene.prototype.toJSON = function( on_node_to_json )
 
 
 // *** MATERIAL ***************************************************
+var instancing_uniforms = {
+	u_model: null
+};
 
 /**
 * Material is a data container about the properties of an objects material
@@ -3188,7 +3255,7 @@ Scene.prototype.toJSON = function( on_node_to_json )
 */
 class Material
 {
-	static default_shader_name = "texture";
+	static last_material_id = 0;
 
 	constructor(o)
 	{
@@ -3196,14 +3263,10 @@ class Material
 		this._emissive = vec3.fromValues(0,0,0);
 		this.shader_name = null;
 
-		this.uniforms = {
-			u_color: this._color,
-			u_emissive: this._emissive
-		};
+		this.uniforms = {};
 		this.textures = {};
 
 		this.primitive = GL.TRIANGLES;
-
 		this.blend_mode = RD.BLEND_NONE;
 
 		this.flags = {
@@ -3236,7 +3299,23 @@ class Material
 			var v = o[i];
 			if(v)
 			{
-				if(i === 'texture')
+				if(i === "name")
+					this.register(v);
+				else if(i === "material" && v )
+				{
+					if ( v.constructor === Object )
+					{
+						var m = new RD.Material(v);
+						this.register();
+						v = m.name;
+					}
+					else if ( v.constructor === RD.Material )
+					{
+						this.register();
+						v = v.name;
+					}
+				}
+				else if(i === 'texture')
 				{
 					this.textures['color'] = v;
 					continue;
@@ -3302,56 +3381,51 @@ class Material
 		return o;
 	}
 
-	static MACROS = {
-		COLOR:		1,
-		COORD1:		1<<1,
-		INSTANCING: 1<<2,
-		SKINNING:	1<<3,
-		POINTS:		1<<4,
-		PHONG:		1<<5,
-		TEXTURE:	1<<6,
-		ALBEDO:		1<<7,
-		EMISSIVE:	1<<8,
-		OCCLUSION:	1<<9,
-	}
-
-	render( renderer, model, mesh, indices_name, group_index, skeleton, node )
+	render( renderer, rc )
 	{
+		var mesh = rc.mesh;
+		var node = rc.node;
+		var skeleton = rc.skin;
+
 		//get shader
 		var shader = null;
 		if (renderer.on_getShader)
 		{
-			shader = renderer.on_getShader( node, renderer._camera );
+			shader = renderer.on_getShader( rc.node, renderer._camera );
 			if(!shader)
 				return;
 		}
 		else
 		{
-			var shader_name = this.shader_name;
+			var shader_name = renderer.shader_overwrite || this.shader_name;
 			if(shader_name)
 				shader = gl.shaders[ shader_name ];
 			else
 			{
 				//generate automatic shader
 				var shader_hash = 0;
+				if(renderer.use_alpha_hash)
+					shader_hash |= SHADER_MACROS.ALPHA_HASH;
+				if(renderer.use_flat_normal)
+					shader_hash |= SHADER_MACROS.FLAT_NORMAL;
 				if( mesh.vertexBuffers.colors )
-					shader_hash |= Material.MACROS.COLOR;
+					shader_hash |= SHADER_MACROS.COLOR;
 				if( mesh.vertexBuffers.coords1 )
-					shader_hash |= Material.MACROS.COORD1;
+					shader_hash |= SHADER_MACROS.COORD1;
 				if( skeleton )
-					shader_hash |= Material.MACROS.SKINNING;
-				if( node._instances )
-					shader_hash |= Material.MACROS.INSTANCING;
+					shader_hash |= SHADER_MACROS.SKINNING;
+				if( rc.instances )
+					shader_hash |= SHADER_MACROS.INSTANCING;
 				if( renderer.light_model == "phong" )
-					shader_hash |= Material.MACROS.PHONG;
+					shader_hash |= SHADER_MACROS.PHONG;
 				if( this.textures.color )
-					shader_hash |= Material.MACROS.TEXTURE;
+					shader_hash |= SHADER_MACROS.TEXTURE;
 				if( this.textures.albedo )
-					shader_hash |= Material.MACROS.ALBEDO;
+					shader_hash |= SHADER_MACROS.ALBEDO;
 				if( this.textures.emissive )
-					shader_hash |= Material.MACROS.EMISSIVE;
+					shader_hash |= SHADER_MACROS.EMISSIVE;
 				if( this.textures.occlusion )
-					shader_hash |= Material.MACROS.OCCLUSION;
+					shader_hash |= SHADER_MACROS.OCCLUSION;
 		
 				shader = renderer.getMasterShader( shader_hash );
 			}
@@ -3368,7 +3442,7 @@ class Material
 
 		//shader doesnt support instancing
 		var instancing = false;
-		if( node._instances && (gl.webgl_version > 1 || gl.extensions.ANGLE_instanced_arrays) )
+		if( rc.instances && renderer.supports_instancing )
 			instancing = true;	
 		if( instancing && !shader.attributes.u_model )
 			instancing = false;
@@ -3409,7 +3483,7 @@ class Material
 		//flags
 		renderer.enableItemFlags( this );
 
-		renderer._uniforms.u_model.set( model );
+		renderer._uniforms.u_model.set( rc.model );
 		if( skeleton && shader.uniformInfo.u_bones )
 		{
 			this.bones = skeleton.computeFinalBoneMatrices( this.bones, mesh );
@@ -3422,47 +3496,58 @@ class Material
 			renderer._uniforms.u_global_alpha_clip = -1;
 
 		shader.uniforms( renderer._uniforms ); //globals
+		shader.setUniform("u_color", this._color);
+		shader.setUniform("u_emissive", this._emissive);
 		shader.uniforms( this.uniforms ); //locals
 		if( renderer.light_model == "phong" )
 			shader.uniforms( renderer._phong_uniforms ); //light
 		if( renderer.onNodeShaderUniforms )
 			renderer.onNodeShaderUniforms( renderer, shader, node );
 
+		if(renderer.use_alpha_hash && shader.hasUniform("u_bayer_texture"))
+			shader.uniforms({u_bayer_texture:renderer._bayer_texture.bind(slot++)});
+
 		var group = null;
-		if( group_index != null && mesh.info && mesh.info.groups && mesh.info.groups[ group_index ] )
-			group = mesh.info.groups[ group_index ];
+		if( rc.group_index != null && mesh.info && mesh.info.groups && mesh.info.groups[ rc.group_index ] )
+			group = mesh.info.groups[ rc.group_index ];
+
+		var primitive = rc.primitive > -1 ? rc.primitive : this.primitive;
+		if(primitive == null)
+			primitive = gl.TRIANGLES;
 
 		if( instancing )
 		{
-			instancing_uniforms.u_model = node._instances;
+			instancing_uniforms.u_model = rc.instances;
 			if(group)
-				shader.drawInstanced( mesh, node.primitive == null ? gl.TRIANGLES : node.primitive, node.indices, instancing_uniforms, group.start, group.length );
+				shader.drawInstanced( mesh, primitive, rc.index_buffer_name, instancing_uniforms, group.start, group.length );
 			else if(node.draw_range)
-				shader.drawInstanced( mesh, node.primitive == null ? gl.TRIANGLES : node.primitive, node.indices, instancing_uniforms, node.draw_range[0], node.draw_range[1] );
+				shader.drawInstanced( mesh, primitive, rc.index_buffer_name, instancing_uniforms, rc.draw_range[0], rc.draw_range[1] );
 			else
-				shader.drawInstanced( mesh, node.primitive == null ? gl.TRIANGLES : node.primitive, node.indices, instancing_uniforms );
+				shader.drawInstanced( mesh, primitive, rc.index_buffer_name, instancing_uniforms );
 		}
-		else if( node._instances ) // in case the instancing extension is not supported, this will never be used...
+		else if( rc.instances ) // in case the instancing extension is not supported, this will never be used...
 		{
-			for(var i = 0; i < node._instances.length; i += 16)
+			for(var i = 0; i < rc.instances.length; i++)
 			{
-				shader.setUniform("u_model", node._instances.subarray(i,i+16));
+				shader.setUniform("u_model", rc.instances[i]);
 				if(group)
-					shader.drawRange( mesh, this.primitive, group.start, group.length, indices_name );
-				else if(node.draw_range)
-					shader.drawRange( mesh, node.primitive == null ? gl.TRIANGLES : node.primitive, node.indices, node.draw_range[0], node.draw_range[1] );
+					shader.drawRange( mesh, primitive, group.start, group.length, rc.index_buffer_name );
+				else if(rc.draw_range)
+					shader.drawRange( mesh, primitive, rc.index_buffer_name, rc.draw_range[0], rc.draw_range[1] );
 				else
-					shader.draw( mesh, this.primitive, indices_name );
+					shader.draw( mesh, primitive, rc.index_buffer_name );
+				renderer.draw_calls += 1;
 			}
+			renderer.draw_calls--;
 		}
 		else
 		{
 			if( group )
-				shader.drawRange( mesh, this.primitive, group.start, group.length, indices_name );
-			else if(node.draw_range)
-				shader.drawRange( mesh, node.primitive == null ? gl.TRIANGLES : node.primitive, node.indices, node.draw_range[0], node.draw_range[1] );
+				shader.drawRange( mesh, primitive, group.start, group.length, rc.index_buffer_name );
+			else if(rc.draw_range)
+				shader.drawRange( mesh, primitive, rc.index_buffer_name, rc.draw_range[0], rc.draw_range[1] );
 			else
-				shader.draw( mesh, this.primitive, indices_name );
+				shader.draw( mesh, primitive, rc.index_buffer_name );
 		}
 
 		renderer.disableItemFlags( this );
@@ -3489,15 +3574,17 @@ class Renderer {
 		
 		if(context != global.gl)
 			gl.makeCurrent();
+
+		this.assets_folder = "";
 				
-		this.point_size = 5;
-		this.sort_by_distance = true;
-		this.sort_by_priority = true;
 		this.reverse_normals = false; //used for reflections
 		this.disable_cull_face = false;
+		this.use_alpha_hash = false;
+		this.use_flat_normal = false;
 		this.layers_affect_children = false;
 		this.light_model = "flat"; //"flat" or "phong"
-		this.assets_folder = "";
+		this.allow_instancing = true;
+		this.point_size = 1;
 		
 		this._view_matrix = mat4.create();
 		this._projection_matrix = mat4.create();
@@ -3507,6 +3594,12 @@ class Renderer {
 		this._texture_matrix = mat3.create();
 		this._color = vec4.fromValues(1,1,1,1); //in case we need to set a color
 		this._viewprojection2D_matrix = mat4.create(); //used to 2D rendering
+
+		this.renderables = []; //current
+		this.renderables_pool = []; //total
+		this.used_renderables = 0;
+		this.rendered_renderables = 0;
+		this.overlay_renderables = []; //renderables that are not affected by postpo
 		
 		this._nodes = [];
 		this._uniforms = {
@@ -3515,8 +3608,8 @@ class Renderer {
 			u_model: this._model_matrix,
 			u_mvp: this._mvp_matrix,
 			u_global_alpha_clip: 0.0,
-			u_color: this._color,
-			u_texture_matrix: this._texture_matrix
+			u_point_size: this.point_size,
+			u_res: new Float32Array([1,1,1,1])
 		};
 
 		this.global_uniforms_containers = [ this._uniforms ];
@@ -3524,7 +3617,6 @@ class Renderer {
 		this.ambient_light = vec3.fromValues(0.6,0.67,0.8);
 		this.light_color = vec3.fromValues(0.5,0.4,0.3);
 		this.light_vector = vec3.fromValues(0.5442, 0.6385, 0.544);
-
 		this._phong_uniforms = { u_ambient: this.ambient_light, u_light_vector: this.light_vector, u_light_color: this.light_color };
 		
 		//set some default stuff
@@ -3546,15 +3638,25 @@ class Renderer {
 		
 		this.textures["notfound"] = this.default_texture = new GL.Texture(1,1,{ filter: gl.NEAREST, pixel_data: new Uint8Array([0,0,0,255]) });
 		this.textures["white"] = this.default_texture = new GL.Texture(1,1,{ filter: gl.NEAREST, pixel_data: new Uint8Array([255,255,255,255]) });
-		
+		this.textures["bayer8x8"] = this._bayer_texture = new GL.Texture(8,8,{ format: GL.LUMINANCE, pixel_data: new Uint8Array([0, 48, 12, 60, 3, 51, 15, 63,
+			32, 16, 44, 28, 35, 19, 47, 31,
+			8,  56, 4,  52, 11, 59, 7,  55,
+			40, 24, 36, 20, 43, 27, 39, 23,
+			2,  50, 14, 62, 1,  49, 13, 61,
+			34, 18, 46, 30, 33, 17, 45, 29,
+			10, 58, 6,  54, 9,  57, 5,  53,
+			42, 26, 38, 22, 41, 25, 37, 21])});
+		this._bayer_texture.setParameter( GL.TEXTURE_MAG_FILTER, gl.NEAREST );
+	
 		this.num_assets_loading = 0;
 		this.assets_loading = {};
 		this.assets_not_found = {};
 		this.frame = 0;
 		this.draw_calls = 0;
 
-		if(!options.ignore_shaders)
-			this.createShaders();
+		this.supports_instancing = gl.extensions.ANGLE_instanced_arrays || gl.webgl_version > 1;
+
+		this.createShaders();
 
 		if(options.shaders_file)
 			this.loadShaders( options.shaders_file, null, options.shaders_macros );
@@ -3577,7 +3679,7 @@ Renderer.prototype.getMasterShader = function( macros )
 	//this code is added on demand because it could be not be available
 	var skinning = "";
 	var skinning_vs = "";
-	if( RD.Skeleton && (macros & Material.MACROS.SKINNING) )
+	if( RD.Skeleton && (macros & SHADER_MACROS.SKINNING) )
 	{	
 		var skinning_header = `
 		#ifdef SKINNING
@@ -3598,9 +3700,9 @@ Renderer.prototype.getMasterShader = function( macros )
 	if( macros )
 	{
 		macros_info = {};
-		for( var i in Material.MACROS )
+		for( var i in SHADER_MACROS )
 		{
-			var flag = Material.MACROS[i];
+			var flag = SHADER_MACROS[i];
 			if( macros & flag )
 				macros_info[ i ] = "";
 		}
@@ -3614,7 +3716,9 @@ Renderer.prototype.getMasterShader = function( macros )
 Renderer.master_vertex_shader = `
 	precision highp float;
 	attribute vec3 a_vertex;
-	attribute vec3 a_normal;
+	#ifndef FLAT_NORMAL
+		attribute vec3 a_normal;
+	#endif
 	attribute vec2 a_coord;
 	#ifdef COORD1
 		attribute vec2 a_coord1;
@@ -3627,6 +3731,7 @@ Renderer.master_vertex_shader = `
 	attribute vec4 a_color;
 	varying vec4 v_color;
 	#endif
+
 	#pragma SKINNING_HEADER
 	#ifdef INSTANCING
 		attribute mat4 u_model;
@@ -3634,12 +3739,16 @@ Renderer.master_vertex_shader = `
 		uniform mat4 u_model;
 	#endif
 	uniform mat4 u_viewprojection;
+	uniform float u_point_size;
+
 	void main() {
 		v_pos = a_vertex;
-		v_normal = a_normal;
 		#pragma SKINNING_BODY
 		v_pos = (u_model * vec4(v_pos,1.0)).xyz;
+		#ifndef FLAT_NORMAL
+		v_normal = a_normal;
 		v_normal = (u_model * vec4(v_normal,0.0)).xyz;
+		#endif
 		v_coord = a_coord;
 		#ifdef COORD1
 			v_coord1 = a_coord1;
@@ -3648,12 +3757,15 @@ Renderer.master_vertex_shader = `
 		v_color = a_color;
 		#endif
 		gl_Position = u_viewprojection * vec4( v_pos, 1.0 );
-		gl_PointSize = 2.0;
+		gl_PointSize = u_point_size;
 	}
 `;
 
 Renderer.master_fragment_shader = `
+	#extension GL_OES_standard_derivatives : enable
+	
 	precision highp float;
+	varying vec3 v_pos;
 	varying vec2 v_coord;
 	varying vec3 v_normal;
 	uniform vec4 u_color;
@@ -3683,7 +3795,19 @@ Renderer.master_fragment_shader = `
 		uniform vec3 u_light_color;
 		uniform vec3 u_light_vector;
 	#endif
+	#ifdef ALPHA_HASH
+		uniform sampler2D u_bayer_texture;
+
+		float bayer8x8(vec2 position) {
+			int x = int(mod(position.x, 8.0));
+			int y = int(mod(position.y, 8.0));
+			return texture2D( u_bayer_texture, vec2(float(x)/8.0,float(y)/8.0)).x * 4.0;
+		}
+	#endif
+
 	uniform float u_global_alpha_clip;
+	uniform vec4 u_res;
+
 	void main() {
 		vec4 color = u_color;
 		#ifndef COORD1
@@ -3698,9 +3822,20 @@ Renderer.master_fragment_shader = `
 		#ifdef COLOR
 			color *= v_color;
 		#endif
-		if(color.w <= u_global_alpha_clip)
+		if(color.a <= u_global_alpha_clip)
 			discard;
-		vec3 N = normalize(v_normal);
+		#ifdef ALPHA_HASH
+		if(color.a < bayer8x8(gl_FragCoord.xy))
+			discard;
+		#endif
+
+		#ifdef FLAT_NORMAL
+			vec3 A = dFdx(v_pos);
+			vec3 B = dFdy(v_pos);
+			vec3 N = normalize(cross(A,B));
+		#else
+			vec3 N = normalize(v_normal);
+		#endif
 		vec3 light = vec3(1.0);
 		#ifdef PHONG
 			float NdotL = max(dot(N,u_light_vector),0.0);
@@ -3838,9 +3973,21 @@ Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, sk
 		return;
 	}
 
+	for(var i = 0; i < nodes.length; ++i)
+		if(nodes[i].preRender)
+			nodes[i].preRender();
+
+	//prepass
+	var renderables = this.getAllRenderables(nodes, layers, camera);
+
 	//get matrices in the camera
 	this.enableCamera( camera );
 	this.enable2DView();
+	this._uniforms.u_res[0] = gl.viewport_data[2];
+	this._uniforms.u_res[1] = gl.viewport_data[3];
+	this._uniforms.u_res[2] = 1 / gl.viewport_data[2];
+	this._uniforms.u_res[3] = 1 / gl.viewport_data[3];
+	this._uniforms.u_point_size = this.point_size;
 
 	//stack to store state
 	this._state = [];
@@ -3851,86 +3998,29 @@ Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, sk
 	//set globals
 	this._uniforms.u_time = scene.time;
 
-	//filter by mustRender (you can do your frustum culling here)
 	var that = this;
-	nodes = nodes.filter( function(n) { return !n.mustRender || n.mustRender(that,camera) != false; }); //GC
-
-	//precompute distances
-	if(this.sort_by_distance && this.sort_by_priority)
-	{
-		nodes.forEach( (a)=>a._distance = a.getDistanceTo( camera._position ) );
-		nodes.sort( RD.Renderer._sort_by_priority_and_dist_func );
-	}
-	else if(this.sort_by_distance)
-	{
-		nodes.forEach( (a)=>a._distance = a.getDistanceTo( camera._position ) );
-		nodes.sort( RD.Renderer._sort_by_dist_func );
-	}
-	else if(this.sort_by_priority)
-	{
-		nodes.forEach( (a,index)=>a._index = index);
-		nodes.sort( RD.Renderer._sort_by_priority_func );
-	}
-
-	
-	//pre rendering
-	if(this.onPreRender)
-		this.onPreRender( camera );
-
-	if(scene._root.preRender)
-		scene._root.preRender( this, camera );
-
 	pipeline = pipeline || this.pipeline;
 
+	var visible_renderables = renderables.filter(rc=>rc.instances || camera.testMesh( rc.mesh, rc.model) !== RD.CLIP_OUTSIDE);
+
 	if( pipeline )
-		pipeline.render( this, nodes, camera, scene, skip_fbo );
+		pipeline.render( this, visible_renderables, camera, scene, skip_fbo );
 	else
 	{
-		for (var i = 0; i < nodes.length; ++i)
-		{
-			var node = nodes[i];
-			
-			//recompute matrices
-			node.updateGlobalMatrix(true);
-			
-			if(this.onPreRenderNode)
-				this.onPreRenderNode( node, camera);
-			if(node.preRender)
-				node.preRender( this, camera );
-		}
-		
+		//group by instancing
+		if( this.allow_instancing && this.supports_instancing )
+			visible_renderables = this.groupRenderablesForInstancing(visible_renderables);
+
 		//render skybox
 		if(this.skybox_texture)
 			this.renderSkybox(camera, this.skybox_texture);
 
-		//rendering	nodes
-		for (var i = 0; i < nodes.length; ++i)
+		//rendering
+		for (var i = 0; i < visible_renderables.length; ++i)
 		{
-			var node = nodes[i];
-			node.flags.was_rendered = false;
-			if(node.flags.visible === false || !(node.layers & layers) )
-				continue;
-			if(this.mustRenderNode && this.mustRenderNode(node, camera) === false)
-				continue;
-			node.flags.was_rendered = true;
-			this.setModelMatrix( node._global_matrix );
-			
-			if(node.render)
-				node.render(this,camera);
-			else
-				this.renderNode(node, camera);
-		}
-		
-		//post rendering
-		if(scene._root.postRender)
-			scene._root.postRender(this,camera);
-		for (var i = 0; i < nodes.length; ++i)
-		{
-			var node = nodes[i];
-			if(node.postRender)
-				node.postRender(this,camera);
-			if(this.onPostRenderNode)
-				this.onPostRenderNode( node, camera);
+			var rc = visible_renderables[i];
+			rc.node.flags.was_rendered = true;
+			rc.material.render( this, rc );
 		}
 	}
 
@@ -4011,19 +4101,6 @@ Renderer.prototype.setModelMatrix = function(matrix)
 	mat4.multiply(this._mvp_matrix, this._viewprojection_matrix, matrix );
 }
 
-/*
-Renderer.prototype.setTextureMatrixForSpriteAtlas = function( matrix, frame, num_cols, num_rows )
-{
-	mat3.identity( matrix );
-	var x = (frame % num_cols) / num_cols;
-	var y = Math.floor(frame / num_cols) / num_rows;
-	mat3.translate( matrix, matrix, [x,y,0] );
-	mat3.scale( matrix, matrix, [ 1/num_cols, 1/num_rows,0] );
-}
-*/
-
-
-
 //allows to add some global uniforms without overwritting the existing ones
 Renderer.prototype.setGlobalUniforms = function( uniforms )
 {
@@ -4036,12 +4113,8 @@ Renderer.prototype.setGlobalUniforms = function( uniforms )
 	}
 }
 
-//avoid garbage
-var instancing_uniforms = {
-	u_model: null
-};
-
 //used to render one node (ignoring its children) based on the shader, texture, mesh, flags, layers and uniforms 
+/*
 Renderer.prototype.renderNode = function(node, camera)
 {
 	//get mesh
@@ -4059,11 +4132,12 @@ Renderer.prototype.renderNode = function(node, camera)
 		}
 	}
 
+	if(!mesh || camera.testMesh(mesh, node._global_matrix) === CLIP_OUTSIDE )
+		return;
+
 	//from GLTF
 	if( node.primitives && node.primitives.length )
 	{
-		if(!mesh)
-			return;
 		for(var i = 0; i < node.primitives.length; ++i)
 		{
 			var prim = node.primitives[i];
@@ -4075,51 +4149,265 @@ Renderer.prototype.renderNode = function(node, camera)
 				if( this.onFilterByMaterial( material, RD.Materials[ prim.material ] ) == false )
 					continue;
 			}
-			this.renderMeshWithMaterial( node._global_matrix, mesh, material, "triangles", i, node.skeleton, node );
+			this.renderMeshWithMaterial( node._global_matrix, mesh, material, "triangles", i, prim.mode, node.skeleton, node, prim.mode );
 		}
 		return;
 	}
 
 	var material = RD.Materials[ node.material ] || this.overwrite_material || this.default_material;
-
-	if(mesh && material)
-	{
-		if(material.render)
-		{
-			this.renderMeshWithMaterial( node._global_matrix, mesh, material, node.indices, node.submesh, node.skeleton, node );
-			return;
-		}
-		else
-			node.color = material.color;
-	}
+	if(material && material.render)
+		this.renderMeshWithMaterial( node._global_matrix, mesh, material, node.indices, node.submesh, node.skeleton, node );
 }
+*/
 
 Renderer.prototype.renderMesh = function( model, mesh, texture, color, shader, mode, index_buffer_name, group_index )
 {
 	if(!mesh)
 		return;
-	if( color )
-		this._uniforms.u_color.set( color );
 	if(!model)
 		model = RD.IDENTITY;
 	this._uniforms.u_model.set( model );
 	if(!shader)
-		shader = texture ? gl.shaders["texture"] : gl.shaders["flat"];
+		shader = this.getMasterShader( texture ? SHADER_MACROS.ALBEDO : 0 );
 	if( texture )
 		this._uniforms.u_texture = texture.bind(0);
 	shader.uniforms(this._uniforms);
+	if( color )
+		shader.uniforms({u_color: color});
 	shader.draw( mesh, mode == null ? gl.TRIANGLES : mode, index_buffer_name );
 	this.draw_calls += 1;
 }
 
-Renderer.prototype.renderMeshWithMaterial = function( model, mesh, material, index_buffer_name, group_index, skeleton, node )
+/** Camera is optional */
+Renderer.prototype.getAllRenderables = function( nodes, layers, camera )
 {
-	if(material.render)
-		material.render( this, model, mesh, index_buffer_name, group_index, skeleton, node );
+	//reset render calls pool and clear all 
+	this.resetRenderablesPool();	
+	var rcs = this.renderables;
+	rcs.length = 0;
+
+	//extract render calls from scene nodes
+	for(var i = 0; i < nodes.length; ++i)
+	{
+		var node = nodes[i];
+		node.flags.was_renderer = false;
+		this.getNodeRenderables( node, layers, camera );
+	}
+
+	//sort by alpha and distance
+	if(this.onFilterRenderables)
+		this.onFilterRenderables( rcs );
+	if(camera)
+	{
+		for(var i = 0; i < rcs.length; ++i)
+			rcs[i].computeRenderPriority( camera._position );
+		rcs = rcs.sort( Renderer.rc_sort_function );
+	}
+	return rcs;
 }
 
+Renderer.prototype.resetRenderablesPool = function()
+{
+	this.used_renderables = 0;
+}
+
+Renderer.prototype.getRenderablesFromPool = function()
+{
+	if( this.used_renderables < this.renderables_pool.length )
+	{
+		var rc = this.renderables_pool[this.used_renderables];
+		this.used_renderables++;
+		return rc;
+	}
+
+	var rc = new RD.Renderable();
+	rc.id = this.used_renderables;
+	this.renderables_pool.push( rc );
+	this.used_renderables++;
+	return rc;
+}
+
+Renderer.prototype.getNodeRenderables = function( node,layers,camera )
+{
+	//get mesh
+	var mesh = null;
+	if (node._mesh) //hardcoded mesh
+		mesh = node._mesh;
+	else if (node.mesh) //shared mesh
+	{
+		mesh = gl.meshes[ node.mesh ];
+		if(!mesh)
+		{
+			if( this.autoload_assets && node.mesh.indexOf(".") != -1)
+				this.loadMesh( node.mesh );
+			return;
+		}
+	}
+
+	if(layers === undefined)
+		layers = 0xFFFF;
+
+	//prepare matrix (must be done always or children wont have the right transform)
+	node.updateGlobalMatrix(true);
+
+	if(!mesh)
+		return;
+
+	if(node.flags.visible === false || !(node.layers & layers) )
+		return;
+
+	//skinning can work in two ways: through a RD.Skeleton, or through info about the joints node in the scene
+	var skinning = node.skeleton || node.skin || null;
+	if( skinning && !skinning.bones && !skinning.joints )
+		skinning = null;
+	if( skinning && skinning.bones && !skinning.bones.length )
+		skinning = null;
+	if( skinning && skinning.joints && !skinning.joints.length )
+		skinning = null;
+
+	if(skinning && skinning.joints)
+	{
+		//at least once
+		if(!skinning._bone_matrices)
+			node.updateSkinningBones( node.parentNode ); //use parent node as root
+	}
+
+	//check if inside frustum (skinned objects are not tested)
+	if(this.test_visibility && !skinning && camera)
+	{
+		if(!Renderer.temp_bbox)
+		{
+			Renderer.temp_bbox = BBox.create();
+			Renderer.aabb_center = BBox.getCenter( Renderer.temp_bbox );
+			Renderer.aabb_halfsize = BBox.getHalfsize( Renderer.temp_bbox );
+		}
+		var aabb = Renderer.temp_bbox;
+		BBox.transformMat4( aabb, mesh.getBoundingBox(), node._global_matrix );
+		if ( camera.testBox( Renderer.aabb_center, Renderer.aabb_halfsize ) == RD.CLIP_OUTSIDE )
+			return;
+
+		node._last_rendered_frame = this.frame; //mark last visible frame
+	}
+
+	//it has multiple submaterials
+	if( node.primitives && node.primitives.length )
+	{
+		for(var i = 0; i < node.primitives.length; ++i)
+		{
+			var prim = node.primitives[i];
+			var material = null;
+			if(!prim.material)
+				material = this.default_material;
+			else
+				material = RD.Materials[ prim.material ];
+			if(!material)
+				continue;
+
+			var rc = this.getRenderablesFromPool();
+			rc.material = material;
+			rc.model = node._global_matrix;
+			rc.mesh = mesh;
+			rc.group_index = i;
+			rc.node = node;
+			rc.draw_range = null;
+			rc._render_priority = material.render_priority || 0;
+			rc.instances = node._instances;
+			rc.reverse_faces = node.flags.frontFace == GL.CW;
+			rc.skin = skinning;
+			rc.primitive = prim.mode != null ? prim.mode : -1;
+			this.renderables.push( rc );
+		}
+
+		return;
+	}
+
+	if(node.material)
+	{
+		var material = RD.Materials[ node.material ];
+		if(material)
+		{
+			var rc = this.getRenderablesFromPool();
+			rc.material = material;
+			rc.model = node._global_matrix;
+			rc.mesh = mesh;
+			rc.group_index = node.submesh;
+			rc.node = node;
+			rc.instances = node._instances;
+			rc.skin = skinning;
+			rc.draw_range = node.draw_range;
+			rc.primitive = node.primitive != null ? node.primitive : -1;
+			rc._render_priority = material.render_priority || 0;
+			rc.reverse_faces = node.flags.frontFace == GL.CW;
+			this.renderables.push( rc );
+		}
+	}
+}
+
+Renderer._last_mesh_id = 0;
+
+Renderer.prototype.groupRenderablesForInstancing = function(rcs)
+{
+	var groups = new Map();
+
+	var no_group = 0; //used to force no grouping
+
+	//find groups
+	for(var i = 0; i < rcs.length; ++i)
+	{
+		var rc = rcs[i];
+		var key = null;
+		if(!rc.mesh.name)
+			rc.mesh.name = "##M" + Renderer._last_mesh_id++;
+		if (!rc.instances && !rc.skin && !rc.draw_range)
+			key = rc.mesh.name + ":" + rc.group_index + "/" + rc.material.name + (rc.reverse_faces ? "[R]" : "");
+		else
+			key = no_group++;
+		if(!groups.has(key))
+			groups.set(key,[rc]);
+		else
+			groups.get(key).push(rc);
+	}
+
+	var final_rcs = [];
+
+	//for every group
+	var values = groups.values();
+	for(var group of values)
+	{
+		if( group.length == 0 )
+			continue;
+
+		//single
+		if( group.length == 1 )
+		{
+			var rc = group[0];
+			//rc.instances = null;
+			if(!this.debug_instancing)
+				final_rcs.push( rc );
+			continue;
+		}
+
+		var rc = this.getRenderablesFromPool();
+		rc.copyFrom( group[0] );
+		rc.instances = new Array(group.length);
+		for(var j = 0; j < group.length; ++j)
+			rc.instances[j] = group[j].model;
+		final_rcs.push( rc );
+	}
+
+	return final_rcs;
+}
+
+//places semitransparent meshes the last ones
+Renderer.rc_sort_function = function(a,b)
+{
+	return b._render_priority - a._render_priority;
+}
+
+
+
 //allows to pass a mesh or a bounding box
-//if matrix specified, the bbox will be TSR on rendering (rendered ad OOBB), not recomputed using the matrix
+//if matrix specified, the bbox will be TSR on rendering (rendered as OOBB), not recomputed using the matrix
 Renderer.prototype.renderBounding = function(mesh_or_bb, matrix, color)
 {
 	if(!mesh_or_bb)
@@ -4144,16 +4432,22 @@ Renderer.prototype.renderBounding = function(mesh_or_bb, matrix, color)
 Renderer.prototype.enableItemFlags = function(item)
 {
 	var ff = item.flags.flip_normals;
-	if(this.reverse_normals)
+	if(this.reverse_normals) //used in shadowmaps
 		ff = !ff;
 	gl.frontFace( ff ? gl.CW : gl.CCW );
-	gl[ item.flags.depth_test === false ? "disable" : "enable"]( gl.DEPTH_TEST );
+	if( item.flags.depth_test === false )
+		gl.disable( gl.DEPTH_TEST );
+	else
+		gl.enable( gl.DEPTH_TEST );
 	if( item.flags.depth_write === false )
 		gl.depthMask( false );
-	gl[ item.flags.two_sided === true || this.disable_cull_face ? "disable" : "enable"]( gl.CULL_FACE );
+	if( item.flags.two_sided === true || this.disable_cull_face)
+		gl.disable( gl.CULL_FACE );
+	else
+		gl.enable( gl.CULL_FACE );
 	
 	//blend
-	if(	item.blend_mode !== RD.BLEND_NONE)
+	if(	item.blend_mode !== RD.BLEND_NONE && !this.use_alpha_hash)
 	{
 		gl.enable( gl.BLEND );
 		switch( item.blend_mode )
@@ -4167,7 +4461,7 @@ Renderer.prototype.enableItemFlags = function(item)
 		gl.disable( gl.BLEND );
 
 	//PBR Materials
-	if(item.alphaMode == "BLEND")
+	if(!this.use_alpha_hash && item.alphaMode === "BLEND")
 	{
 		gl.enable( gl.BLEND );
 		gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
@@ -4476,6 +4770,62 @@ void main() {
 }
 `;
 
+RD.Renderer.prototype.drawImage = function( texture, sx, sy, sw, sh, x, y, w, h ) {
+	if(texture.constructor === String)
+		texture = this.loadTexture(texture);
+	if(!texture)
+		return;
+	var shader = this.shaders["_textured_quad"];
+	if(!shader)
+	{
+		var vs = `
+		precision highp float;
+		attribute vec3 a_vertex;
+		attribute vec2 a_coord;
+		varying vec2 v_coord;
+		uniform vec4 u_rect;
+		uniform vec4 u_src_rect;
+		uniform vec4 u_viewport;
+		float remap(in float value, in float low1, in float high1, in float low2, in float high2 ) { float range1 = high1 - low1; float range2 = high2 - low2; return low2 + range2 * (value - low1) / range1; }
+		
+		void main() {
+			v_coord = a_coord;
+			vec4 pos = vec4(a_coord * 2.0 - 1.0, 0.0, 1.0);
+			pos.x = remap(pos.x, -1.0, 1.0, u_rect.x, u_rect.x + u_rect.z );
+			pos.x = remap(pos.x, 0.0, u_viewport.z, -1.0, 1.0 );
+			pos.y = remap(pos.y, -1.0, 1.0, u_rect.y, u_rect.y + u_rect.w );
+			pos.y = remap(pos.y, 0.0, u_viewport.w, 1.0, -1.0 );
+			v_coord.x = remap( v_coord.x, 0.0, 1.0, u_src_rect.x, u_src_rect.x + u_src_rect.z );
+			v_coord.y = remap( v_coord.y, 1.0, 0.0, u_src_rect.y, u_src_rect.y + u_src_rect.w );
+			gl_Position = pos;
+		}
+		`
+
+		var fs = `
+		precision highp float;
+		varying vec2 v_coord;
+		uniform vec4 u_color;
+		uniform sampler2D u_texture;
+		void main() {
+			vec4 color = texture2D( u_texture, v_coord );
+			if(color.a == 0.0) discard;
+			gl_FragColor = color;
+		}
+		`;
+		shader = this.shaders["_textured_quad"] = new GL.Shader( vs, fs );
+	}
+	var mesh = GL.Mesh.getScreenQuad();
+	shader.bind();
+	shader.setUniform( "u_color", this._color );
+	shader.setUniform( "u_rect", [x,y,w,h] );
+	shader.setUniform( "u_src_rect", [sx / texture.width,sy / texture.height,sw / texture.width,sh / texture.height] );
+	shader.setUniform( "u_viewport", gl.viewport_data );	
+	shader.setUniform( "u_texture", texture.bind(0) );
+	gl.disable( GL.DEPTH_TEST );
+	gl.disable( GL.CULL_FACE );
+	shader.draw( mesh, GL.TRIANGLES );
+}
+
 /**
 * Returns the path appending the folder where assets are located
 * @method getAssetFullPath
@@ -4645,6 +4995,170 @@ Renderer.prototype.loadTexture = function( url, options, on_complete, skip_asset
 	
 	this.textures[ name ] = new_tex;
 	return new_tex;
+}
+
+Renderer.prototype.createShaders = function()
+{
+	var vertex_shader = this._vertex_shader = `
+		precision highp float;
+		attribute vec3 a_vertex;
+		attribute vec3 a_normal;
+		attribute vec2 a_coord;
+		varying vec3 v_pos;
+		varying vec3 v_normal;
+		varying vec2 v_coord;
+		#ifdef COLOR
+		attribute vec4 a_color;
+		varying vec4 v_color;
+		#endif
+		uniform mat4 u_model;
+		uniform mat4 u_viewprojection;
+		void main() {
+			v_pos = a_vertex;
+			v_normal = a_normal;
+			v_pos = (u_model * vec4(v_pos,1.0)).xyz;
+			v_normal = (u_model * vec4(v_normal,0.0)).xyz;
+			v_coord = a_coord;
+			#ifdef COLOR
+			v_color = a_color;
+			#endif
+			gl_Position = u_viewprojection * vec4( v_pos, 1.0 );
+			gl_PointSize = 2.0;
+		}
+	`;
+		
+	var fragment_shader = this._flat_fragment_shader = `
+				precision highp float;
+				uniform vec4 u_color;
+				#ifdef COLOR
+				varying vec4 v_color;
+				#endif
+				void main() {
+					vec4 color = u_color;
+					#ifdef COLOR
+					color *= v_color;
+					#endif
+				  gl_FragColor = color;
+				}
+	`;
+
+	gl.shaders["flat"] = this._flat_shader = new GL.Shader( vertex_shader, fragment_shader );
+	gl.shaders["flat_color"] = this._flat_instancing_shader = new GL.Shader(vertex_shader, fragment_shader, { COLOR:"" });
+	
+	this._point_shader = new GL.Shader(`
+				precision highp float;
+				attribute vec3 a_vertex;
+				uniform mat4 u_mvp;
+				uniform float u_pointSize;
+				void main() {
+					gl_PointSize = u_pointSize;
+					gl_Position = u_mvp * vec4(a_vertex,1.0);
+				}
+				`, `
+				precision highp float;
+				uniform vec4 u_color;
+				void main() {
+				  if( distance( gl_PointCoord, vec2(0.5)) > 0.5)
+				     discard;
+				  gl_FragColor = u_color;
+				}
+			`);
+	gl.shaders["point"] = this._point_shader;	
+	
+	this._color_shader = new GL.Shader(`
+		precision highp float;
+		attribute vec3 a_vertex;
+		attribute vec4 a_color;
+		varying vec4 v_color;
+		uniform vec4 u_color;
+		uniform mat4 u_mvp;
+		void main() {
+			v_color = a_color * u_color;
+			gl_Position = u_mvp * vec4(a_vertex,1.0);
+			gl_PointSize = 5.0;
+		}
+		`, `
+		precision highp float;
+		varying vec4 v_color;
+		void main() {
+		  gl_FragColor = v_color;
+		}
+	`);
+	gl.shaders["color"] = this._color_shader;
+
+	var fragment_shader = `
+		precision highp float;
+		varying vec2 v_coord;
+		uniform vec4 u_color;
+		#ifdef COLOR
+		varying vec4 v_color;
+		#endif
+		#ifdef ALBEDO
+			uniform sampler2D u_albedo_texture;
+		#else
+			uniform sampler2D u_color_texture;
+		#endif
+		uniform float u_global_alpha_clip;
+		void main() {
+			#ifdef ALBEDO
+				vec4 color = u_color * texture2D(u_albedo_texture, v_coord);
+			#else
+				vec4 color = u_color * texture2D(u_color_texture, v_coord);
+			#endif
+			#ifdef COLOR
+				color *= v_color;
+			#endif
+			if(color.w <= u_global_alpha_clip)
+				discard;
+			gl_FragColor = color;
+		}
+	`;
+	
+	gl.shaders["texture"] = this._texture_shader = new GL.Shader( vertex_shader, fragment_shader );
+
+	var skybox_vs = `
+	precision highp float;
+	attribute vec3 a_vertex;
+	attribute vec3 a_normal;
+	attribute vec2 a_coord;
+	varying vec3 v_pos;
+	varying vec3 v_wPos;
+	varying vec3 v_wNormal;
+	varying vec2 v_coord;
+	uniform mat4 u_model;
+	uniform mat4 u_viewprojection;
+	
+	void main() {
+		v_coord = a_coord;
+		vec3 vertex = a_vertex;	
+		v_pos = vertex;
+		v_wPos = (u_model * vec4(vertex,1.0)).xyz;
+		v_wNormal = (u_model * vec4(a_normal,0.0)).xyz;
+		gl_Position = u_viewprojection * vec4(v_wPos,1.0);
+	}
+	`;
+	
+	var skybox_fs = `
+	precision highp float;
+	varying vec3 v_pos;
+	varying vec3 v_wPos;
+	varying vec3 v_wNormal;
+	varying vec2 v_coord;
+	
+	uniform vec4 u_color;
+	uniform samplerCube u_color_texture;
+	uniform vec3 u_camera_position;
+	
+	void main() {
+	  vec3 L = normalize(vec3(1.,1.,-1.));
+	  vec3 N = normalize( v_wNormal );
+		vec3 E = normalize( v_wPos - u_camera_position );
+	  vec4 color = u_color;
+	  color.xyz = textureCube( u_color_texture, -E * vec3(1.0,-1.0,1.0) ).xyz;
+	  gl_FragColor = color;
+	}
+	`
+	gl.shaders["skybox"] = this._skybox_shader =  new GL.Shader( skybox_vs, skybox_fs );
 }
 
 Renderer.prototype.loadTextureAtlas = function(data, url, on_complete)
@@ -5159,17 +5673,17 @@ RD.Factory.templates = {
 
 //This node allows to render a mesh where vertices are changing constantly
 //Used for particles
-function DynamicMeshNode(o)
+class DynamicMeshNode extends SceneNode
 {
-	this._ctor();
-	if(o)
-		this.fromJSON(o);
+	constructor(o){
+		this.build();
+		if(o)
+			this.fromJSON(o);
+	}
 }
 
-DynamicMeshNode.prototype._ctor = function()
+DynamicMeshNode.prototype.build = function()
 {
-	SceneNode.prototype._ctor.call(this);
-
 	this.vertices = [];
 	this.normals = [];
 	this.coords = [];
@@ -5255,7 +5769,6 @@ DynamicMeshNode.prototype.preRender = function()
 	//shader.uniforms( renderer._uniforms ).uniforms( this._uniforms ).drawRange( mesh, this.primitive == null ? GL.TRIANGLES : this.primitive, , this._total_indices ? "triangles" : null );
 }
 
-extendClass( DynamicMeshNode, SceneNode );
 RD.DynamicMeshNode = DynamicMeshNode;
 
 /* used functions */
@@ -5334,332 +5847,70 @@ RD.parseTextConfig = function(text)
 	return root;
 }
 
+var temp_vec3 = vec3.create();
 
-Renderer.prototype.createShaders = function()
-{
-	if( gl._shaders_created )
+//encapsulates one render call, helps sorting
+class Renderable {
+	constructor()
 	{
-		this._flat_shader = gl.shaders["flat"];
-		this._flat_instancing_shader = gl.shaders["flat_instancing"];
-		this._flat_skinning_shader = gl.shaders["flat_skinning"];
-		this._point_shader = gl.shaders["point"];	
-		this._color_shader = gl.shaders["color"];
-		this._texture_shader = gl.shaders["texture"];
-		this._texture_albedo_shader = gl.shaders["texture_albedo"];
-		this._texture_instancing_shader = gl.shaders["texture_instancing"];
-		this._texture_albedo_instancing_shader = gl.shaders["texture_albedo_instancing"];
+		this.name = "";
+		this.id = -1;
+		this.mesh = null;
+		this.model = null;
+		this.index_buffer_name = "triangles";
+		this.group_index = -1;
+		this.draw_range = null;
+		this.material = null;
+		this.reverse_faces = false;
+		this.primitive = -1;
+		this.skin = null; //could be RD.Skeleton or { bindMatrices:[], joints:[], skeleton_root }
 
-		if(RD.Skeleton)
-			this._texture_skinning_shader = gl.shaders["texture_skinning"];
-
-		this._texture_transform_shader = gl.shaders["texture_transform"];
-		
-		//basic phong shader
-		this._phong_shader = gl.shaders["phong"];
-		this._phong_shader._uniforms = this._phong_uniforms;
-		this._phong_shader.uniforms( this._phong_uniforms );
-
-		this._phong_instancing_shader = gl.shaders["phong_instancing"];
-		this._phong_instancing_shader._uniforms = this._phong_uniforms;
-		this._phong_instancing_shader.uniforms( this._phong_uniforms );
-
-		this._textured_phong_shader = gl.shaders["textured_phong"];
-		this._textured_phong_shader.uniforms( this._phong_uniforms );
-		
-		this._textured_phong_instancing_shader = gl.shaders["textured_phong_instancing"];
-		this._textured_phong_instancing_shader.uniforms( this._phong_uniforms );
-		this._normal_shader = gl.shaders["normal"];
-		this._uvs_shader = gl.shaders["uvs"];
+		this.instances = null; //models
+		this.node = null;
+		this._render_priority = 0;
 	}
 
-	//adds code for skinning
-	var skinning = "";
-	var skinning_vs = "";
-	if(RD.Skeleton)
-	{	
-		skinning = `
-		#ifdef SKINNING
-			${RD.Skeleton.shader_code} //
-		#endif
-		`;
-		skinning_vs = `
-		#ifdef SKINNING
-			computeSkinning(v_pos,v_normal);
-		#endif
-		`;
+	copyFrom( rc ) {
+		this.name = rc.name;
+		this.id = rc.id;
+		this.mesh = rc.mesh;
+		this.model = rc.model;
+		this.index_buffer_name = rc.index_buffer_name;
+		this.group_index = rc.group_index;
+		this.material = rc.material;
+		this.reverse_faces = rc.reverse_faces;
+		this.node = rc.node;
+		this.skin = rc.skin;
+		this.draw_range = rc.draw_range;
+		this.instances = rc.instances;
+
+		this._render_priority = rc._render_priority;
 	}
 
-	var vertex_shader = this._vertex_shader = `
-				precision highp float;
-				attribute vec3 a_vertex;
-				attribute vec3 a_normal;
-				attribute vec2 a_coord;
-				varying vec3 v_pos;
-				varying vec3 v_normal;
-				varying vec2 v_coord;
-				#ifdef COLOR
-				attribute vec4 a_color;
-				varying vec4 v_color;
-				#endif
-				${skinning}
-				#ifdef INSTANCING
-					attribute mat4 u_model;
-				#else
-					uniform mat4 u_model;
-				#endif
-				uniform mat4 u_viewprojection;
-				void main() {
-					v_pos = a_vertex;
-					v_normal = a_normal;
-					${skinning_vs}
-					v_pos = (u_model * vec4(v_pos,1.0)).xyz;
-					v_normal = (u_model * vec4(v_normal,0.0)).xyz;
-					v_coord = a_coord;
-					#ifdef COLOR
-					v_color = a_color;
-					#endif
-					gl_Position = u_viewprojection * vec4( v_pos, 1.0 );
-					gl_PointSize = 2.0;
-				}
-				`;
-		
-	var fragment_shader = this._flat_fragment_shader = `
-				precision highp float;
-				uniform vec4 u_color;
-				#ifdef COLOR
-				varying vec4 v_color;
-				#endif
-				void main() {
-					vec4 color = u_color;
-					#ifdef COLOR
-					color *= v_color;
-					#endif
-				  gl_FragColor = color;
-				}
-	`;
-
-	gl.shaders["flat"] = this._flat_shader = new GL.Shader( vertex_shader, fragment_shader );
-	gl.shaders["flat_color"] = this._flat_instancing_shader = new GL.Shader(vertex_shader, fragment_shader, { COLOR:"" });
-	gl.shaders["flat_instancing"] = this._flat_instancing_shader = new GL.Shader(vertex_shader, fragment_shader, { INSTANCING:"" });
-	gl.shaders["flat_color_instancing"] = this._flat_instancing_shader = new GL.Shader(vertex_shader, fragment_shader, { INSTANCING:"",COLOR:"" });
-	gl.shaders["flat_skinning"] = this._flat_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, {SKINNING:""} );
-	gl.shaders["flat_color_skinning"] = this._flat_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, {SKINNING:"",COLOR:""} );
-	
-	this._point_shader = new GL.Shader(`
-				precision highp float;
-				attribute vec3 a_vertex;
-				uniform mat4 u_mvp;
-				uniform float u_pointSize;
-				void main() {
-					gl_PointSize = u_pointSize;
-					gl_Position = u_mvp * vec4(a_vertex,1.0);
-				}
-				`, `
-				precision highp float;
-				uniform vec4 u_color;
-				void main() {
-				  if( distance( gl_PointCoord, vec2(0.5)) > 0.5)
-				     discard;
-				  gl_FragColor = u_color;
-				}
-			`);
-	gl.shaders["point"] = this._point_shader;	
-	
-	this._color_shader = new GL.Shader(`
-		precision highp float;
-		attribute vec3 a_vertex;
-		attribute vec4 a_color;
-		varying vec4 v_color;
-		uniform vec4 u_color;
-		uniform mat4 u_mvp;
-		void main() {
-			v_color = a_color * u_color;
-			gl_Position = u_mvp * vec4(a_vertex,1.0);
-			gl_PointSize = 5.0;
+	computeRenderPriority( point )
+	{
+		this.name = this.node.name;
+		var bb = this.mesh.getBoundingBox();
+		if(!bb)
+			return;
+		var pos = mat4.multiplyVec3( temp_vec3, this.model, bb );
+		this._render_priority = this.material.render_priority || 0;
+		var dist = vec3.distance( point, pos );
+		if(this.material.alphaMode == "BLEND")
+		{
+			this._render_priority += dist * 0.001;
+			this._render_priority -= 100;
 		}
-		`, `
-		precision highp float;
-		varying vec4 v_color;
-		void main() {
-		  gl_FragColor = v_color;
+		else
+		{
+			this._render_priority += 1000 - dist * 0.001; //sort backwards
 		}
-	`);
-	gl.shaders["color"] = this._color_shader;
-
-	var fragment_shader = `
-		precision highp float;
-		varying vec2 v_coord;
-		uniform vec4 u_color;
-		#ifdef COLOR
-		varying vec4 v_color;
-		#endif
-		#ifdef ALBEDO
-			uniform sampler2D u_albedo_texture;
-		#else
-			uniform sampler2D u_color_texture;
-		#endif
-		uniform float u_global_alpha_clip;
-		void main() {
-			#ifdef ALBEDO
-				vec4 color = u_color * texture2D(u_albedo_texture, v_coord);
-			#else
-				vec4 color = u_color * texture2D(u_color_texture, v_coord);
-			#endif
-			#ifdef COLOR
-				color *= v_color;
-			#endif
-			if(color.w <= u_global_alpha_clip)
-				discard;
-			gl_FragColor = color;
-		}
-	`;
-	
-	gl.shaders["texture"] = this._texture_shader = new GL.Shader( vertex_shader, fragment_shader );
-	gl.shaders["texture_albedo"] = this._texture_albedo_shader = new GL.Shader( vertex_shader, fragment_shader, { ALBEDO:"" } );
-	gl.shaders["texture_albedo_color"] = this._texture_albedo_color_shader = new GL.Shader( vertex_shader, fragment_shader, { ALBEDO:"",COLOR:"" } );
-	gl.shaders["texture_albedo_skinning"] = this._texture_albedo_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, { SKINNING:"", ALBEDO:"" } );
-	gl.shaders["texture_albedo_color_skinning"] = this._texture_albedo_color_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, { SKINNING:"", ALBEDO:"", COLOR:"" } );
-	gl.shaders["texture_instancing"] = this._texture_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { INSTANCING:"" } );
-	gl.shaders["texture_albedo_instancing"] = this._texture_albedo_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { ALBEDO:"",INSTANCING:""  } );
-	gl.shaders["texture_albedo_color_instancing"] = this._texture_albedo_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { ALBEDO:"",INSTANCING:"",COLOR:""} );
-
-	if(RD.Skeleton)
-		gl.shaders["texture_skinning"] = this._texture_skinning_shader = new GL.Shader( vertex_shader, fragment_shader, { SKINNING:"" } );
-
-	this._texture_transform_shader = new GL.Shader(`
-		precision highp float;
-		attribute vec3 a_vertex;
-		attribute vec2 a_coord;
-		varying vec2 v_coord;
-		uniform mat4 u_mvp;
-		uniform mat3 u_texture_matrix;
-		void main() {
-			v_coord = (u_texture_matrix * vec3(a_coord,1.0)).xy;
-			gl_Position = u_mvp * vec4(a_vertex,1.0);
-			gl_PointSize = 5.0;
-		}
-		`, `
-		precision highp float;
-		varying vec2 v_coord;
-		uniform vec4 u_color;
-		uniform float u_global_alpha_clip;
-		uniform sampler2D u_color_texture;
-		void main() {
-			vec4 color = u_color * texture2D(u_color_texture, v_coord);
-			if(color.w <= u_global_alpha_clip)
-				discard;
-			gl_FragColor = color;
-		}
-	`);
-	gl.shaders["texture_transform"] = this._texture_transform_shader;
-	
-	var fragment_shader = this._fragment_shader = `
-			precision highp float;
-			varying vec3 v_normal;
-			varying vec2 v_coord;
-			uniform vec3 u_ambient;
-			uniform vec3 u_light_color;
-			uniform vec3 u_light_vector;
-			uniform vec4 u_color;
-			#ifdef TEXTURED
-				uniform sampler2D u_color_texture;
-			#endif
-			#ifdef UNIFORMS
-				UNIFORMS
-			#endif
-			void main() {
-				vec4 color = u_color;
-				#ifdef TEXTURED
-					color *= texture2D( u_color_texture, v_coord );
-				#endif
-				vec3 N = normalize(v_normal);
-				float NdotL = max(0.0, dot(u_light_vector,N));
-				#ifdef EXTRA
-					EXTRA
-				#endif
-				gl_FragColor = color * (vec4(u_ambient,1.0) + NdotL * vec4(u_light_color,1.0));
-			}
-	`;
-	
-	gl.shaders["phong"] = this._phong_shader = new GL.Shader( vertex_shader, fragment_shader );
-	this._phong_shader._uniforms = this._phong_uniforms;
-	this._phong_shader.uniforms( this._phong_uniforms );
-
-	gl.shaders["phong_instancing"] = this._phong_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { INSTANCING: "" } );
-	this._phong_instancing_shader._uniforms = this._phong_uniforms;
-	this._phong_instancing_shader.uniforms( this._phong_uniforms );
-
-	gl.shaders["textured_phong"] = this._textured_phong_shader = new GL.Shader( vertex_shader, fragment_shader, { TEXTURED: "" } );
-	this._textured_phong_shader.uniforms( this._phong_uniforms );
-	
-	gl.shaders["textured_phong_instancing"] = this._textured_phong_instancing_shader = new GL.Shader( vertex_shader, fragment_shader, { INSTANCING: "", TEXTURED: "" } );
-	this._textured_phong_instancing_shader.uniforms( this._phong_uniforms );
-
-	var fragment_shader = `
-			precision highp float;
-			varying vec3 v_normal;
-			void main() {
-				gl_FragColor = vec4( normalize(v_normal),1.0);
-			}
-	`;
-	gl.shaders["normal"] = this._normal_shader = new GL.Shader( vertex_shader, fragment_shader );
-
-	var fragment_shader = `
-			precision highp float;
-			varying vec2 v_coord;
-			void main() {
-				gl_FragColor = vec4(v_coord,0.0,1.0);
-			}
-	`;
-	gl.shaders["uvs"] = this._uvs_shader = new GL.Shader( vertex_shader, fragment_shader );
-
-	var skybox_vs = `
-	precision highp float;
-	attribute vec3 a_vertex;
-	attribute vec3 a_normal;
-	attribute vec2 a_coord;
-	varying vec3 v_pos;
-	varying vec3 v_wPos;
-	varying vec3 v_wNormal;
-	varying vec2 v_coord;
-	uniform mat4 u_model;
-	uniform mat4 u_viewprojection;
-	
-	void main() {
-		v_coord = a_coord;
-		vec3 vertex = a_vertex;	
-		v_pos = vertex;
-		v_wPos = (u_model * vec4(vertex,1.0)).xyz;
-		v_wNormal = (u_model * vec4(a_normal,0.0)).xyz;
-		gl_Position = u_viewprojection * vec4(v_wPos,1.0);
 	}
-	`;
-	
-	var skybox_fs = `
-	precision highp float;
-	varying vec3 v_pos;
-	varying vec3 v_wPos;
-	varying vec3 v_wNormal;
-	varying vec2 v_coord;
-	
-	uniform vec4 u_color;
-	uniform samplerCube u_color_texture;
-	uniform vec3 u_camera_position;
-	
-	void main() {
-	  vec3 L = normalize(vec3(1.,1.,-1.));
-	  vec3 N = normalize( v_wNormal );
-		vec3 E = normalize( v_wPos - u_camera_position );
-	  vec4 color = u_color;
-	  color.xyz = textureCube( u_color_texture, -E * vec3(1.0,-1.0,1.0) ).xyz;
-	  gl_FragColor = color;
-	}
-	`
-	gl.shaders["skybox"] = this._skybox_shader =  new GL.Shader( skybox_vs, skybox_fs );
-
-
-	gl._shaders_created = true;
 }
+
+
+
+RD.Renderable = Renderable;
 
 //****************************
 

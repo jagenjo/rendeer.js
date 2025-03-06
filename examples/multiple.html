@@ -32,17 +32,21 @@
 		//create a node
 		for(var i = -5; i <= 5; i++)
 		{
+			var mat = new RD.Material();
+			mat.register();
+
 			var man = new RD.SceneNode();
 			man.position = [i * 20,0,0];
-			man.color = [1,0,0,1];
 			man.mesh = "data/man.obj";
+			man.material = mat.name;
 
 			//inner update
 			man.update = function(dt) { 
 				this.rotate(dt,RD.UP);
-				this.color[0] = this.position[0] / 100 + 1;
-				this.color[1] = Math.sin( getTime() * 0.001 );
-				this.color[2] = 1.0 - this.color[1];
+				var mat = this.getMaterial();
+				mat.color[0] = this.position[0] / 100 + 1;
+				mat.color[1] = Math.sin( getTime() * 0.001 );
+				mat.color[2] = 1.0 - mat.color[1];
 			}
 
 			scene.root.addChild(man);

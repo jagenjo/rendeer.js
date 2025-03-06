@@ -72,7 +72,7 @@ function PBRPipeline( renderer )
 
 	this.material_uniforms = {
 		u_albedo: vec3.fromValues(1,1,1),
-		u_emissive: vec4.fromValues(0,0,0,0),
+		u_emissive: vec3.fromValues(0,0,0),
 		u_roughness: 1,
 		u_metalness: 1,
 		u_alpha: 1.0,
@@ -108,13 +108,7 @@ function PBRPipeline( renderer )
 	this.final_texture = null; //HDR image that contains the final scene before tonemapper
 	this.final_fbo = null;
 
-	this.render_calls = []; //current
-	this.render_calls_pool = []; //total
-	this.used_render_calls = 0;
-	this.rendered_render_calls = 0;
-
 	this.current_camera = null;
-	this.overlay_rcs = [];
 
 	this.compiled_shaders = {};//new Map();
 
@@ -143,15 +137,16 @@ PBRPipeline.maps_sampler = [];
 for( var i = 0; i <  PBRPipeline.maps.length; ++i )
 	PBRPipeline.maps_sampler[i] = "u_" + PBRPipeline.maps[i] + "_texture";
 
-PBRPipeline.prototype.render = function( renderer, nodes, camera, scene, skip_fbo, layers )
+PBRPipeline.prototype.render = function( renderer, renderables, camera, scene, skip_fbo, layers )
 {
 	this.renderer = renderer;
 	this.current_camera = camera;
 
+	//render
 	if(this.mode == PBRPipeline.FORWARD)
-		this.renderForward( nodes, camera, skip_fbo, layers );
+		this.renderForward( renderables, camera, skip_fbo, layers );
 	else if(this.mode == PBRPipeline.DEFERRED)
-		this.renderDeferred( nodes, camera, layers );
+		this.renderDeferred( renderables, camera, layers );
 }
 
 //gathers uniforms that do not change between rendered objects
@@ -194,10 +189,9 @@ PBRPipeline.prototype.fillGlobalUniforms = function( camera )
 		this.global_uniforms.u_exposure = Math.pow( this.exposure, 1.0/2.2 );
 		this.global_uniforms.u_gamma = this.use_rendertexture ? this.gamma : 1.0;
 	}
-
 }
 
-PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers )
+PBRPipeline.prototype.renderForward = function( renderables, camera, skip_fbo, layers )
 {
 	//prepare buffers
 	var w = Math.floor( gl.viewport_data[2] * this.resolution_factor );
@@ -253,8 +247,8 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 		this.onRenderOpaque( this, this.renderer, camera );
 	LEvent.trigger( this, "renderOpaque", this );
 
-	//render every node of the scene
-	this.renderNodes( nodes, camera, layers );
+	//render every renderable
+	this.renderRenderables( renderables, camera, layers );
 
 	//some useful callbacks
 	if(this.onRenderAlpha)
@@ -271,9 +265,9 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 
 	//overlay nodes are special case of nodes that should not be affected by postprocessing
 	var opaque = true;
-	if( this.overlay_rcs.length )
+	if( this.renderer.overlay_renderables.length )
 	{
-		var overlay_rcs = this.overlay_rcs;
+		var overlay_rcs = this.renderer.overlay_renderables;
 		this.global_uniforms.u_gamma = 1.0;
 		this.global_uniforms.u_exposure = 1.0;
 		gl.clear( gl.DEPTH_BUFFER_BIT );
@@ -286,28 +280,26 @@ PBRPipeline.prototype.renderForward = function( nodes, camera, skip_fbo, layers 
 }
 
 //extracts rendercalls and renders them
-PBRPipeline.prototype.renderNodes = function( nodes, camera, layers )
+PBRPipeline.prototype.renderRenderables = function( renderables, camera, layers )
 {
-	var rcs = this.getAllRenderCalls( nodes, camera, layers );
-
 	var precompose_opaque = (this.alpha_composite_callback || this.alpha_composite_target_texture) && GL.FBO.current;
 	var opaque = true;
-	var overlay_rcs = this.overlay_rcs;
+	var overlay_rcs = this.renderer.overlay_renderables;
 	overlay_rcs.length = 0;
 
-	//do the render call for every rcs
-	for(var i = 0; i < rcs.length; ++i)
+	//do the render call for every renderable
+	for(var i = 0; i < renderables.length; ++i)
 	{
-		var rc = rcs[i];
-		if(rc.material.overlay && this.allow_overlay )
+		var renderable = renderables[i];
+		if(renderable.material.overlay && this.allow_overlay )
 		{
-			overlay_rcs.push(rc);
+			overlay_rcs.push(renderable);
 			continue;
 		}
 
 		//clone the opaque framebuffer into a separate texture once the first semitransparent material is found (to allow refractive materials)
 		//allows to have refractive materials
-		if( opaque && precompose_opaque && rc.material.alphaMode == "BLEND")
+		if( opaque && precompose_opaque && renderable.material.alphaMode == "BLEND")
 		{
 			opaque = false;
 			if(this.alpha_composite_target_texture)
@@ -317,42 +309,15 @@ PBRPipeline.prototype.renderNodes = function( nodes, camera, layers )
 		}
 
 		//in case of instancing
-		var model = rc.model;
-		if( rc._instancing && rc._instancing.length )
-			model = GL.linearizeArray( rc._instancing, Float32Array );
+		var model = renderable.model;
+		if( renderable.instances && renderable.instances.length )
+			model = GL.linearizeArray( renderable.instances, Float32Array );
 
 		//render opaque stuff
-		this.renderMeshWithMaterial( model, rc.mesh, rc.material, rc.index_buffer_name, rc.group_index, rc.node.extra_uniforms, rc.reverse_faces, rc.skin );
+		this.renderMeshWithMaterial( model, renderable.mesh, renderable.material, renderable.index_buffer_name, renderable.group_index, renderable.node.extra_uniforms, renderable.reverse_faces, renderable.skin );
 	}
 }
 
-PBRPipeline.prototype.getAllRenderCalls = function( nodes, camera, layers )
-{
-	//reset render calls pool and clear all 
-	this.resetRenderCallsPool();	
-	var rcs = this.render_calls;
-	rcs.length = 0;
-
-	//extract render calls from scene nodes
-	for(var i = 0; i < nodes.length; ++i)
-	{
-		var node = nodes[i];
-		this.getNodeRenderCalls( node, camera, layers );
-	}
-
-	//sort by alpha and distance
-	if(this.onFilterRenderCalls)
-		this.onFilterRenderCalls( rcs );
-	for(var i = 0; i < rcs.length; ++i)
-		rcs[i].computeRenderPriority( camera._position );
-	rcs = rcs.sort( PBRPipeline.rc_sort_function );
-
-	//group by instancing
-	if( this.allow_instancing && gl.extensions.ANGLE_instanced_arrays )
-		rcs = this.groupRenderCallsForInstancing(rcs);
-
-	return rcs;
-}
 
 //after filling the final buffer (from renderForward) it applies FX and tonemmaper
 PBRPipeline.prototype.renderFinalBuffer = function()
@@ -384,175 +349,6 @@ PBRPipeline.prototype.renderFinalBuffer = function()
 	}
 
 	this.final_texture.toViewport( shader_postfx );
-}
-
-PBRPipeline.prototype.getNodeRenderCalls = function( node, camera, layers )
-{
-	//get mesh
-	var mesh = null;
-	if (node._mesh) //hardcoded mesh
-		mesh = node._mesh;
-	else if (node.mesh) //shared mesh
-	{
-		mesh = gl.meshes[ node.mesh ];
-		if(!mesh)
-		{
-			if( this.renderer.autoload_assets && node.mesh.indexOf(".") != -1)
-				this.renderer.loadMesh( node.mesh );
-			return;
-		}
-	}
-
-	if(layers === undefined)
-		layers = 0xFFFF;
-
-	//prepare matrix (must be done always or children wont have the right transform)
-	node.updateGlobalMatrix(true);
-
-	if(!mesh)
-		return;
-
-	if(node.flags.visible === false || !(node.layers & layers) )
-		return;
-
-	//skinning can work in two ways: through a RD.Skeleton, or through info about the joints node in the scene
-	var skinning = node.skeleton || node.skin || null;
-	if( skinning && !skinning.bones && !skinning.joints )
-		skinning = null;
-	if( skinning && skinning.bones && !skinning.bones.length )
-		skinning = null;
-	if( skinning && skinning.joints && !skinning.joints.length )
-		skinning = null;
-
-	if(skinning && skinning.joints)
-	{
-		//at least once
-		if(!skinning._bone_matrices)
-			node.updateSkinningBones( node.parentNode ); //use parent node as root
-	}
-
-	//check if inside frustum (skinned objects are not tested)
-	if(this.test_visibility && !skinning)
-	{
-		if(!PBRPipeline.temp_bbox)
-		{
-			PBRPipeline.temp_bbox = BBox.create();
-			PBRPipeline.aabb_center = BBox.getCenter( PBRPipeline.temp_bbox );
-			PBRPipeline.aabb_halfsize = BBox.getHalfsize( PBRPipeline.temp_bbox );
-		}
-		var aabb = PBRPipeline.temp_bbox;
-		BBox.transformMat4( aabb, mesh.getBoundingBox(), node._global_matrix );
-		if ( camera.testBox( PBRPipeline.aabb_center, PBRPipeline.aabb_halfsize ) == RD.CLIP_OUTSIDE )
-			return;
-
-		node._last_rendered_frame = this.renderer.frame; //mark last visible frame
-	}
-
-	//it has multiple submaterials
-	if( node.primitives && node.primitives.length )
-	{
-		for(var i = 0; i < node.primitives.length; ++i)
-		{
-			var prim = node.primitives[i];
-			var material = null;
-			if(!prim.material)
-				material = this.default_material;
-			else
-				material = RD.Materials[ prim.material ];
-			if(!material)
-				continue;
-
-			var rc = this.getRenderCallFromPool();
-			rc.material = material;
-			rc.model = node._global_matrix;
-			rc.mesh = mesh;
-			rc.group_index = i;
-			rc.node = node;
-			rc._render_priority = material.render_priority || 0;
-			rc._instancing = null;
-			rc.reverse_faces = node.flags.frontFace == GL.CW;
-			rc.skin = skinning;
-			this.render_calls.push( rc );
-		}
-
-		return;
-	}
-
-	if(node.material)
-	{
-		var material = RD.Materials[ node.material ];
-		if(material)
-		{
-			var rc = this.getRenderCallFromPool();
-			rc.material = material;
-			rc.model = node._global_matrix;
-			rc.mesh = mesh;
-			rc.group_index = -1;
-			rc.node = node;
-			rc._instancing = null;
-			rc.skin = skinning;
-			rc._render_priority = material.render_priority || 0;
-			rc.reverse_faces = node.flags.frontFace == GL.CW;
-			this.render_calls.push( rc );
-		}
-	}
-}
-
-PBRPipeline.prototype.groupRenderCallsForInstancing = function(rcs)
-{
-	var groups = {};
-
-	var no_group = 0; //used to force no grouping
-
-	//find groups
-	for(var i = 0; i < rcs.length; ++i)
-	{
-		var rc = rcs[i];
-		var key = null;
-		if (!rc._instancing && !rc.skin)
-			key = rc.mesh.name + ":" + rc.group_index + "/" + rc.material.name + (rc.reverse_faces ? "[R]" : "");
-		else
-			key = no_group++;
-		if(!groups[key])
-			groups[key] = [rc];
-		else
-			groups[key].push(rc);
-	}
-
-	var final_rcs = [];
-
-	//for every group
-	for(var i in groups)
-	{
-		var group = groups[i];
-		if( group.length == 0 )
-			continue;
-
-		//single
-		if( group.length == 1 )
-		{
-			var rc = group[0];
-			//rc._instancing = null;
-			if(!this.debug_instancing)
-				final_rcs.push( rc );
-			continue;
-		}
-
-		var rc = this.getRenderCallFromPool();
-		rc.copyFrom( group[0] );
-		rc._instancing = new Array(group.length);
-		for(var j = 0; j < group.length; ++j)
-			rc._instancing[j] = group[j].model;
-		final_rcs.push( rc );
-	}
-
-	return final_rcs;
-}
-
-//places semitransparent meshes the last ones
-PBRPipeline.rc_sort_function = function(a,b)
-{
-	return b._render_priority - a._render_priority;
 }
 
 PBRPipeline.prototype.setParallaxReflectionTransform = function( transform )
@@ -608,13 +404,13 @@ PBRPipeline.prototype.getShader = function( macros, fragment_shader_name, vertex
 	return shader;
 }
 
-PBRPipeline.prototype.renderRenderCall = function( rc )
+PBRPipeline.prototype.renderRenderable = function( rc )
 {
 	var model = rc.model;
-	if( rc._instancing && rc._instancing.length )
-		model = new Float32Array( rc._instancing.flat() );
+	if( rc.instances && rc.instances.length )
+		model = new Float32Array( rc.instances.flat() );
 
-	this.renderMeshWithMaterial( model, rc.mesh, rc.material, rc.index_buffer_name, rc.group_index, rc.node.extra_uniforms, rc.reverse_faces, rc.skin );
+	this.renderMeshWithMaterial( model, rc.mesh, rc.material, rc.index_buffer_name, rc.group_index, rc.node?.extra_uniforms, rc.reverse_faces, rc.skin );
 }
 
 PBRPipeline.default_backface_color = [0.1,0.1,0.1];
@@ -639,7 +435,6 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 	//materials
 	material_uniforms.u_albedo = material.color.subarray(0,3);
 	material_uniforms.u_emissive.set( material.emissive || RD.ZERO );
-	material_uniforms.u_emissive[3] = material.emissive_clamp_to_edge ? 1 : 0; //clamps to black
 	if(this.emissive_factor != 1.0)
 		vec3.scale( material_uniforms.u_emissive, material_uniforms.u_emissive, this.emissive_factor );
 	material_uniforms.u_backface_color = material.backface_color || PBRPipeline.default_backface_color;
@@ -850,7 +645,7 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 		gl.colorMask(true,true,true,true);
 		gl.depthFunc( gl.LEQUAL );
 		//gl.frontFace( reverse_faces ? gl.CW : gl.CCW );
-		this.rendered_render_calls++;
+		this.rendered_renderables++;
 	}
 
 	if(num_instances > 1)
@@ -867,7 +662,7 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 		else
 			shader.draw( mesh, material.primitive, index_buffer_name );
 	}
-	this.rendered_render_calls++;
+	this.rendered_renderables++;
 
 	renderer.disableItemFlags( material );
 	if( reverse_faces )
@@ -942,7 +737,7 @@ PBRPipeline.prototype.prepareBuffers = function( camera )
 
 PBRPipeline.prototype.renderToGBuffers = function( nodes, camera, layers )
 {
-	var rcs = this.getAllRenderCalls( nodes, camera, layers );
+	var rcs = this.getAllRenderables( nodes, layers, camera );
 
 	//prepare render
 	gl.clearColor( this.bgcolor[0], this.bgcolor[1], this.bgcolor[2], this.bgcolor[3] );
@@ -970,8 +765,8 @@ PBRPipeline.prototype.renderToGBuffers = function( nodes, camera, layers )
 
 		//in case of instancing
 		var model = rc.model;
-		if( rc._instancing && rc._instancing.length )
-			model = GL.linearizeArray( rc._instancing, Float32Array );
+		if( rc.instances && rc.instances.length )
+			model = GL.linearizeArray( rc.instances, Float32Array );
 
 		//render opaque stuff
 		this.renderMeshWithMaterialToGBuffers( model, rc.mesh, rc.material, rc.index_buffer_name, rc.group_index, rc.node.extra_uniforms, rc.reverse_faces, rc.skin );
@@ -1028,7 +823,6 @@ PBRPipeline.prototype.renderMeshWithMaterialToGBuffers = function( model_matrix,
 	//materials
 	material_uniforms.u_albedo = material.color.subarray(0,3);
 	material_uniforms.u_emissive.set( material.emissive || RD.ZERO );
-	material_uniforms.u_emissive[3] = material.emissive_clamp_to_edge ? 1 : 0; //clamps to black
 	if(this.emissive_factor != 1.0)
 		vec3.scale( material_uniforms.u_emissive, material_uniforms.u_emissive, this.emissive_factor );
 	material_uniforms.u_backface_color = material.backface_color || PBRPipeline.default_backface_color;
@@ -1181,7 +975,7 @@ PBRPipeline.prototype.renderMeshWithMaterialToGBuffers = function( model_matrix,
 		else
 			shader.draw( mesh, material.primitive, index_buffer_name );
 	}
-	this.rendered_render_calls++;
+	this.rendered_renderables++;
 
 	renderer.disableItemFlags( material );
 	if( reverse_faces )
@@ -1193,27 +987,6 @@ PBRPipeline.prototype.renderMeshWithMaterialToGBuffers = function( model_matrix,
 
 
 // ********************************************************
-
-PBRPipeline.prototype.getRenderCallFromPool = function()
-{
-	if( this.used_render_calls < this.render_calls_pool.length )
-	{
-		var rc = this.render_calls_pool[this.used_render_calls];
-		this.used_render_calls++;
-		return rc;
-	}
-
-	var rc = new RD.RenderCall();
-	rc.id = this.used_render_calls;
-	this.render_calls_pool.push( rc );
-	this.used_render_calls++;
-	return rc;
-}
-
-PBRPipeline.prototype.resetRenderCallsPool = function()
-{
-	this.used_render_calls = 0;
-}
 
 PBRPipeline.prototype.renderSkybox = function( camera )
 {
@@ -1522,64 +1295,7 @@ Math.radical_inverse = function(n)
    return u;
 }
 
-//encapsulates one render call, helps sorting
-function RenderCall()
-{
-	this.name = "";
-	this.id = -1;
-	this.mesh = null;
-	this.model = null;
-	this.index_buffer_name = "triangles";
-	this.group_index = -1;
-	this.material = null;
-	this.reverse_faces = false;
-	this.skin = null; //could be RD.Skeleton or { bindMatrices:[], joints:[], skeleton_root }
-
-	this._instancing = null;
-	this.node = null;
-	this._render_priority = 0;
-}
-
-var temp_vec3 = vec3.create();
-
-RenderCall.prototype.copyFrom = function( rc )
-{
-	this.name = rc.name;
-	this.id = rc.id;
-	this.mesh = rc.mesh;
-	this.model = rc.model;
-	this.index_buffer_name = rc.index_buffer_name;
-	this.group_index = rc.group_index;
-	this.material = rc.material;
-	this.reverse_faces = rc.reverse_faces;
-	this.node = rc.node;
-	this.skin = rc.skin;
-	this._instancing = rc._instancing;
-
-	this._render_priority = rc._render_priority;
-}
-
-RenderCall.prototype.computeRenderPriority = function( point )
-{
-	this.name = this.node.name;
-	var bb = this.mesh.getBoundingBox();
-	if(!bb)
-		return;
-	var pos = mat4.multiplyVec3( temp_vec3, this.model, bb );
-	this._render_priority = this.material.render_priority || 0;
-	var dist = vec3.distance( point, pos );
-	if(this.material.alphaMode == "BLEND")
-	{
-		this._render_priority += dist * 0.001;
-		this._render_priority -= 100;
-	}
-	else
-	{
-		this._render_priority += 1000 - dist * 0.001; //sort backwards
-	}
-}
-
 RD.PBRPipeline = PBRPipeline;
-RD.RenderCall = RenderCall;
+
 
 })(this);

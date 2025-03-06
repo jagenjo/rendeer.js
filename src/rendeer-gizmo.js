@@ -1,76 +1,79 @@
 (function(global){
 
-function Gizmo(o)
+class Gizmo extends RD.SceneNode
 {
-	this._ctor();
-	if(o)
-		this.configure(o);
-	this.render_priority = 0;
-	this.targets = null;
-	this.size = 150; //in pixels
-	this.mode = Gizmo.DEFAULT;
-	this.coordinates = Gizmo.WORLD_SPACE;
-	this.layers = 0xFF;
-	this.grid_size = 0;
-	this.allow_duplicating = true; //allow to duplicate selected nodes by shift drag
-	this.render_move_plane = true; //render the plane where moving
-
-	this.shader = "flat"; //do not change this
-	this._last = vec3.create();
-
-	this.onActionFinished = null; //called on mouseup
-	this.onDuplicateTargets = null; //called when user shift + drags
-
-	var colors = {x:Gizmo.XAXIS_COLOR,y:Gizmo.YAXIS_COLOR,z:Gizmo.ZAXIS_COLOR};
-	var actions = ["drag","movex","movey","movez","movexy","movexz","moveyz","scalex","scaley","scalez","scalexy","scaleyz","scalexz","rotatex","rotatey","rotatez","rotatefront","rotate","scale"];
-	this.actions = {};
-	for(var i in actions)
+	constructor(o)
 	{
-		var action = actions[i];
-		var info = {
-			mask: 0xFF,
-			pos: vec3.create(),
-			pos2D: vec3.create(),
-			radius: 0.15,
-			visible: false,
-			flag: Gizmo[action.toUpperCase()]
-		};
-		if(action.indexOf("move") == 0)
-			info.move = true;
-		if(action.indexOf("rotate") == 0)
-			info.rotate = true;
-		if(action.indexOf("scale") == 0)
-			info.scale = true;
-		info.color = colors[ action[ action.length - 1] ];
-		if(info.move || info.rotate)
-			info.cursor = "crosshair";
-		this.actions[ action ] = info;		
+		super(o);
+		if(o)
+			this.configure(o);
+		this.render_priority = 0;
+		this.targets = null;
+		this.size = 150; //in pixels
+		this.mode = Gizmo.DEFAULT;
+		this.coordinates = Gizmo.WORLD_SPACE;
+		this.layers = 0xFF;
+		this.grid_size = 0;
+		this.allow_duplicating = true; //allow to duplicate selected nodes by shift drag
+		this.render_move_plane = true; //render the plane where moving
+
+		this.shader = "flat"; //do not change this
+		this._last = vec3.create();
+
+		this.onActionFinished = null; //called on mouseup
+		this.onDuplicateTargets = null; //called when user shift + drags
+
+		var colors = {x:Gizmo.XAXIS_COLOR,y:Gizmo.YAXIS_COLOR,z:Gizmo.ZAXIS_COLOR};
+		var actions = ["drag","movex","movey","movez","movexy","movexz","moveyz","scalex","scaley","scalez","scalexy","scaleyz","scalexz","rotatex","rotatey","rotatez","rotatefront","rotate","scale"];
+		this.actions = {};
+		for(var i in actions)
+		{
+			var action = actions[i];
+			var info = {
+				mask: 0xFF,
+				pos: vec3.create(),
+				pos2D: vec3.create(),
+				radius: 0.15,
+				visible: false,
+				flag: Gizmo[action.toUpperCase()]
+			};
+			if(action.indexOf("move") == 0)
+				info.move = true;
+			if(action.indexOf("rotate") == 0)
+				info.rotate = true;
+			if(action.indexOf("scale") == 0)
+				info.scale = true;
+			info.color = colors[ action[ action.length - 1] ];
+			if(info.move || info.rotate)
+				info.cursor = "crosshair";
+			this.actions[ action ] = info;		
+		}
+
+		this.actions["scalex"].axis = this.actions["rotatex"].axis = this.actions["movex"].axis = vec3.fromValues(1,0,0);
+		this.actions["scaley"].axis = this.actions["rotatey"].axis = this.actions["movey"].axis = vec3.fromValues(0,1,0);
+		this.actions["scalez"].axis = this.actions["rotatez"].axis = this.actions["movez"].axis = vec3.fromValues(0,0,1);
+		this.actions["movexy"].normal = this.actions["scalexy"].normal = vec3.fromValues(0,0,1);
+		this.actions["movexz"].normal = this.actions["scalexz"].normal = vec3.fromValues(0,1,0);
+		this.actions["moveyz"].normal = this.actions["scaleyz"].normal = vec3.fromValues(1,0,0);
+		this.actions["movexy"].radius = this.actions["movexz"].radius = this.actions["moveyz"].radius = 0.1;
+		this.actions["scalexy"].radius = this.actions["scalexz"].radius = this.actions["scaleyz"].radius = 0.1;
+		this.actions["drag"].cursor = "move";
+		this.actions["scale"].cursor = "row-resize";
+		//this.actions["scale"].radius = 0.3;
+
+		this.click_model = mat4.create();
+		this.click_transform = new Float32Array(10);
+		this.click_pos = vec3.create();
+		this.click_2D = vec3.create();
+		this.click_2D2 = vec3.create();
+		this.click_2D_norm = vec3.create();
+		this.center_2D = vec3.create();
+		this.click_dist = 1;
+
+		this.mesh = "sphere";
+
+		this.createMaterial({name:"gizmo"}).render = Gizmo.prototype.render.bind(this)
 	}
-
-	this.actions["scalex"].axis = this.actions["rotatex"].axis = this.actions["movex"].axis = vec3.fromValues(1,0,0);
-	this.actions["scaley"].axis = this.actions["rotatey"].axis = this.actions["movey"].axis = vec3.fromValues(0,1,0);
-	this.actions["scalez"].axis = this.actions["rotatez"].axis = this.actions["movez"].axis = vec3.fromValues(0,0,1);
-	this.actions["movexy"].normal = this.actions["scalexy"].normal = vec3.fromValues(0,0,1);
-	this.actions["movexz"].normal = this.actions["scalexz"].normal = vec3.fromValues(0,1,0);
-	this.actions["moveyz"].normal = this.actions["scaleyz"].normal = vec3.fromValues(1,0,0);
-	this.actions["movexy"].radius = this.actions["movexz"].radius = this.actions["moveyz"].radius = 0.1;
-	this.actions["scalexy"].radius = this.actions["scalexz"].radius = this.actions["scaleyz"].radius = 0.1;
-	this.actions["drag"].cursor = "move";
-	this.actions["scale"].cursor = "row-resize";
-	//this.actions["scale"].radius = 0.3;
-
-	this.click_model = mat4.create();
-	this.click_transform = new Float32Array(10);
-	this.click_pos = vec3.create();
-	this.click_2D = vec3.create();
-	this.click_2D2 = vec3.create();
-	this.click_2D_norm = vec3.create();
-	this.center_2D = vec3.create();
-	this.click_dist = 1;
-
-	this.mesh = "sphere";
-
-	this.createMaterial({name:"gizmo"}).render = Gizmo.prototype.render.bind(this)
 }
 
 Gizmo.MOVEX = 1<<0;

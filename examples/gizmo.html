@@ -33,12 +33,12 @@
 		//create a node
         var man = new RD.SceneNode();
         man.mesh = "data/man.obj";
-        man.shader = "phong";
+		man.createMaterial();
         scene.root.addChild(man);
 
         var gizmo = new RD.Gizmo();
         gizmo.setTargets([man]);
-        gizmo.mode = RD.Gizmo.ALL ;
+        gizmo.mode = RD.Gizmo.ALL;
 
 		//global settings
 		var bg_color = vec4.fromValues(0.2,0.3,0.4,1);
