@@ -611,6 +611,7 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 
 	shader.uniforms( renderer._uniforms ); //globals
 	shader.uniforms( this.global_uniforms ); 
+	shader.uniforms( camera._uniforms ); 
 	shader.uniforms( material.uniforms ); //custom
 	shader.uniforms( material_uniforms ); //locals
 	shader.uniforms( sampler_uniforms ); //locals
@@ -806,6 +807,7 @@ PBRPipeline.prototype.gatherLightsFromNodes = function( nodes, layers )
 PBRPipeline.prototype.renderMeshWithMaterialToGBuffers = function( model_matrix, mesh, material, index_buffer_name, group_index, extra_uniforms, reverse_faces, skinning_info )
 {
 	var renderer = this.renderer;
+	var camera = renderer._camera;
 
 	var shader = null;
 
@@ -945,6 +947,7 @@ PBRPipeline.prototype.renderMeshWithMaterialToGBuffers = function( model_matrix,
 
 	shader.uniforms( renderer._uniforms ); //globals
 	shader.uniforms( this.global_uniforms ); 
+	shader.uniforms( camera._uniforms ); 
 	shader.uniforms( material.uniforms ); //custom
 	shader.uniforms( material_uniforms ); //locals
 	shader.uniforms( sampler_uniforms ); //locals
@@ -1018,13 +1021,13 @@ PBRPipeline.prototype.renderSkybox = function( camera )
 	mat4.scale( model, model, [10,10,10] ); //to avoid overlaps
 	this.renderer.setModelMatrix(model);
 	shader.uniforms( this.renderer._uniforms );
+	shader.uniforms( camera._uniforms );
 	shader.uniforms({
 		u_color_texture: texture.bind(1), //u_SpecularEnvSampler_texture uses also 1
 		u_is_rgbe: false,
 		u_exposure: this.exposure,
 		u_mipmap_offset: 0,
 		u_rotation: this.environment_rotation * DEG2RAD,
-		u_camera_position: camera.position
 	});
 	shader.draw(mesh,GL.TRIANGLES);
 }

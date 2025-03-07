@@ -54,7 +54,7 @@
 			var dt = (now - last) * 0.001;
 			renderer.clear(bg_color);
 			renderer.render(scene, camera);
-            renderer.render(scene, camera, [gizmo] );
+            renderer.render(scene, camera, [gizmo] ); //render gizmo on top
 			scene.update(dt);
 		}
 
@@ -62,7 +62,7 @@
 		renderer.context.captureMouse();
 		renderer.context.onmouse = function(e)
 		{
-            if( gizmo.onMouse(e) )
+            if( gizmo.onMouse(e) ) //send mouse events to gizmo
 				return;
             if(e.dragging)
                 camera.orbit( e.deltax * -0.002, [0,1,0] );

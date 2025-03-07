@@ -930,7 +930,7 @@ Gizmo.prototype.render = function(renderer)
 
 	var shader = gl.shaders[ this.shader ];
 	shader.uniforms(renderer._uniforms);
-	shader.uniforms(camera.uniforms);
+	shader.uniforms(camera._uniforms);
 	shader.uniforms(this.uniforms);
 
 	//axis lines when moving

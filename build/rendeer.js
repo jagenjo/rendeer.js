@@ -115,8 +115,9 @@ var SHADER_MACROS = {
 	OCCLUSION:	1<<9,
 	ALPHA_HASH:	1<<10,
 	LIGHTS: 	1<<11,
-	FLAT_NORMAL:1<<12
-}
+	FOG:		1<<12,
+	FLAT_NORMAL:1<<13
+};
 
 
 
@@ -1985,10 +1986,10 @@ class Camera {
 		this._right = vec3.create();
 		this._front = vec3.create();
 
-		this.uniforms = {
+		this._uniforms = {
 			u_view_matrix: this._view_matrix,
 			u_projection_matrix: this._projection_matrix,
-			u_viewprojection_matrix: this._viewprojection_matrix,
+			u_viewprojection: this._viewprojection_matrix,
 			u_camera_front: this._front,
 			u_camera_position: this._position,
 			u_camera_planes: vec2.fromValues(0.1,1000),
@@ -2227,8 +2228,8 @@ Camera.prototype.updateMatrices = function( force )
 
 	this.distance = vec3.distance(this._position, this._target);
 
-	this.uniforms.u_camera_planes[0] = this._near;
-	this.uniforms.u_camera_planes[1] = this._far;
+	this._uniforms.u_camera_planes[0] = this._near;
+	this._uniforms.u_camera_planes[1] = this._far;
 }
 
 Camera.prototype.getModel = function(m)
@@ -3388,12 +3389,13 @@ class Material
 		var mesh = rc.mesh;
 		var node = rc.node;
 		var skeleton = rc.skin;
+		var camera = renderer._camera;
 
 		//get shader
 		var shader = null;
 		if (renderer.on_getShader)
 		{
-			shader = renderer.on_getShader( rc.node, renderer._camera );
+			shader = renderer.on_getShader( rc.node, camera );
 			if(!shader)
 				return;
 		}
@@ -3498,9 +3500,10 @@ class Material
 			renderer._uniforms.u_global_alpha_clip = -1;
 
 		shader.uniforms( renderer._uniforms ); //globals
+		shader.uniforms( camera._uniforms ); //camera
 		shader.setUniform("u_color", this._color);
 		shader.setUniform("u_emissive", this._emissive);
-		shader.uniforms( this.uniforms ); //locals
+		shader.uniforms( this.uniforms ); //customs
 		if( renderer.light_model == "phong" )
 			shader.uniforms( renderer._phong_uniforms ); //light
 		if( renderer.onNodeShaderUniforms )
@@ -3594,14 +3597,11 @@ class Renderer {
 		this.allow_instancing = true;
 		this.point_size = 1;
 		
-		this._view_matrix = mat4.create();
-		this._projection_matrix = mat4.create();
-		this._viewprojection_matrix = mat4.create();
-		this._mvp_matrix = mat4.create();
-		this._model_matrix = mat4.create();
-		this._texture_matrix = mat3.create();
 		this._color = vec4.fromValues(1,1,1,1); //in case we need to set a color
-		this._viewprojection2D_matrix = mat4.create(); //used to 2D rendering
+
+		this._model_matrix = mat4.create();
+		this._mvp_matrix = mat4.create();
+		this._texture_matrix = mat3.create();
 
 		this.renderables = []; //current
 		this.renderables_pool = []; //total
@@ -3611,13 +3611,15 @@ class Renderer {
 		
 		this._nodes = [];
 		this._uniforms = {
-			u_view: this._view_matrix,
-			u_viewprojection: this._viewprojection_matrix,
 			u_model: this._model_matrix,
 			u_mvp: this._mvp_matrix,
 			u_global_alpha_clip: 0.0,
 			u_point_size: this.point_size,
 			u_res: new Float32Array([1,1,1,1])
+		};
+
+		this._fog_uniforms = {
+			u_fog_color: new Float32Array([0.5,0.5,0.5,1])
 		};
 
 		this.global_uniforms_containers = [ this._uniforms ];
@@ -3803,6 +3805,15 @@ Renderer.master_fragment_shader = `
 		uniform vec3 u_light_color;
 		uniform vec3 u_light_vector;
 	#endif
+	#ifdef LIGHTS
+		uniform int u_num_lights;
+		uniform vec4 u_light_color[4]; //color, type
+		uniform vec4 u_light_position[4]; //pos or vector
+		uniform vec4 u_light_params[4]; //front, max_dist
+		uniform vec4 u_light_shadowmap_area[4];
+		uniform vec4 u_light_shadowmap_vps[4];
+		uniform sampler2D u_shadowmap;
+	#endif
 	#ifdef ALPHA_HASH
 		uniform sampler2D u_bayer_texture;
 
@@ -3860,7 +3871,7 @@ Renderer.master_fragment_shader = `
 		#endif
 		gl_FragColor = color;
 	}
-`;	
+`;
 
 RD.Renderer = Renderer;
 
@@ -3990,7 +4001,6 @@ Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, sk
 
 	//get matrices in the camera
 	this.enableCamera( camera );
-	this.enable2DView();
 	this._uniforms.u_res[0] = gl.viewport_data[2];
 	this._uniforms.u_res[1] = gl.viewport_data[3];
 	this._uniforms.u_res[2] = 1 / gl.viewport_data[2];
@@ -4045,17 +4055,6 @@ Renderer.prototype.enableCamera = function(camera)
 	this._camera = camera;	
 	camera.updateMatrices(); //multiply
 	camera.extractPlanes(); //for frustrum culling
-	
-	this._view_matrix.set(camera._view_matrix);
-	this._projection_matrix.set(camera._projection_matrix);
-	this._viewprojection_matrix.set(camera._viewprojection_matrix);
-	this._uniforms.u_camera_position = camera.position;
-}
-
-//in case you are going to use functions to render in 2D in screen space
-Renderer.prototype.enable2DView = function()
-{
-	mat4.ortho( this._viewprojection2D_matrix, 0,gl.viewport_data[2], 0, gl.viewport_data[3], -1, 1 );
 }
 
 Renderer.prototype.renderSkybox = function(camera, texture_name)
@@ -4106,7 +4105,7 @@ Renderer.prototype.restoreState = function()
 Renderer.prototype.setModelMatrix = function(matrix)
 {
 	this._model_matrix.set( matrix );
-	mat4.multiply(this._mvp_matrix, this._viewprojection_matrix, matrix );
+	mat4.multiply(this._mvp_matrix, this._camera._viewprojection_matrix, matrix );
 }
 
 //allows to add some global uniforms without overwritting the existing ones
@@ -4180,6 +4179,7 @@ Renderer.prototype.renderMesh = function( model, mesh, texture, color, shader, m
 	if( texture )
 		this._uniforms.u_texture = texture.bind(0);
 	shader.uniforms(this._uniforms);
+	shader.uniforms(this._camera._uniforms);
 	if( color )
 		shader.uniforms({u_color: color});
 	shader.draw( mesh, mode == null ? gl.TRIANGLES : mode, index_buffer_name );
@@ -8090,7 +8090,7 @@ Gizmo.prototype.render = function(renderer)
 
 	var shader = gl.shaders[ this.shader ];
 	shader.uniforms(renderer._uniforms);
-	shader.uniforms(camera.uniforms);
+	shader.uniforms(camera._uniforms);
 	shader.uniforms(this.uniforms);
 
 	//axis lines when moving
@@ -10767,6 +10767,7 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 
 	shader.uniforms( renderer._uniforms ); //globals
 	shader.uniforms( this.global_uniforms ); 
+	shader.uniforms( camera._uniforms ); 
 	shader.uniforms( material.uniforms ); //custom
 	shader.uniforms( material_uniforms ); //locals
 	shader.uniforms( sampler_uniforms ); //locals
@@ -10962,6 +10963,7 @@ PBRPipeline.prototype.gatherLightsFromNodes = function( nodes, layers )
 PBRPipeline.prototype.renderMeshWithMaterialToGBuffers = function( model_matrix, mesh, material, index_buffer_name, group_index, extra_uniforms, reverse_faces, skinning_info )
 {
 	var renderer = this.renderer;
+	var camera = renderer._camera;
 
 	var shader = null;
 
@@ -11101,6 +11103,7 @@ PBRPipeline.prototype.renderMeshWithMaterialToGBuffers = function( model_matrix,
 
 	shader.uniforms( renderer._uniforms ); //globals
 	shader.uniforms( this.global_uniforms ); 
+	shader.uniforms( camera._uniforms ); 
 	shader.uniforms( material.uniforms ); //custom
 	shader.uniforms( material_uniforms ); //locals
 	shader.uniforms( sampler_uniforms ); //locals
@@ -11174,13 +11177,13 @@ PBRPipeline.prototype.renderSkybox = function( camera )
 	mat4.scale( model, model, [10,10,10] ); //to avoid overlaps
 	this.renderer.setModelMatrix(model);
 	shader.uniforms( this.renderer._uniforms );
+	shader.uniforms( camera._uniforms );
 	shader.uniforms({
 		u_color_texture: texture.bind(1), //u_SpecularEnvSampler_texture uses also 1
 		u_is_rgbe: false,
 		u_exposure: this.exposure,
 		u_mipmap_offset: 0,
 		u_rotation: this.environment_rotation * DEG2RAD,
-		u_camera_position: camera.position
 	});
 	shader.draw(mesh,GL.TRIANGLES);
 }
