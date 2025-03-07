@@ -10,9 +10,6 @@ function init()
 	//create a scene
 	scene = new RD.Scene();
 
-	//get shaders from a single text file	
-	renderer.loadShaders("shaders.txt");
-
 	//folder where stuff will be loaded	(textures, meshes, shaders )
 	renderer.setDataFolder("data");
 

@@ -190,53 +190,126 @@
 	};
 
 	FXGlow.cut_pixel_shader =
-		"precision highp float;\n\
-	varying vec2 v_coord;\n\
-	uniform sampler2D u_texture;\n\
-	uniform float u_threshold;\n\
-	void main() {\n\
-		gl_FragColor = max( texture2D( u_texture, v_coord ) - vec4( u_threshold ), vec4(0.0) );\n\
-	}";
+	`precision highp float;
+	varying vec2 v_coord;
+	uniform sampler2D u_texture;
+	uniform float u_threshold;
+	void main() {
+		gl_FragColor = max( texture2D( u_texture, v_coord ) - vec4( u_threshold ), vec4(0.0) );
+	}`;
 
 	FXGlow.scale_pixel_shader =
-		"precision highp float;\n\
-	varying vec2 v_coord;\n\
-	uniform sampler2D u_texture;\n\
-	uniform vec2 u_texel_size;\n\
-	uniform float u_delta;\n\
-	uniform float u_intensity;\n\
-	\n\
-	vec4 sampleBox(vec2 uv) {\n\
-		vec4 o = u_texel_size.xyxy * vec2(-u_delta, u_delta).xxyy;\n\
-		vec4 s = texture2D( u_texture, uv + o.xy ) + texture2D( u_texture, uv + o.zy) + texture2D( u_texture, uv + o.xw) + texture2D( u_texture, uv + o.zw);\n\
-		return s * 0.25;\n\
-	}\n\
-	void main() {\n\
-		gl_FragColor = u_intensity * sampleBox( v_coord );\n\
-	}";
+	`precision highp float;
+	varying vec2 v_coord;
+	uniform sampler2D u_texture;
+	uniform vec2 u_texel_size;
+	uniform float u_delta;
+	uniform float u_intensity;
+	
+	vec4 sampleBox(vec2 uv) {
+		vec4 o = u_texel_size.xyxy * vec2(-u_delta, u_delta).xxyy;
+		vec4 s = texture2D( u_texture, uv + o.xy ) + texture2D( u_texture, uv + o.zy) + texture2D( u_texture, uv + o.xw) + texture2D( u_texture, uv + o.zw);
+		return s * 0.25;
+	}
+	void main() {
+		gl_FragColor = u_intensity * sampleBox( v_coord );
+	}`;
 
-	FXGlow.final_pixel_shader =
-		"precision highp float;\n\
-	varying vec2 v_coord;\n\
-	uniform sampler2D u_texture;\n\
-	uniform sampler2D u_glow_texture;\n\
-	#ifdef USE_DIRT\n\
-		uniform sampler2D u_dirt_texture;\n\
-	#endif\n\
-	uniform vec2 u_texel_size;\n\
-	uniform float u_delta;\n\
-	uniform float u_intensity;\n\
-	uniform float u_dirt_factor;\n\
-	\n\
-	vec4 sampleBox(vec2 uv) {\n\
-		vec4 o = u_texel_size.xyxy * vec2(-u_delta, u_delta).xxyy;\n\
-		vec4 s = texture2D( u_glow_texture, uv + o.xy ) + texture2D( u_glow_texture, uv + o.zy) + texture2D( u_glow_texture, uv + o.xw) + texture2D( u_glow_texture, uv + o.zw);\n\
-		return s * 0.25;\n\
-	}\n\
-	void main() {\n\
-		vec4 glow = sampleBox( v_coord );\n\
-		#ifdef USE_DIRT\n\
-			glow = mix( glow, glow * texture2D( u_dirt_texture, v_coord ), u_dirt_factor );\n\
-		#endif\n\
-		gl_FragColor = texture2D( u_texture, v_coord ) + u_intensity * glow;\n\
-	}";
+	FXGlow.final_pixel_shader = `
+		"precision highp float;
+	varying vec2 v_coord;
+	uniform sampler2D u_texture;
+	uniform sampler2D u_glow_texture;
+	#ifdef USE_DIRT
+		uniform sampler2D u_dirt_texture;
+	#endif
+	uniform vec2 u_texel_size;
+	uniform float u_delta;
+	uniform float u_intensity;
+	uniform float u_dirt_factor;
+	
+	vec4 sampleBox(vec2 uv) {
+		vec4 o = u_texel_size.xyxy * vec2(-u_delta, u_delta).xxyy;
+		vec4 s = texture2D( u_glow_texture, uv + o.xy ) + texture2D( u_glow_texture, uv + o.zy) + texture2D( u_glow_texture, uv + o.xw) + texture2D( u_glow_texture, uv + o.zw);
+		return s * 0.25;
+	}
+	void main() {
+		vec4 glow = sampleBox( v_coord );
+		#ifdef USE_DIRT
+			glow = mix( glow, glow * texture2D( u_dirt_texture, v_coord ), u_dirt_factor );
+		#endif
+		gl_FragColor = texture2D( u_texture, v_coord ) + u_intensity * glow;
+	}`;
+
+	//Saturation, Contrast, Brightness ********************************
+	function FXColorCorrection()
+	{
+		this.contrast = 1;
+		this.brightness = 1;
+		this.saturation = 1;
+
+		this._uniforms = {
+			u_texture: 0,
+			u_contrast: 1,
+			u_brightness: 1,
+			u_saturation: 1,
+			u_quantization: 0,
+			u_texel_size: vec2.create()
+		};
+	}
+
+	FXColorCorrection.prototype.applyFX = function( tex, output_texture ) {
+
+		var width = tex.width;
+		var height = tex.height;
+
+		var uniforms = this._uniforms;
+
+		//cut
+		var shader = FXColorCorrection._shader;
+		if (!shader) {
+			shader = FXColorCorrection._shader = new GL.Shader(
+				GL.Shader.SCREEN_VERTEX_SHADER,
+				FXColorCorrection.pixel_shader
+			);
+		}
+
+		gl.disable(gl.DEPTH_TEST);
+		gl.disable(gl.BLEND);
+
+		uniforms.u_contrast = this.contrast;
+		uniforms.u_brightness = this.brightness;
+		uniforms.u_saturation = this.saturation;
+
+		//final composition
+		if ( !output_texture )
+		{
+			tex.bind(0);
+			shader.toViewport(uniforms);
+			return;
+		}
+
+		output_texture.drawTo(function() {
+			tex.bind(0);
+			shader.toViewport(uniforms);
+		});
+
+	};
+
+	FXColorCorrection.pixel_shader =
+	`precision highp float;
+	varying vec2 v_coord;
+	uniform sampler2D u_texture;
+	uniform float u_contrast;
+	uniform float u_brightness;
+	uniform float u_saturation;
+	void main() {
+		vec4 color = texture2D( u_texture, v_coord );
+		color.xyz = (color.xyz - vec3(0.5)) * u_contrast + vec3(0.5);
+		color.xyz *= u_brightness;
+		vec3 mid = vec3(color.x + color.y + color.z) / 3.0;
+		color.xyz = mix( mid, color.xyz, u_saturation );
+		gl_FragColor = color;
+	}`;
+
+	

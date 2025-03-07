@@ -1555,6 +1555,7 @@ RD.SceneNode.prototype.loadGLTF = function( url, callback )
 	function inner(node)
 	{
 		that.loading = false;
+		node.updateGlobalMatrix(false,true); //updates all models
 		if(node)
 			that.addChild( node );
 		if(callback)

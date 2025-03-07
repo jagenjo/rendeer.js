@@ -2083,7 +2083,7 @@ Object.defineProperty(Camera.prototype, 'frustum_size', {
 Object.defineProperty(Camera.prototype, 'near', {
 	get: function() { return this._near; },
 	set: function(v) { 
-		this._near = this.uniforms.u_camera_planes[0] = v; 
+		this._near = this._uniforms.u_camera_planes[0] = v; 
 		this._must_update_matrix = true;
 	},
 	enumerable: false //avoid problems
@@ -2092,7 +2092,7 @@ Object.defineProperty(Camera.prototype, 'near', {
 Object.defineProperty(Camera.prototype, 'far', {
 	get: function() { return this._far; },
 	set: function(v) { 
-		this._far = this.uniforms.u_camera_planes[1] = v;
+		this._far = this._uniforms.u_camera_planes[1] = v;
 		this._must_update_matrix = true;
 	},
 	enumerable: false //avoid problems
@@ -3267,7 +3267,7 @@ class Material
 		this.uniforms = {};
 		this.textures = {};
 
-		this.primitive = GL.TRIANGLES;
+		this.primitive = -1; //default
 		this.blend_mode = RD.BLEND_NONE;
 
 		this.flags = {
@@ -3410,6 +3410,8 @@ class Material
 					shader_hash |= SHADER_MACROS.ALPHA_HASH;
 				if(renderer.use_flat_normal)
 					shader_hash |= SHADER_MACROS.FLAT_NORMAL;
+				if(renderer.use_fog)
+					shader_hash |= SHADER_MACROS.FOG;
 				if( mesh.vertexBuffers.colors )
 					shader_hash |= SHADER_MACROS.COLOR;
 				if( mesh.vertexBuffers.coords1 )
@@ -3499,6 +3501,8 @@ class Material
 
 		shader.uniforms( renderer._uniforms ); //globals
 		shader.uniforms( camera._uniforms ); //camera
+		if(renderer.use_fog)
+			shader.uniforms( renderer._fog_uniforms );
 		shader.setUniform("u_color", this._color);
 		shader.setUniform("u_emissive", this._emissive);
 		shader.uniforms( this.uniforms ); //customs
@@ -3514,8 +3518,8 @@ class Material
 		if( rc.group_index != null && mesh.info && mesh.info.groups && mesh.info.groups[ rc.group_index ] )
 			group = mesh.info.groups[ rc.group_index ];
 
-		var primitive = rc.primitive > -1 ? rc.primitive : this.primitive;
-		if(primitive == null)
+		var primitive = rc.primitive;
+		if(primitive == null || primitive == -1)
 			primitive = gl.TRIANGLES;
 
 		if( instancing )
@@ -3590,6 +3594,7 @@ class Renderer {
 		this.disable_cull_face = false;
 		this.use_alpha_hash = false;
 		this.use_flat_normal = false;
+		this.use_fog = false;
 		this.layers_affect_children = false;
 		this.light_model = "flat"; //"flat" or "phong"
 		this.allow_instancing = true;
@@ -3803,7 +3808,12 @@ Renderer.master_fragment_shader = `
 		uniform vec3 u_light_color;
 		uniform vec3 u_light_vector;
 	#endif
+	#ifdef FOG
+		uniform vec4 u_fog_color;
+	#endif
+
 	#ifdef LIGHTS
+		//WIP
 		uniform int u_num_lights;
 		uniform vec4 u_light_color[4]; //color, type
 		uniform vec4 u_light_position[4]; //pos or vector
@@ -3824,6 +3834,14 @@ Renderer.master_fragment_shader = `
 
 	uniform float u_global_alpha_clip;
 	uniform vec4 u_res;
+	uniform vec3 u_camera_position;
+	uniform vec2 u_camera_planes;
+
+	float linearize_depth(float d)
+	{
+		float z_n = 2.0 * d - 1.0;
+		return 2.0 * u_camera_planes.x * u_camera_planes.y / (u_camera_planes.y + u_camera_planes.x - z_n * (u_camera_planes.y - u_camera_planes.x));
+	}	
 
 	void main() {
 		vec4 color = u_color;
@@ -3867,6 +3885,12 @@ Renderer.master_fragment_shader = `
 		#else
 			color.xyz += u_emissive;
 		#endif
+
+		#ifdef FOG
+			//float normalized_depth = linearize_depth(gl_FragCoord.z);//(gl_FragCoord.z * gl_FragCoord.w);
+			float fog_factor = length( u_camera_position - v_pos ) / u_camera_planes.y;
+			color.xyz = mix(color.xyz, u_fog_color.xyz, pow( fog_factor, 1.0 / u_fog_color.w ));
+		#endif
 		gl_FragColor = color;
 	}
 `;
@@ -3878,6 +3902,22 @@ Object.defineProperty( Renderer.prototype, "color", {
 		this._color.set(v);
 	},
 	get: function() { return this._color; },
+	enumerable: true
+});
+
+Object.defineProperty( Renderer.prototype, "fog_color", {
+	set: function(v){
+		this._fog_uniforms.u_fog_color.set([v[0],v[1],v[2]]);
+	},
+	get: function() { return this._fog_uniforms.u_fog_color.subarray(0,3); },
+	enumerable: true
+});
+
+Object.defineProperty( Renderer.prototype, "fog_density", {
+	set: function(v){
+		this._fog_uniforms.u_fog_color[3] = v;
+	},
+	get: function() { return this._fog_uniforms.u_fog_color[3]; },
 	enumerable: true
 });
 
@@ -4197,7 +4237,10 @@ Renderer.prototype.getAllRenderables = function( nodes, layers, camera )
 	{
 		var node = nodes[i];
 		node.flags.was_renderer = false;
-		this.getNodeRenderables( node, layers, camera );
+		if(node.flags.visible === false || !(node.layers & layers) )
+			continue;
+		if(node.mesh || node._mesh)
+			this.getNodeRenderables( node, layers, camera );
 	}
 
 	//sort by alpha and distance
@@ -4233,7 +4276,7 @@ Renderer.prototype.getRenderablesFromPool = function()
 	return rc;
 }
 
-Renderer.prototype.getNodeRenderables = function( node,layers,camera )
+Renderer.prototype.getNodeRenderables = function( node, camera )
 {
 	//get mesh
 	var mesh = null;
@@ -4250,16 +4293,10 @@ Renderer.prototype.getNodeRenderables = function( node,layers,camera )
 		}
 	}
 
-	if(layers === undefined)
-		layers = 0xFFFF;
-
 	//prepare matrix (must be done always or children wont have the right transform)
 	node.updateGlobalMatrix(true);
 
 	if(!mesh)
-		return;
-
-	if(node.flags.visible === false || !(node.layers & layers) )
 		return;
 
 	//skinning can work in two ways: through a RD.Skeleton, or through info about the joints node in the scene
@@ -4320,7 +4357,7 @@ Renderer.prototype.getNodeRenderables = function( node,layers,camera )
 			rc.instances = node._instances;
 			rc.reverse_faces = node.flags.frontFace == GL.CW;
 			rc.skin = skinning;
-			rc.primitive = prim.mode != null ? prim.mode : -1;
+			rc.primitive = prim.mode != null ? prim.mode : material.primitive;
 			this.renderables.push( rc );
 		}
 
@@ -4341,7 +4378,7 @@ Renderer.prototype.getNodeRenderables = function( node,layers,camera )
 			rc.instances = node._instances;
 			rc.skin = skinning;
 			rc.draw_range = node.draw_range;
-			rc.primitive = node.primitive != null ? node.primitive : -1;
+			rc.primitive = node.primitive != null ? node.primitive : material.primitive;
 			rc._render_priority = material.render_priority || 0;
 			rc.reverse_faces = node.flags.frontFace == GL.CW;
 			this.renderables.push( rc );
@@ -4365,7 +4402,7 @@ Renderer.prototype.groupRenderablesForInstancing = function(rcs)
 		if(!rc.mesh.name)
 			rc.mesh.name = "##M" + Renderer._last_mesh_id++;
 		if (!rc.instances && !rc.skin && !rc.draw_range)
-			key = rc.mesh.name + ":" + rc.group_index + "/" + rc.material.name + (rc.reverse_faces ? "[R]" : "");
+			key = rc.mesh.name + ":" + rc.group_index + "/" + rc.primitive + "/" + rc.material.name + (rc.reverse_faces ? "[R]" : "");
 		else
 			key = no_group++;
 		if(!groups.has(key))
@@ -5889,6 +5926,7 @@ class Renderable {
 		this.node = rc.node;
 		this.skin = rc.skin;
 		this.draw_range = rc.draw_range;
+		this.primitive = rc.primitive;
 		this.instances = rc.instances;
 
 		this._render_priority = rc._render_priority;
