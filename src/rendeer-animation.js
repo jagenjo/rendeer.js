@@ -472,7 +472,6 @@ Track.prototype.applyTrack = function( root, time, interpolation )
 			node = root.findNodeByName( this.target_node );
 		if(node)
 		{
-			this._node = node;
 			node[ this.target_property ] = sample;
 		}
 	}
@@ -1640,10 +1639,13 @@ RD.collectBones = function( root, skin_info, mesh )
 		skin_info._bone_matrices = new Float32Array( 16 * num_bones );
 	var bone_matrices = skin_info._bone_matrices;
 	var inner_m = mat4.create();
-	var root_node = root.findNodeByName( skin_info.skeleton_root );
+	var root_node = null;
+	if(skin_info.skeleton_root)
+		root_node = root.findNodeByName( skin_info.skeleton_root );
 	if(!root_node)
-		root_node == root;
+		root_node = root;
 	var bm = mat4.create();
+	var inv = mat4.invert(mat4.create(),root.getGlobalMatrix());
 
 	for (var i = 0; i < mesh.bones.length; ++i)
 	{
@@ -1656,7 +1658,10 @@ RD.collectBones = function( root, skin_info, mesh )
 		mat4.identity( bm );
 		inner_getGlobalMatrix( bone_node, root_node, bm );
 		//bm = bone_node.getGlobalMatrix();
+		if( inv ) //as joints have the root transform applied, we need to remove it
+			mat4.multiply( bm, inv, bm );
 		mat4.multiply( m, bm, bone_info[1] ); //use globals
+		//skin_info.bindMatrices are in mesh.bones[i][1]
 		if( mesh.bind_matrix )
 			mat4.multiply( m, m, mesh.bind_matrix );
 	}

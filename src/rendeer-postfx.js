@@ -216,7 +216,7 @@
 	}`;
 
 	FXGlow.final_pixel_shader = `
-		"precision highp float;
+	precision highp float;
 	varying vec2 v_coord;
 	uniform sampler2D u_texture;
 	uniform sampler2D u_glow_texture;

@@ -26,7 +26,6 @@
 		//create the rendering context
 		var context = GL.create({width: window.innerWidth, height:window.innerHeight});
 		renderer = new RD.Renderer(context);
-		renderer.light_model = 'phong'
         renderer.skybox_texture = "data/blursky_CUBEMAP.png";
 		document.body.appendChild(renderer.canvas); //attach
 
@@ -36,13 +35,15 @@
 		camera.lookAt( [10,10,10],[0,0,0],[0,1,0] );
 
 		var url = "data/DamagedHelmet.glb";
-
         var prefab = new RD.SceneNode();
         scene.root.addChild(prefab);
         prefab.loadGLTF(url);
 
 		//global settings
 		var bg_color = vec4.fromValues(0.9,0.9,0.9,1);
+		renderer.ambient_light = [0,0,0]
+		renderer.light_vector = [1,1,0]
+		renderer.light_color = [0,0,0]		
 
 		//main render loop
 		var last = now = getTime();

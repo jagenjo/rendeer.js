@@ -31,8 +31,10 @@ RD.GLTF = {
 	rename_assets: false, //force assets to have unique names (materials, meshes)
 
 	prefabs: {},
-
+	meshes: {},
+	
 	texture_options: { format: GL.RGBA, magFilter: GL.LINEAR, minFilter: GL.LINEAR_MIPMAP_LINEAR, wrap: GL.REPEAT, no_flip: false },
+	supports_anisotropy: false,
 
 	load: function( url, callback, extension, callback_progress )
 	{
@@ -41,6 +43,13 @@ RD.GLTF = {
 		var json = null;
 		var filename = "";
 		var folder = "";
+
+		if(typeof(gl) !== "undefined")
+		{
+			this.meshes = gl.meshes;
+			if( gl.extensions.EXT_texture_filter_anisotropic )
+				this.supports_anisotropy = true;
+		}
 
 		//its a regular url
 		if(url.constructor === String)
@@ -51,34 +60,41 @@ RD.GLTF = {
 			folder = folder.join("/");
 
 			//console.log("loading gltf json...");
-
-			var xhr = new XMLHttpRequest();
-			xhr.onload = function() {
-				if(this.status != 200)
-				{
-					console.error("GLTF not found",url);
-					if(callback)
-						callback(null);
-					return;
-				}
-				//console.log("Loaded: ",xhr.status,xhr.response );
-				onData(xhr.response);
-			};
-
-			xhr.onerror = function() { // only triggers if the request couldn't be made at all
-			  console.error("Network Error");
-			  if(callback)
-				  callback(null);
-			};
-
-			if(callback_progress)
-				xhr.onprogress = function(event) { // triggers periodically
-				  callback_progress(url, event.loaded, event.total);
+			if(typeof(fs) !== "undefined") //nodejs
+			{
+				var data = new Uint8Array( fs.readFileSync(url,{}).buffer );
+				onData(data.buffer);
+			}
+			else
+			{
+				var xhr = new XMLHttpRequest();
+				xhr.onload = function() {
+					if(this.status != 200)
+					{
+						console.error("GLTF not found",url);
+						if(callback)
+							callback(null);
+						return;
+					}
+					//console.log("Loaded: ",xhr.status,xhr.response );
+					onData(xhr.response);
 				};
 
-			xhr.responseType = extension == "gltf" ? "json" : "arraybuffer";
-			xhr.open('GET', url);
-			xhr.send();
+				xhr.onerror = function() { // only triggers if the request couldn't be made at all
+				console.error("Network Error");
+				if(callback)
+					callback(null);
+				};
+
+				if(callback_progress)
+					xhr.onprogress = function(event) { // triggers periodically
+					callback_progress(url, event.loaded, event.total);
+					};
+
+				xhr.responseType = extension == "gltf" ? "json" : "arraybuffer";
+				xhr.open('GET', url);
+				xhr.send();
+			}
 		}
 		else //array of files already loaded
 		{
@@ -356,7 +372,10 @@ RD.GLTF = {
 	{
 		var info = json.nodes[ index ];
 
-		node = node || new RD.SceneNode();
+		if(info.extensions && info.extensions.KHR_lights_punctual)
+			node = node || new RD.Light();
+		else
+			node = node || new RD.SceneNode();
 
 		//extract node info
 		for(var i in info)
@@ -409,6 +428,9 @@ RD.GLTF = {
 				case "skin":
 					node.skin = this.parseSkin( v, json );
 					break;
+				case "camera":
+					node.camera = json.cameras[v];
+					break;
 				case "children": 
 					if(v.length)
 					{
@@ -424,6 +446,10 @@ RD.GLTF = {
 				case "extra":
 					node.extras = v;
 					break;
+				case "extensions":
+					if(v.KHR_lights_punctual)
+					this.parseLight(node, json.extensions.KHR_lights_punctual.lights[ v.KHR_lights_punctual.light ] );
+					break;
 				default:
 					if( i[0] != "_" )
 						console.log("gltf node info ignored:",i,info[i]);
@@ -433,7 +459,7 @@ RD.GLTF = {
 
 		if(node.mesh && node.skin)
 		{
-			var mesh = gl.meshes[ node.mesh ];
+			var mesh = this.meshes[ node.mesh ];
 			mesh.bones = [];
 			for(var j = 0; j < node.skin.joints.length; ++j)
 			{
@@ -453,10 +479,33 @@ RD.GLTF = {
 		return node;
 	},
 
+	parseLight: function(light, info)
+	{
+		if(info.color)
+			light.color = info.color;
+		else
+			light.color = [1,1,1];
+		if(info.intensity != null)
+			vec3.scale( light.color, light.color, info.intensity / 1000);
+		if(info.type === "spot")
+			light.light_type = RD.SPOT_LIGHT;
+		else if(info.type === "point")
+			light.light_type = RD.POINT_LIGHT;
+		else if(info.type === "directional")
+			light.light_type = RD.DIRECTIONAL_LIGHT;
+		if(info.spot)
+		{
+			light.cone_start = info.spot.innerConeAngle * RAD2DEG * 2;
+			light.cone_end = info.spot.outerConeAngle * RAD2DEG * 2;
+		}
+		if(info.range != null)
+			light.max_distance = info.range;
+	},
+
 	parseMesh: function(index, json)
 	{
 		var mesh_info = json.meshes[index];
-		var meshes_container = gl.meshes;
+		var meshes_container = this.meshes;
 
 		//extract primitives
 		var meshes = [];
@@ -487,7 +536,9 @@ RD.GLTF = {
 		//merge primitives
 		var mesh = null;
 		if(meshes.length > 1)
+		{
 			mesh = GL.Mesh.mergeMeshes( meshes );
+		}
 		else if (meshes.length == 1)
 		{
 			var mesh_data = meshes[0].mesh;
@@ -516,6 +567,8 @@ RD.GLTF = {
 			mesh.name = json.filename + "::mesh_" + (mesh_info.name || index);
 		//mesh.material = primitive.material;
 		//mesh.primitive = mesh_info.mode;
+		//console.log(mesh.constructor.name);
+
 		mesh.updateBoundingBox();
 		mesh.computeGroupsBoundingBoxes();
 		meshes_container[ mesh.name ] = mesh;
@@ -858,7 +911,6 @@ RD.GLTF = {
 		material = new RD.Material();
 		material.name = mat_name;
 		material.from_filename = json.filename;
-		//material.shader_name = "phong";
 
 		if(info.alphaMode != null)
 			material.alphaMode = info.alphaMode;
@@ -882,7 +934,7 @@ RD.GLTF = {
 			if(info.pbrMetallicRoughness.baseColorTexture)
 			{
 				material.textures.albedo = this.parseTexture( info.pbrMetallicRoughness.baseColorTexture, json );
-				if( material.alphaMode == "MASK" && gl.extensions.EXT_texture_filter_anisotropic ) //force anisotropy
+				if( material.alphaMode == "MASK" && this.supports_anisotropy ) //force anisotropy
 				{
 					var tex = gl.textures[ material.textures.albedo.texture ];
 					if(tex)
@@ -914,6 +966,8 @@ RD.GLTF = {
 			if( info.extensions.KHR_materials_emissive_strength && material.emissive)
 				vec3.scale( material.emissive, material.emissive, info.extensions.KHR_materials_emissive_strength.emissiveStrength );
 		}
+		if(info.extras)
+			material.extras = info.extras;
 
 		if(RD.Materials[ material.name ])
 			console.debug("Material overwritten: " + material.name );
@@ -931,6 +985,10 @@ RD.GLTF = {
 			console.warn("gltf texture not found");
 			return null;
 		}
+
+		//no webgl
+		if(typeof(gl) === "undefined")
+			return null;
 
 		//source
 		var source = json.images[ info.source ];
@@ -1162,13 +1220,16 @@ RD.GLTF = {
 				bins.push(this.filename);
 			else if(extension == "jpeg" || extension == "jpg" || extension == "png")
 			{
-				var image_url = URL.createObjectURL( new Blob([data],{ type : e.target.mimeType }) );
-				var texture = GL.Texture.fromURL( image_url, { wrap: gl.REPEAT, extension: extension, magFilter, minFilter } );				
-				texture.name = this.filename;
-				gl.textures[ texture.name ] = texture;
-				//hack in case we drag textures individually
-				if( gl.textures[ "/textures/" + texture.name ] )
-					gl.textures[ "/textures/" + texture.name ] = texture;
+				if(typeof(gl) !== "undefined")
+				{
+					var image_url = URL.createObjectURL( new Blob([data],{ type : e.target.mimeType }) );
+					var texture = GL.Texture.fromURL( image_url, { wrap: gl.REPEAT, extension: extension, magFilter, minFilter } );				
+					texture.name = this.filename;
+					gl.textures[ texture.name ] = texture;
+					//hack in case we drag textures individually
+					if( gl.textures[ "/textures/" + texture.name ] )
+						gl.textures[ "/textures/" + texture.name ] = texture;
+				}
 			}
 
 			files_data[ this.filename ] = { 
@@ -1244,7 +1305,7 @@ RD.GLTF = {
 		{
 			var node = allNodes[i];
 			node._index_in_glb = i;
-			var mesh = node.mesh ? gl.meshes[ node.mesh ] : null;
+			var mesh = node.mesh ? this.meshes[ node.mesh ] : null;
 			if(mesh && mesh._index_in_glb == null) {
 				mesh._index_in_glb = last_mesh_id++;
 				meshes[mesh._index_in_glb] = mesh;
@@ -1295,7 +1356,6 @@ RD.GLTF = {
 			}
 		}
 
-
 		for(var i = 0; i < allNodes.length; ++i)
 		{
 			var node = allNodes[i];
@@ -1305,7 +1365,7 @@ RD.GLTF = {
 			if(node.mesh)
 			{
 				var node_material = RD.Materials[ node.material ];
-				var mesh = gl.meshes[node.mesh];
+				var mesh = this.meshes[node.mesh];
 				if(mesh)
 				{
 					if(node.primitives && node.primitives.length)

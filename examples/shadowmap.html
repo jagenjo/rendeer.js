@@ -11,98 +11,6 @@
 	<script type="text/javascript" src="../external/gl-matrix-min.js"></script>
 	<script type="text/javascript" src="../external/litegl.js"></script>
 	<script type="text/javascript" src="../src/rendeer.js"></script>
-	<script type="text/javascript" src="../src/rendeer-light.js"></script>
-
-	<script id="shaders" type="x-shader/x-glsl">
-		\shaders
-		
-		phong_shadow basic.vs phong_shadow.fs
-		
-		\basic.vs 
-		
-			precision highp float;
-			attribute vec3 a_vertex;
-			attribute vec3 a_normal;
-			attribute vec2 a_coord;
-		
-			varying vec3 v_wPosition;
-			varying vec3 v_wNormal;
-			varying vec2 v_coord;
-		
-			uniform mat4 u_viewprojection;
-			uniform mat4 u_model;
-		
-			void main() {
-				vec3 vertex = a_vertex;
-		
-				v_wPosition = (u_model * vec4(vertex,1.0)).xyz;
-				v_wNormal = (u_model * vec4(a_normal,0.0)).xyz;
-				v_coord = a_coord;
-		
-				gl_Position = u_viewprojection * vec4( v_wPosition, 1.0 );
-				gl_PointSize = 2.0;
-			}
-		
-		\phong_shadow.fs
-		
-			precision highp float;
-		
-			varying vec3 v_wPosition;
-			varying vec3 v_wNormal;
-			varying vec2 v_coord;
-		
-			uniform vec3 u_camera_position;
-			uniform vec4 u_background_color;
-			uniform vec3 u_ambient_light;
-			uniform vec3 u_light_color;
-			uniform vec3 u_light_vector;
-		
-			uniform vec4 u_color;
-		
-			uniform mat4 u_shadowmap_matrix;
-			uniform sampler2D u_shadowmap_texture;
-		
-			float testShadowmap( vec3 pos )
-			{
-				const float bias = 0.004;
-				vec4 proj = u_shadowmap_matrix * vec4(pos, 1.0);
-				vec2 sample = (proj.xy / proj.w) * vec2(0.5) + vec2(0.5);
-				if(sample.x >= 0.0 && sample.x <= 1.0 && sample.y >= 0.0 && sample.y <= 1.0 )
-				{
-					float depth = texture2D( u_shadowmap_texture, sample ).x;
-					if( depth > 0.0 && depth < 1.0 && depth <= ( ((proj.z-bias) / proj.w) * 0.5 + 0.5) )
-						return 0.0;
-				}
-				return 1.0;
-			}
-		
-			void main() {
-		
-				vec3 N = normalize( v_wNormal );
-		
-				//compute material
-				vec4 material = u_color;
-		
-				//compute light
-				float NdotL = max( dot( N, -u_light_vector ), 0.0 );
-				vec3 light = u_ambient_light;
-				float shadow = 1.0;
-				shadow = testShadowmap( v_wPosition );
-				light += shadow * u_light_color * NdotL;
-		
-		
-				vec3 E = normalize(v_wPosition - u_camera_position);
-		
-				//final
-				vec3 final_color = material.xyz * light;
-		
-				//fresnel
-				final_color = mix( final_color, u_background_color.xyz, pow( 1.0 - abs(dot(N,reflect(E,N))), 1.1 ) );
-		
-				gl_FragColor = vec4( final_color, material.a );
-			}
-		</script>
-		
 
 	<script type="text/javascript">
 	
@@ -115,7 +23,6 @@
 		var context = GL.create({width: window.innerWidth, height:window.innerHeight});
 		var renderer = new RD.Renderer(context);
 		document.body.appendChild(renderer.canvas); //attach
-		renderer.setShadersFromFile( document.getElementById("shaders").innerHTML );
 
 		//create camera
 		var camera = new RD.Camera();
@@ -132,8 +39,8 @@
 		//create the floor
 		var floor = new RD.SceneNode();
 		floor.mesh = "planeXZ"; //this mesh comes by default
-		floor.scaling = 500;
-		floor.createMaterial();
+		floor.scaling = 1000;
+		floor.createMaterial({color:[0.5,0.5,0.5]});
 		pivot.addChild(floor);
 
 		//create the human
@@ -144,21 +51,40 @@
 
 		//light with shadowmap 
 		var light = new RD.Light();
-		light.castShadows = true;
-		light.lookAt([300,400,0],[0,100,0],[0,1,0]);
+		light.light_type = RD.SPOT_LIGHT;
+		light.cast_shadows = true;
+		light.color = [1.5,0.5,0.5];
+		light.cone_start = 25;
+		light.cone_end = 30;
+		light.max_distance = 1000;
+		light.lookAt([400,500,0],[0,50,0],[0,1,0]);
+		scene.root.addChild(light);
+
+		var light2 = new RD.Light();
+		light2.light_type = RD.DIRECTIONAL_LIGHT;
+		light2.color = [0.5,0.3,0.1];
+		light2.area = 100;
+		light2.cast_shadows = true;
+		light2.max_distance = 1000;
+		light2.lookAt([-50,500,0],[0,0,0],[0,1,0]);
+		scene.root.addChild(light2);
+
+		var light3 = new RD.Light();
+		light3.light_type = RD.POINT_LIGHT;
+		light3.color = [1,1,0];
+		light3.max_distance = 100;
+		light3.position = [50,20,0];
+		scene.root.addChild(light3);
 
 		//global settings
-		var bg_color = vec4.fromValues(0.2,0.3,0.4,1);
+		var bg_color = vec4.fromValues(0.0,0.0,0.0,1);
+		renderer.ambient_light = [0.1,0.1,0.1];
 
-		var global_uniforms = { 
-			u_camera_position: camera.position,
-			u_background_color: bg_color,
-			u_light_vector: light.camera.getFront(),
-			u_light_color: vec3.fromValues(1,1,1),
-			u_ambient_light: vec3.fromValues(0.3,0.4,0.5),
-			u_shadowmap_matrix: light.camera._viewprojection_matrix,
-			u_shadowmap_texture: 4
-		};
+		var viewdepth_shader = new GL.Shader.createFX(`
+				float z_n = 2.0 * color.x - 1.0;
+    			float f = 2.0 * u_zNear * u_zFar / (u_zFar + u_zNear - z_n * (u_zFar - u_zNear));
+				color = vec4(f / u_zFar);
+		`,`uniform float u_zNear; uniform float u_zFar;`);
 
 		//main render loop
 		var last = now = getTime();
@@ -170,18 +96,20 @@
 			now = getTime();
 			var dt = (now - last) * 0.001;
 
-			//generate shadowmap
-			light.generateShadowmap(renderer, scene);
+			gl.viewport(0,0,gl.canvas.width,gl.canvas.height);
 
 			//render final pass
-			light.shadowmap.texture.bind(4);
-			renderer.shaders["phong_shadow"].uniforms( global_uniforms );
-			renderer.shader_overwrite = "phong_shadow";
 			renderer.clear(bg_color);
 			renderer.render(scene, camera);
 
 			//update
 			scene.update(dt);
+
+			gl.viewport(0,0,400,400);
+			gl.disable( gl.DEPTH_TEST );
+			gl.disable( gl.BLEND );
+			if(renderer.shadows_info?.texture)
+				renderer.shadows_info.texture.toViewport(viewdepth_shader,{u_zNear: 0.01, u_zFar: light.max_distance});
 		}
 
 		//input
@@ -189,7 +117,7 @@
 		renderer.context.onmousemove = function(e)
 		{
 			if(e.dragging)
-				pivot.rotate( e.deltax * 0.01, RD.UP );
+				camera.orbit( e.deltax * 0.01, RD.UP );
 		}
 	}
 

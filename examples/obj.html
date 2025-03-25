@@ -47,6 +47,9 @@
 
 		//global settings
 		var bg_color = vec4.fromValues(0.2,0.3,0.4,1);
+		renderer.ambient_light = [0.25,0.25,0.25]
+		renderer.light_vector = [1,1,0]
+		renderer.light_color = [0.5,0.5,0.5]
 
 		//main render loop
 		var last = now = getTime();

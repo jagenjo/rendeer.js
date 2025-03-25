@@ -106,17 +106,24 @@ var SHADER_MACROS = {
 	INSTANCING: 1<<2,
 	SKINNING:	1<<3,
 	POINTS:		1<<4,
-	PHONG:		1<<5,
+	NO_TRIANGLES:1<<5,
+
 	TEXTURE:	1<<6,
 	ALBEDO:		1<<7,
 	EMISSIVE:	1<<8,
 	OCCLUSION:	1<<9,
 	ALPHA_HASH:	1<<10,
 	LIGHTS: 	1<<11,
-	FOG:		1<<12,
-	FLAT_NORMAL:1<<13
+	SHADOWS: 	1<<12,
+	FOG:		1<<13,
+	FLAT_NORMAL:1<<14,
+
+	SECOND_BUFFER:1<<15,
+	FLAT_COLOR:	1<<16,
 };
 
+var temp_vec3 = vec3.create();
+var temp_vec3b = vec3.create();
 
 
 //Global Containers (other containers are added from other scripts)
@@ -818,6 +825,7 @@ class SceneNode {
 				continue;
 			if(in_layer)
 				result.push(node);
+			node.updateGlobalMatrix(true);
 			node.getVisibleChildren(result, layers);
 		}
 
@@ -1457,7 +1465,7 @@ class SceneNode {
 		}
 
 		return bb;
-	}		
+	}
 
 	/**
 	* @method createMaterial
@@ -1469,6 +1477,24 @@ class SceneNode {
 		var material = new RD.Material(mat);
 		this.material = material.register().name;
 		return material;
+	}
+
+	/**
+	* @method replaceMaterial
+	* @param { string } old_mat old material name
+	* @param { string } material new material name
+	* @return { RD.Material } the material 
+	*/
+	replaceMaterial(old_mat, mat)
+	{
+		for(let i = 0; i < this.primitives.length; ++i)
+		{
+			var p = this.primitives[i];
+			if(p.material === old_mat)
+				p.material = mat;
+		}
+		if(this.material === old_mat)
+			this.material = mat;
 	}
 
 	/**
@@ -1716,7 +1742,11 @@ SceneNode.prototype.testRayWithMesh = (function(){
 
 		//test world ray against bounding sphere only if constant scale
 		var bb = mesh.getBoundingBox();
-		if(model[0] !== 0 && model[0] === model[5] && model[0] === model[10] && !geo.testRaySphere(ray.origin, ray.direction, vec3.transformMat4( origin, bb.subarray(0,3), model ), vec3.length(bb.subarray(3,6)) * model[0],undefined,max_dist))
+		var axisX = Math.abs(model[0] + model[1] + model[2]);
+		var axisY = Math.abs(model[4] + model[5] + model[6]);
+		var axisZ = Math.abs(model[8] + model[9] + model[10]);
+		var radius = vec3.length(bb.subarray(3,6)) * Math.sqrt(axisX);
+		if( Math.abs(axisX - axisY) < 0.001 && Math.abs(axisX - axisZ) < 0.001 && !geo.testRaySphere(ray.origin, ray.direction, vec3.transformMat4( origin, bb.subarray(0,3), model ), radius,undefined,max_dist))
 			return false;
 
 		//ray to local
@@ -1911,6 +1941,34 @@ SceneNode.prototype.findNearestPointToNode = function( point, maxDist, out, out_
 	return result;
 }
 
+RD.findNearestPointToNodes = function( point, nodes, maxDist, out, out_normal )
+{
+	var result = null;
+	var dist = maxDist;
+
+	var temp = vec3.create();
+	var temp2 = vec3.create();
+	out = out || vec3.create();
+	out_normal = out_normal || vec3.create();
+	for(let i = 0; i < nodes.length; ++i)
+	{
+		var node = nodes[i];
+		if(!node.mesh)
+			continue;
+		var dist = node.findNearestPointToMesh(point, dist, temp, temp2);
+		if(!result || dist < result.distance)
+		{
+			vec3.copy(out, temp);
+			vec3.copy(out_normal, temp2);
+			if(!result)
+				result = { node, distance: dist, position: out, normal: out_normal };
+			result.node = node;
+			result.distance = dist;
+		}
+	}
+			
+	return result;
+}
 
 
 /**
@@ -2656,6 +2714,14 @@ Camera.prototype.orientMatrixToCamera = function( matrix )
 	matrix.set( this._front, 8 );
 }
 
+//it rotates the matrix so it faces the camera
+Camera.prototype.followNode = function( node, up )
+{
+	var eye = node.getGlobalPosition();
+	var center = node.localToGlobal([0,0,-1]);
+	this.lookAt(eye,center,up || [0,1,0]);
+}
+
 Camera.prototype.extractPlanes = function()
 {
 	var vp = this._viewprojection_matrix;
@@ -2726,6 +2792,18 @@ Camera.prototype.testMesh = (function(){
 		return this.testBox(center,halfsize);
 	}
 })();
+
+/**
+* test if a bounding box is inside frustrum (you must call camera.extractPlanes() previously to update frustrum planes)
+* @method testBBox
+* @param {BBox} aabb the bounding box in BBox format
+* @return {number} CLIP_OUTSIDE or CLIP_INSIDE or CLIP_OVERLAP
+*/
+Camera.prototype.testBBox = function(aabb)
+{
+	return this.testBox(aabb,aabb.subarray(3,6));
+}
+
 /**
 * test if box is inside frustrum (you must call camera.extractPlanes() previously to update frustrum planes)
 * @method testBox
@@ -2809,6 +2887,19 @@ Camera.prototype.testSphere = function(center, radius)
 	return CLIP_INSIDE;
 }
 
+/** Tells how big would it look into the screen, in proportion to viewport size */
+Camera.prototype.projectedSphereSize = function(center, radius)
+{
+	var a = mat4.projectVec3( temp_vec3, this.viewprojection_matrix, center );
+	var b = vec3.scaleAndAdd(temp_vec3b, center, this._right, radius);
+	mat4.projectVec3( b, this.viewprojection_matrix, b );
+	return vec2.distance(a,b);
+}
+
+Camera.prototype.computeAproximateScreenSize = function(bbox) {
+	return this.projectedSphereSize(bbox, bbox[12]);
+}
+
 
 /**
 * Scene holds the full scene graph, use root to access the root child
@@ -2842,6 +2933,24 @@ Scene.prototype.clear = function()
 	this._nodes.length = 0;
 	this._nodes_by_id = {};
 	this.time = 0;
+}
+
+/**
+* adds a node to the root
+* @method add
+*/
+Scene.prototype.add = function(node)
+{
+	this.root.addChild(node);
+}
+
+/**
+* removes a node from the root
+* @method remove
+*/
+Scene.prototype.remove = function(node)
+{
+	this.root.removeChild(node);
 }
 
 /**
@@ -3293,6 +3402,20 @@ class Material
 	set opacity(v) { this._color[3] = v; }
 	get opacity() { return this._color[3]; }
 
+	/**
+	* Stores this material in the global RD.Materials container
+	* @method register
+	* @param {String} name if no name is passed it will use this.name
+	*/
+	register(name)
+	{
+		if(!name)
+			name = this.name || RD.makeHash(32);
+		this.name = name;
+		RD.Materials[ this.name ] = this;
+		return this; //to chain
+	}
+
 	fromJSON(o)
 	{
 		for(var i in o)
@@ -3332,20 +3455,6 @@ class Material
 		}
 	}
 
-	/**
-	* Stores this material in the global RD.Materials container
-	* @method register
-	* @param {String} name if no name is passed it will use this.name
-	*/
-	register(name)
-	{
-		if(!name)
-			name = this.name || RD.makeHash(32);
-		this.name = name;
-		RD.Materials[ this.name ] = this;
-		return this; //to chain
-	}
-
 	toJSON()
 	{
 		var o = {
@@ -3353,7 +3462,7 @@ class Material
 			textures: JSON.parse( JSON.stringify(this.textures) ) //clone
 		};
 
-		o.color = typedArrayToArray( this._color );
+		o.color = Array.from( this._color );
 		if(this.name)
 			o.name = this.name;
 		if(this.alphaMode)
@@ -3363,15 +3472,15 @@ class Material
 		if(this.alphaCutoff != 0.5)
 			o.alphaCutoff = this.alphaCutoff;
 		if(this.uv_transform)
-			o.uv_transform = this.uv_transform;
+			o.uv_transform = Array.from( this.uv_transform );
 		if(this.normalFactor)
 			o.normalFactor = this.normalFactor;
 		if(this.displacementFactor)
 			o.displacementFactor = this.displacementFactor;
 		if(this.backface_color)
-			o.backface_color = typedArrayToArray( this.backface_color );
+			o.backface_color = Array.from( this.backface_color );
 		if(this.emissive)
-			o.emissive = typedArrayToArray( this.emissive );
+			o.emissive = Array.from( this.emissive );
 		if(this.model)
 		{
 			o.model = this.model;
@@ -3381,188 +3490,83 @@ class Material
 
 		return o;
 	}
+}
 
-	render( renderer, rc )
+
+
+RD.Material = Material;
+
+
+/** LIGHT ****************************** */
+
+RD.SPOT_LIGHT = 1;
+RD.POINT_LIGHT = 2;
+RD.DIRECTIONAL_LIGHT = 3;
+
+class Light extends RD.SceneNode
+{
+	static DEFAULT_SHADOWMAP_RESOLUTION = 2048;
+
+	intensity = 1;
+	area = 10; //frustum
+	cast_shadows = false;
+	max_distance = 10;
+	light_type = RD.SPOT_LIGHT;
+	cone_start = 30;
+	cone_end = 45;
+
+	_shadowmap_index = -1;
+
+	_color = vec3.fromValues(0.9,0.9,0.9);
+	_center = vec3.create();
+	_front = vec3.create(); //light direction (from light to scene)
+
+	constructor()
 	{
-		var mesh = rc.mesh;
-		var node = rc.node;
-		var skeleton = rc.skin;
-		var camera = renderer._camera;
+		super();
+	}
 
-		//get shader
-		var shader = null;
-		if (renderer.on_getShader)
-		{
-			shader = renderer.on_getShader( rc.node, camera );
-			if(!shader)
-				return;
-		}
-		else
-		{
-			var shader_name = renderer.shader_overwrite || this.shader_name;
-			if(shader_name)
-				shader = gl.shaders[ shader_name ];
-			else
-			{
-				//generate automatic shader
-				var shader_hash = 0;
-				if(renderer.use_alpha_hash)
-					shader_hash |= SHADER_MACROS.ALPHA_HASH;
-				if(renderer.use_flat_normal)
-					shader_hash |= SHADER_MACROS.FLAT_NORMAL;
-				if(renderer.use_fog)
-					shader_hash |= SHADER_MACROS.FOG;
-				if( mesh.vertexBuffers.colors )
-					shader_hash |= SHADER_MACROS.COLOR;
-				if( mesh.vertexBuffers.coords1 )
-					shader_hash |= SHADER_MACROS.COORD1;
-				if( skeleton )
-					shader_hash |= SHADER_MACROS.SKINNING;
-				if( rc.instances )
-					shader_hash |= SHADER_MACROS.INSTANCING;
-				if( renderer.light_model == "phong" )
-					shader_hash |= SHADER_MACROS.PHONG;
-				if( this.textures.color )
-					shader_hash |= SHADER_MACROS.TEXTURE;
-				if( this.textures.albedo )
-					shader_hash |= SHADER_MACROS.ALBEDO;
-				if( this.textures.emissive )
-					shader_hash |= SHADER_MACROS.EMISSIVE;
-				if( this.textures.occlusion )
-					shader_hash |= SHADER_MACROS.OCCLUSION;
+	set color(v){
+		this._color.set(v);
+	}
+	get color() { return this._color; }
+
+	followCamera(camera, viewsize) {
+		var size = viewsize || 5;
 		
-				shader = renderer.getMasterShader( shader_hash );
-			}
-		}
+		var offset = vec3.scaleAndAdd( vec3.create(), camera.target, this._vector, -viewsize );
+		this.lookAt( offset, camera.target, camera.up );
+		this.camera.orthographic(size,0.01,size*3,1);
+		this.camera.updateMatrices();
+	}
 
-		if (!shader) 
-		{
-			var color_texture = this.textures.color || this.textures.albedo;
-			if( skeleton )
-				shader = color_texture ? renderer._texture_skinning_shader : renderer._flat_skinning_shader;
-			else
-				shader = color_texture ? renderer._texture_shader : renderer._flat_shader;
-		}
+	insideCamera(camera) {
+		if(this.light_type === RD.DIRECTIONAL_LIGHT)
+			return true;
+		var center = this.getGlobalPosition();
+		return camera.testSphere(center, this.max_distance) !== CLIP_OUTSIDE;
+	}
 
-		//shader doesnt support instancing
-		var instancing = false;
-		if( rc.instances && renderer.supports_instancing )
-			instancing = true;	
-		if( instancing && !shader.attributes.u_model )
-			instancing = false;
-
-		//get texture
-		var slot = 0;
-		var texture = null;
-		for(var i in this.textures)
-		{
-			var texture_name = this.textures[i];
-			if(!texture_name)
-				continue;
-			if( texture_name.constructor === Object ) //in case it has properties for this channel
-				texture_name = texture_name.texture;
-			var texture_uniform_name = "u_" + i + "_texture";
-
-			if( shader && !shader.samplers[ texture_uniform_name ]) //texture not used in shader
-				continue; //do not bind it
-
-			texture = gl.textures[ texture_name ];
-			if(!texture)
-			{
-				if(renderer.autoload_assets && texture_name.indexOf(".") != -1)
-					renderer.loadTexture( texture_name, renderer.default_texture_settings );
-				texture = gl.textures[ "white" ];
-			}
-
-			this.uniforms[ texture_uniform_name ] = texture.bind( slot++ );
-		}
-
-		//weird case of mesh without textures
-		if( !texture )
-		{
-			if(shader.samplers.u_albedo_texture || shader.samplers.u_color_texture )
-				gl.textures[ "white" ].bind(0);
-		}
-
-		//flags
-		renderer.enableItemFlags( this );
-
-		renderer._uniforms.u_model.set( rc.model );
-		if( skeleton && shader.uniformInfo.u_bones )
-		{
-			this.bones = skeleton.computeFinalBoneMatrices( this.bones, mesh );
-			shader.setUniform("u_bones", this.bones );
-		}
-
-		if(this.alphaCutoff != null && this.alphaMode == "MASK")
-			renderer._uniforms.u_global_alpha_clip = this.alphaCutoff;
-		else
-			renderer._uniforms.u_global_alpha_clip = -1;
-
-		shader.uniforms( renderer._uniforms ); //globals
-		shader.uniforms( camera._uniforms ); //camera
-		if(renderer.use_fog)
-			shader.uniforms( renderer._fog_uniforms );
-		shader.setUniform("u_color", this._color);
-		shader.setUniform("u_emissive", this._emissive);
-		shader.uniforms( this.uniforms ); //customs
-		if( renderer.light_model == "phong" )
-			shader.uniforms( renderer._phong_uniforms ); //light
-		if( renderer.onNodeShaderUniforms )
-			renderer.onNodeShaderUniforms( renderer, shader, node );
-
-		if(renderer.use_alpha_hash && shader.hasUniform("u_bayer_texture"))
-			shader.uniforms({u_bayer_texture:renderer._bayer_texture.bind(slot++)});
-
-		var group = null;
-		if( rc.group_index != null && mesh.info && mesh.info.groups && mesh.info.groups[ rc.group_index ] )
-			group = mesh.info.groups[ rc.group_index ];
-
-		var primitive = rc.primitive;
-		if(primitive == null || primitive == -1)
-			primitive = gl.TRIANGLES;
-
-		if( instancing )
-		{
-			instancing_uniforms.u_model = rc.instances;
-			if(group)
-				shader.drawInstanced( mesh, primitive, rc.index_buffer_name, instancing_uniforms, group.start, group.length );
-			else if(node.draw_range)
-				shader.drawInstanced( mesh, primitive, rc.index_buffer_name, instancing_uniforms, rc.draw_range[0], rc.draw_range[1] );
-			else
-				shader.drawInstanced( mesh, primitive, rc.index_buffer_name, instancing_uniforms );
-		}
-		else if( rc.instances ) // in case the instancing extension is not supported, this will never be used...
-		{
-			for(var i = 0; i < rc.instances.length; i++)
-			{
-				shader.setUniform("u_model", rc.instances[i]);
-				if(group)
-					shader.drawRange( mesh, primitive, group.start, group.length, rc.index_buffer_name );
-				else if(rc.draw_range)
-					shader.drawRange( mesh, primitive, rc.index_buffer_name, rc.draw_range[0], rc.draw_range[1] );
-				else
-					shader.draw( mesh, primitive, rc.index_buffer_name );
-				renderer.draw_calls += 1;
-			}
-			renderer.draw_calls--;
-		}
-		else
-		{
-			if( group )
-				shader.drawRange( mesh, primitive, group.start, group.length, rc.index_buffer_name );
-			else if(rc.draw_range)
-				shader.drawRange( mesh, primitive, rc.index_buffer_name, rc.draw_range[0], rc.draw_range[1] );
-			else
-				shader.draw( mesh, primitive, rc.index_buffer_name );
-		}
-
-		renderer.disableItemFlags( this );
-		renderer.draw_calls += 1;
+	overlaps(renderable){
+		return this.light_type === RD.DIRECTIONAL_LIGHT ||
+		renderable.skin ||
+		geo.testSphereBBox(this._center,this.max_distance,renderable.bounding) !== RD.CLIP_OUTSIDE;
 	}
 }
 
-RD.Material = Material;
+RD.Light = Light;
+
+
+class View {
+	width = 0;
+	height = 0;
+	layers = 0xFF;
+	textures = {};
+	fbos = {};
+}
+
+RD.View = View;
+
 
 /**
 * Renderer in charge of rendering a Scene
@@ -3571,7 +3575,58 @@ RD.Material = Material;
 * @constructor
 */
 class Renderer {
-		constructor( context_or_canvas, options )
+
+	_color = vec4.fromValues(1,1,1,1);
+	_ambient_light = vec3.fromValues(0.9,0.9,0.9);
+	_light_color = vec3.fromValues(0.1,0.1,0.1);
+	_light_vector = vec3.fromValues(0.5442, 0.6385, 0.544);
+
+	_main_view = new View();
+
+	set color(v){
+		this._color.set(v);
+	}
+	get color(){
+		return this._color;
+	}
+
+	set ambient_light(v){
+		this._ambient_light.set(v);
+	}
+	get ambient_light(){
+		return this._ambient_light;
+	}
+
+	set light_vector(v){
+		this._light_vector.set(v);
+	}
+	get light_vector(){
+		return this._light_vector;
+	}
+
+	set light_color(v){
+		this._light_color.set(v);
+	}
+	get light_color(){
+		return this._light_color;
+	}
+
+	set fog_color(v){
+		this._fog_uniforms.u_fog_color.set([v[0],v[1],v[2]]);
+	}
+
+	get fog_color() { 
+		return this._fog_uniforms.u_fog_color.subarray(0,3);
+	}
+	
+	set fog_density(v){
+		this._fog_uniforms.u_fog_color[3] = v;
+	}
+	get fog_density() {
+		return this._fog_uniforms.u_fog_color[3];
+	}
+
+	constructor( context_or_canvas, options )
 	{
 		options = options || {};
 		var context = null;
@@ -3590,18 +3645,19 @@ class Renderer {
 
 		this.assets_folder = "";
 				
-		this.reverse_normals = false; //used for reflections
-		this.disable_cull_face = false;
 		this.use_alpha_hash = false;
 		this.use_flat_normal = false;
 		this.use_fog = false;
+		this.small_objects_ratio_threshold = 0; //change this ignore objects with small projected size (0.01 is a good value)
 		this.layers_affect_children = false;
-		this.light_model = "flat"; //"flat" or "phong"
 		this.allow_instancing = true;
+		this.force_update_bones = true; //set to false if you want to handle it manually
 		this.point_size = 1;
-		
-		this._color = vec4.fromValues(1,1,1,1); //in case we need to set a color
 
+		this.reverse_normals = false; //used for reflections or shadowmaps
+		this.disable_cull_face = false;
+
+		
 		this._model_matrix = mat4.create();
 		this._mvp_matrix = mat4.create();
 		this._texture_matrix = mat3.create();
@@ -3610,15 +3666,24 @@ class Renderer {
 		this.renderables_pool = []; //total
 		this.used_renderables = 0;
 		this.rendered_renderables = 0;
-		this.overlay_renderables = []; //renderables that are not affected by postpo
+		this.outline_renderables = [];
+
+		this.lights = [];
 		
 		this._nodes = [];
 		this._uniforms = {
 			u_model: this._model_matrix,
-			u_mvp: this._mvp_matrix,
 			u_global_alpha_clip: 0.0,
 			u_point_size: this.point_size,
 			u_res: new Float32Array([1,1,1,1])
+		};
+
+		this._lights_uniforms = {
+			u_num_lights: 0,
+			u_light_color: new Float32Array(4*4), //color and type
+			u_light_position: new Float32Array(4*4), //pos and max dist
+			u_light_front: new Float32Array(4*4), //front and ??
+			u_light_params: new Float32Array(4*4), //cos cone start, cos cone end, shadow index
 		};
 
 		this._fog_uniforms = {
@@ -3626,11 +3691,9 @@ class Renderer {
 		};
 
 		this.global_uniforms_containers = [ this._uniforms ];
+		this.outline_color = [1,1,1,1];
 
-		this.ambient_light = vec3.fromValues(0.6,0.67,0.8);
-		this.light_color = vec3.fromValues(0.5,0.4,0.3);
-		this.light_vector = vec3.fromValues(0.5442, 0.6385, 0.544);
-		this._phong_uniforms = { u_ambient: this.ambient_light, u_light_vector: this.light_vector, u_light_color: this.light_color };
+		this._phong_uniforms = { u_ambient: this._ambient_light, u_sun_light_vector: this._light_vector, u_sun_light_color: this._light_color };
 		
 		//set some default stuff
 		global.gl = this.gl;
@@ -3676,250 +3739,7 @@ class Renderer {
 	}
 }
 
-Renderer.prototype.getMasterShader = function( macros )
-{
-	if(!this.master_shaders_compiled)
-		this.master_shaders_compiled = new Map();
-	var container = this.master_shaders_compiled;
-
-	var shader = container.get( macros );
-	if(shader)
-		return shader;
-
-	var vs = Renderer.master_vertex_shader;
-	var fs = Renderer.master_fragment_shader;
-
-	//this code is added on demand because it could be not be available
-	var skinning = "";
-	var skinning_vs = "";
-	if( RD.Skeleton && (macros & SHADER_MACROS.SKINNING) )
-	{	
-		var skinning_header = `
-		#ifdef SKINNING
-			${RD.Skeleton.shader_code} //
-		#endif
-		`;
-		var skinning_body = `
-		#ifdef SKINNING
-			computeSkinning(v_pos,v_normal);
-		#endif
-		`;
-
-		vs = vs.replaceAll("#pragma SKINNING_HEADER",skinning_header);
-		vs = vs.replaceAll("#pragma SKINNING_BODY",skinning_body);
-	}	
-
-	var macros_info = null;
-	if( macros )
-	{
-		macros_info = {};
-		for( var i in SHADER_MACROS )
-		{
-			var flag = SHADER_MACROS[i];
-			if( macros & flag )
-				macros_info[ i ] = "";
-		}
-	}
-
-	var shader = new GL.Shader( vs, fs, macros_info );
-	container.set(macros,shader);
-	return shader;
-}
-
-Renderer.master_vertex_shader = `
-	precision highp float;
-	attribute vec3 a_vertex;
-	#ifndef FLAT_NORMAL
-		attribute vec3 a_normal;
-	#endif
-	attribute vec2 a_coord;
-	#ifdef COORD1
-		attribute vec2 a_coord1;
-		varying vec2 v_coord1;
-	#endif
-	varying vec3 v_pos;
-	varying vec3 v_normal;
-	varying vec2 v_coord;
-	#ifdef COLOR
-	attribute vec4 a_color;
-	varying vec4 v_color;
-	#endif
-
-	#pragma SKINNING_HEADER
-	#ifdef INSTANCING
-		attribute mat4 u_model;
-	#else
-		uniform mat4 u_model;
-	#endif
-	uniform mat4 u_viewprojection;
-	uniform float u_point_size;
-
-	void main() {
-		v_pos = a_vertex;
-		#pragma SKINNING_BODY
-		v_pos = (u_model * vec4(v_pos,1.0)).xyz;
-		#ifndef FLAT_NORMAL
-		v_normal = a_normal;
-		v_normal = (u_model * vec4(v_normal,0.0)).xyz;
-		#endif
-		v_coord = a_coord;
-		#ifdef COORD1
-			v_coord1 = a_coord1;
-		#endif
-		#ifdef COLOR
-		v_color = a_color;
-		#endif
-		gl_Position = u_viewprojection * vec4( v_pos, 1.0 );
-		gl_PointSize = u_point_size;
-	}
-`;
-
-Renderer.master_fragment_shader = `
-	#extension GL_OES_standard_derivatives : enable
-	
-	precision highp float;
-	varying vec3 v_pos;
-	varying vec2 v_coord;
-	varying vec3 v_normal;
-	uniform vec4 u_color;
-	uniform vec3 u_emissive;
-	#ifdef COLOR
-	varying vec4 v_color;
-	#endif
-	#ifdef TEXTURE
-		uniform sampler2D u_color_texture;
-	#endif
-	#ifdef ALBEDO
-		uniform sampler2D u_albedo_texture;
-	#endif
-	#ifdef EMISSIVE
-		uniform sampler2D u_emissive_texture;
-	#endif
-	#ifdef OCCLUSION
-		uniform sampler2D u_occlusion_texture;
-	#endif
-	#ifdef COORD1
-		varying vec2 v_coord1;
-	#else
-		vec2 v_coord1;
-	#endif	
-	#ifdef PHONG
-		uniform vec3 u_ambient;
-		uniform vec3 u_light_color;
-		uniform vec3 u_light_vector;
-	#endif
-	#ifdef FOG
-		uniform vec4 u_fog_color;
-	#endif
-
-	#ifdef LIGHTS
-		//WIP
-		uniform int u_num_lights;
-		uniform vec4 u_light_color[4]; //color, type
-		uniform vec4 u_light_position[4]; //pos or vector
-		uniform vec4 u_light_params[4]; //front, max_dist
-		uniform vec4 u_light_shadowmap_area[4];
-		uniform vec4 u_light_shadowmap_vps[4];
-		uniform sampler2D u_shadowmap;
-	#endif
-	#ifdef ALPHA_HASH
-		uniform sampler2D u_bayer_texture;
-
-		float bayer8x8(vec2 position) {
-			int x = int(mod(position.x, 8.0));
-			int y = int(mod(position.y, 8.0));
-			return texture2D( u_bayer_texture, vec2(float(x)/8.0,float(y)/8.0)).x * 4.0;
-		}
-	#endif
-
-	uniform float u_global_alpha_clip;
-	uniform vec4 u_res;
-	uniform vec3 u_camera_position;
-	uniform vec2 u_camera_planes;
-
-	float linearize_depth(float d)
-	{
-		float z_n = 2.0 * d - 1.0;
-		return 2.0 * u_camera_planes.x * u_camera_planes.y / (u_camera_planes.y + u_camera_planes.x - z_n * (u_camera_planes.y - u_camera_planes.x));
-	}	
-
-	void main() {
-		vec4 color = u_color;
-		#ifndef COORD1
-			v_coord1 = v_coord;
-		#endif		
-		#ifdef ALBEDO
-			color *= texture2D(u_albedo_texture, v_coord);
-		#endif
-		#ifdef TEXTURE
-			color *= texture2D(u_color_texture, v_coord);
-		#endif
-		#ifdef COLOR
-			color *= v_color;
-		#endif
-		if(color.a <= u_global_alpha_clip)
-			discard;
-		#ifdef ALPHA_HASH
-		if(color.a < bayer8x8(gl_FragCoord.xy))
-			discard;
-		#endif
-
-		#ifdef FLAT_NORMAL
-			vec3 A = dFdx(v_pos);
-			vec3 B = dFdy(v_pos);
-			vec3 N = normalize(cross(A,B));
-		#else
-			vec3 N = normalize(v_normal);
-		#endif
-		vec3 light = vec3(1.0);
-		#ifdef PHONG
-			float NdotL = max(dot(N,u_light_vector),0.0);
-			light = ( u_ambient * (1.0 - max(0.0,-N.y) * 0.5 ) ) + NdotL * u_light_color;
-		#endif
-		#ifdef OCCLUSION
-			light = texture2D(u_occlusion_texture, v_coord1).xyz;
-		#endif
-		color.xyz *= light;
-		#ifdef EMISSIVE
-			color.xyz += u_emissive * texture2D(u_emissive_texture, v_coord).xyz;
-		#else
-			color.xyz += u_emissive;
-		#endif
-
-		#ifdef FOG
-			//float normalized_depth = linearize_depth(gl_FragCoord.z);//(gl_FragCoord.z * gl_FragCoord.w);
-			float fog_factor = length( u_camera_position - v_pos ) / u_camera_planes.y;
-			color.xyz = mix(color.xyz, u_fog_color.xyz, pow( fog_factor, 1.0 / u_fog_color.w ));
-		#endif
-		gl_FragColor = color;
-	}
-`;
-
 RD.Renderer = Renderer;
-
-Object.defineProperty( Renderer.prototype, "color", {
-	set: function(v){
-		this._color.set(v);
-	},
-	get: function() { return this._color; },
-	enumerable: true
-});
-
-Object.defineProperty( Renderer.prototype, "fog_color", {
-	set: function(v){
-		this._fog_uniforms.u_fog_color.set([v[0],v[1],v[2]]);
-	},
-	get: function() { return this._fog_uniforms.u_fog_color.subarray(0,3); },
-	enumerable: true
-});
-
-Object.defineProperty( Renderer.prototype, "fog_density", {
-	set: function(v){
-		this._fog_uniforms.u_fog_color[3] = v;
-	},
-	get: function() { return this._fog_uniforms.u_fog_color[3]; },
-	enumerable: true
-});
 
 /**
 * whats the data folder where all data should be fetch
@@ -4036,14 +3856,7 @@ Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, sk
 
 	//prepass
 	var renderables = this.getAllRenderables(nodes, layers, camera);
-
-	//get matrices in the camera
-	this.enableCamera( camera );
-	this._uniforms.u_res[0] = gl.viewport_data[2];
-	this._uniforms.u_res[1] = gl.viewport_data[3];
-	this._uniforms.u_res[2] = 1 / gl.viewport_data[2];
-	this._uniforms.u_res[3] = 1 / gl.viewport_data[3];
-	this._uniforms.u_point_size = this.point_size;
+	var lights = this.lights; //getAllRenderables already gathers them
 
 	//stack to store state
 	this._state = [];
@@ -4053,11 +3866,28 @@ Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, sk
 
 	//set globals
 	this._uniforms.u_time = scene.time;
+	vec3.normalize(this._light_vector,this._light_vector);
 
 	var that = this;
 	pipeline = pipeline || this.pipeline;
 
-	var visible_renderables = renderables.filter(rc=>rc.instances || camera.testMesh( rc.mesh, rc.model) !== RD.CLIP_OUTSIDE);
+	//frustum culling
+	var visible_renderables = renderables.filter(rc=> (rc.flags & RENDERABLE_IGNORE_BOUNDING) || camera.testBBox( rc.bounding ) !== RD.CLIP_OUTSIDE);
+	if(this.small_objects_ratio_threshold > 0)
+		visible_renderables = visible_renderables.filter(rc=>(rc.flags & RENDERABLE_IGNORE_BOUNDING) || camera.computeAproximateScreenSize(rc.bounding) > this.small_objects_ratio_threshold );
+	//first opaque, then semitransparent
+	visible_renderables = visible_renderables.sort((a,b)=>a.material.blend_mode - b.material.blend_mode);
+
+	//update 
+	this.updateShadowmaps( camera, this.lights, renderables, visible_renderables );
+
+	//prepare camera stuff
+	this.enableCamera( camera );
+	this._uniforms.u_res[0] = gl.viewport_data[2];
+	this._uniforms.u_res[1] = gl.viewport_data[3];
+	this._uniforms.u_res[2] = 1 / gl.viewport_data[2];
+	this._uniforms.u_res[3] = 1 / gl.viewport_data[3];
+	this._uniforms.u_point_size = this.point_size;
 
 	if( pipeline )
 		pipeline.render( this, visible_renderables, camera, scene, skip_fbo );
@@ -4066,7 +3896,7 @@ Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, sk
 		//group by instancing
 		if( this.allow_instancing && this.supports_instancing )
 			visible_renderables = this.groupRenderablesForInstancing(visible_renderables);
-
+		
 		//render skybox
 		if(this.skybox_texture)
 			this.renderSkybox(camera, this.skybox_texture);
@@ -4076,9 +3906,13 @@ Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, sk
 		{
 			var rc = visible_renderables[i];
 			rc.node.flags.was_rendered = true;
-			rc.material.render( this, rc );
+			this.renderRenderable( rc, lights );
 		}
 	}
+
+	//outline
+	if(this.outline_renderables.length)
+		this.renderOutline(this.outline_renderables,camera);
 
 	if(this.onPostRender)
 		this.onPostRender( camera );
@@ -4087,6 +3921,586 @@ Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, sk
 	this.frame++;
 	this._current_scene = null;
 }
+
+Renderer.prototype.renderRenderable = function( rc, lights )
+{
+	if(rc.material.render)
+		return rc.material.render(this, rc, lights);
+
+	//remove lights that do not overlap with this renderable
+	lights = lights.filter(l=>l.overlaps(rc))
+
+	var mesh = rc.mesh;
+	var node = rc.node;
+	var skeleton = rc.skin;
+	var camera = this._camera;
+	var material = rc.material;
+	var primitive = rc.primitive;
+	if(primitive == null || primitive == -1)
+		primitive = gl.TRIANGLES;
+
+	//assign all light info for this renderable
+	var has_shadows = false;
+	if( lights.length && !this.rendering_only_depth )
+	{	
+		var num = this._lights_uniforms.u_num_lights = Math.min( lights.length, 4 );
+		for(var i = 0; i < num; ++i)
+		{
+			var light = lights[i];
+			this._lights_uniforms.u_light_color[i*4] = light.color[0] * light.intensity;
+			this._lights_uniforms.u_light_color[i*4+1] = light.color[1] * light.intensity;
+			this._lights_uniforms.u_light_color[i*4+2] = light.color[2] * light.intensity;
+			this._lights_uniforms.u_light_color[i*4 + 3] = light.light_type;
+			if(light.light_type !== RD.DIRECTIONAL_LIGHT)
+			{
+				this._lights_uniforms.u_light_position.set(light._center,i*4);
+				this._lights_uniforms.u_light_position[i*4 + 3] = light.max_distance;
+			}
+			this._lights_uniforms.u_light_front.set(light._front,i*4);
+			this._lights_uniforms.u_light_params[i*4] = Math.cos( light.cone_start * DEG2RAD * 0.5 );
+			this._lights_uniforms.u_light_params[i*4+1] = Math.cos( light.cone_end * DEG2RAD  * 0.5);
+			this._lights_uniforms.u_light_params[i*4+2] = light._shadowmap_index;
+			if(light._shadowmap_index !== -1)
+			{
+				var info = this.shadows_info.shadows[ light._shadowmap_index ];
+				this.shadows_info.uniforms.u_shadowmap_rect.set( info.rect, i*4 );
+				this.shadows_info.uniforms.u_shadowmap_vps.set( info.vp, i*16 );
+				has_shadows |= true;	
+			}
+		}
+	}	
+
+	//get shader
+	var shader = null;
+	if (this.on_getShader)
+	{
+		shader = this.on_getShader( rc.node, camera );
+		if(!shader)
+			return;
+	}
+	else
+	{
+		var shader_name = this.shader_overwrite || material.shader_name;
+		if(shader_name)
+		{
+			shader = gl.shaders[ shader_name ];
+			if(!shader)
+				return;
+		}
+		else
+		{
+			//generate automatic shader
+			var shader_hash = 0;
+
+			if( skeleton )
+				shader_hash |= SHADER_MACROS.SKINNING;
+			if( rc.instances && this.supports_instancing)
+				shader_hash |= SHADER_MACROS.INSTANCING;
+
+			if( !this.rendering_only_depth )
+			{
+				if(primitive !== GL.TRIANGLES && primitive !== GL.TRIANGLE_STRIP && primitive !== GL.TRIANGLE_FAN)
+					shader_hash |= SHADER_MACROS.NO_TRIANGLES;
+				if(this.use_alpha_hash)
+					shader_hash |= SHADER_MACROS.ALPHA_HASH;
+				if(this.use_flat_normal)
+					shader_hash |= SHADER_MACROS.FLAT_NORMAL;
+				if(this.use_secondary_buffer)
+					shader_hash |= SHADER_MACROS.SECOND_BUFFER;
+
+				if(this.rendering_flat)
+					shader_hash |= SHADER_MACROS.FLAT_COLOR;
+				else
+				{
+					if(this.use_fog)
+						shader_hash |= SHADER_MACROS.FOG;
+					if( mesh.vertexBuffers.colors )
+						shader_hash |= SHADER_MACROS.COLOR;
+					if( mesh.vertexBuffers.coords1 )
+						shader_hash |= SHADER_MACROS.COORD1;
+					if( material.textures.color )
+						shader_hash |= SHADER_MACROS.TEXTURE;
+					if( material.textures.albedo )
+						shader_hash |= SHADER_MACROS.ALBEDO;
+					if( material.textures.emissive )
+						shader_hash |= SHADER_MACROS.EMISSIVE;
+					if( material.textures.occlusion )
+						shader_hash |= SHADER_MACROS.OCCLUSION;
+					if( lights.length )
+					{
+						shader_hash |= SHADER_MACROS.LIGHTS;
+						if( has_shadows )
+							shader_hash |= SHADER_MACROS.SHADOWS;
+					}
+				}
+
+			}
+	
+			shader = this.getMasterShader( shader_hash );
+		}
+	}
+
+	//check if shader supports instancing
+	var instancing = false;
+	if( rc.instances && this.supports_instancing )
+		instancing = true;	
+	if( instancing && !shader.attributes.u_model )
+		instancing = false;
+
+	//prepare textures
+	var slot = 0;
+	var texture = null;
+	for(var i in material.textures)
+	{
+		var texture_name = material.textures[i];
+		if(!texture_name)
+			continue;
+		if( texture_name.constructor === Object ) //in case it has properties for this channel
+			texture_name = texture_name.texture;
+		var texture_uniform_name = "u_" + i + "_texture";
+
+		if( shader && !shader.samplers[ texture_uniform_name ]) //texture not used in shader
+			continue; //do not bind it
+
+		texture = gl.textures[ texture_name ];
+		if(!texture)
+		{
+			if(this.autoload_assets && texture_name.indexOf(".") != -1)
+			this.loadTexture( texture_name, this.default_texture_settings );
+			texture = gl.textures[ "white" ];
+		}
+
+		material.uniforms[ texture_uniform_name ] = texture.bind( slot++ );
+	}
+
+	//weird case of mesh without textures
+	if( !texture )
+	{
+		if(shader.samplers.u_albedo_texture || shader.samplers.u_color_texture )
+			gl.textures[ "white" ].bind(0);
+	}
+
+	//flags
+	this.enableItemFlags( material );
+
+	//skinning
+	if( skeleton && shader.uniformInfo.u_bones )
+	{
+		if(skeleton.constructor === RD.Skeleton)
+		{
+			this.bones = skeleton.computeFinalBoneMatrices( this.bones, mesh );
+			shader.setUniform("u_bones", this.bones );
+		}
+		else if(skeleton._bone_matrices)
+			shader.setUniform("u_bones", skeleton._bone_matrices );
+	}
+
+	//alpha cutoff
+	if(material.alphaCutoff != null && material.alphaMode == "MASK")
+		this._uniforms.u_global_alpha_clip = material.alphaCutoff;
+	else
+		this._uniforms.u_global_alpha_clip = -1;
+
+	//upload uniforms to shader
+	this._uniforms.u_model.set( rc.model );
+	shader.uniforms( this._uniforms ); //globals
+	if(lights.length)
+		shader.uniforms( this._lights_uniforms );
+	shader.uniforms( camera._uniforms ); //camera
+	if(this.use_fog)
+		shader.uniforms( this._fog_uniforms );
+	shader.uniforms( this._phong_uniforms ); //light
+	shader.setUniform("u_color", material._color);
+	shader.setUniform("u_emissive", material._emissive);
+	shader.uniforms( material.uniforms ); //customs
+	if( this.onNodeShaderUniforms )
+		this.onNodeShaderUniforms( this, shader, node );
+	if(this.use_alpha_hash && shader.hasUniform("u_bayer_texture"))
+		shader.uniforms({u_bayer_texture:this._bayer_texture.bind(slot++)});
+	if(has_shadows)
+	{
+		this.shadows_info.uniforms.u_shadowmap = this.shadows_info.texture.bind(slot++);
+		shader.uniforms(this.shadows_info.uniforms);
+	}
+
+	//draw calls
+	var group = null;
+	if( rc.group_index != null && mesh.info && mesh.info.groups && mesh.info.groups[ rc.group_index ] )
+		group = mesh.info.groups[ rc.group_index ];
+
+	if( instancing )
+	{
+		instancing_uniforms.u_model = rc.instances;
+		if(group)
+			shader.drawInstanced( mesh, primitive, rc.index_buffer_name, instancing_uniforms, group.start, group.length );
+		else if(node.draw_range)
+			shader.drawInstanced( mesh, primitive, rc.index_buffer_name, instancing_uniforms, rc.draw_range[0], rc.draw_range[1] );
+		else
+			shader.drawInstanced( mesh, primitive, rc.index_buffer_name, instancing_uniforms );
+	}
+	else if( rc.instances ) // in case the instancing extension is not supported, this will never be used...
+	{
+		//enable geometry
+		//...	
+		for(var i = 0; i < rc.instances.length; i++)
+		{
+			shader.setUniform("u_model", rc.instances[i]);
+			if(group)
+				shader.drawRange( mesh, primitive, group.start, group.length, rc.index_buffer_name );
+			else if(rc.draw_range)
+				shader.drawRange( mesh, primitive, rc.index_buffer_name, rc.draw_range[0], rc.draw_range[1] );
+			else
+				shader.draw( mesh, primitive, rc.index_buffer_name );
+			this.draw_calls += 1;
+		}
+		this.draw_calls--;
+	}
+	else //no instancing
+	{
+		if( group )
+			shader.drawRange( mesh, primitive, group.start, group.length, rc.index_buffer_name );
+		else if(rc.draw_range)
+			shader.drawRange( mesh, primitive, rc.index_buffer_name, rc.draw_range[0], rc.draw_range[1] );
+		else
+			shader.draw( mesh, primitive, rc.index_buffer_name );
+	}
+
+	this.disableItemFlags( material );
+	this.draw_calls += 1;
+}
+
+//builds shader and caches it for future fetches
+Renderer.prototype.getMasterShader = function( macros )
+{
+	if(!this.master_shaders_compiled)
+		this.master_shaders_compiled = new Map();
+	var container = this.master_shaders_compiled;
+
+	var shader = container.get( macros );
+	if(shader)
+		return shader;
+
+	var vs = Renderer.master_vertex_shader;
+	var fs = Renderer.getMasterFragmentShader();
+
+	//this code is added on demand because it could be not be available
+	var skinning = "";
+	var skinning_vs = "";
+	if( RD.Skeleton && (macros & SHADER_MACROS.SKINNING) )
+	{	
+		var skinning_header = `
+		#ifdef SKINNING
+			${RD.Skeleton.shader_code} //
+		#endif
+		`;
+		var skinning_body = `
+		#ifdef SKINNING
+			computeSkinning(v_pos,v_normal);
+		#endif
+		`;
+
+		vs = vs.replaceAll("#pragma SKINNING_HEADER",skinning_header);
+		vs = vs.replaceAll("#pragma SKINNING_BODY",skinning_body);
+	}	
+
+	var macros_info = null;
+	if( macros )
+	{
+		macros_info = {};
+		for( var i in SHADER_MACROS )
+		{
+			var flag = SHADER_MACROS[i];
+			if( macros & flag )
+				macros_info[ i ] = "";
+		}
+	}
+
+	var shader = new GL.Shader( vs, fs, macros_info );
+	container.set(macros,shader);
+	return shader;
+}
+
+//you can modify this ones to tune your shader
+Renderer.shader_snippets = {
+	testShadowmap: `
+	uniform vec4 u_shadowmap_rect[4];
+	uniform mat4 u_shadowmap_vps[4];
+	uniform sampler2D u_shadowmap;
+
+	float testShadowmap( vec3 pos, vec4 rect, mat4 vp )
+	{
+		const float bias = 0.004;
+		vec4 proj = vp * vec4(pos, 1.0);
+		vec2 sample = (proj.xy / proj.w) * vec2(0.5) + vec2(0.5);
+		if(sample.x >= 0.0 && sample.x <= 1.0 && sample.y >= 0.0 && sample.y <= 1.0 )
+		{
+			sample = remap( sample, vec2(0.0), vec2(1.0), rect.xy, rect.zw );
+			float depth = texture2D( u_shadowmap, sample ).x;
+			if( depth > 0.0 && depth < 1.0 && depth <= ( ((proj.z-bias) / proj.w) * 0.5 + 0.5) )
+				return 0.0;
+		}
+		return 1.0;
+	}
+	`,
+	fog_code: `
+		//float normalized_depth = linearize_depth(gl_FragCoord.z);//(gl_FragCoord.z * gl_FragCoord.w);
+		float fog_factor = length( u_camera_position - v_pos ) / u_camera_planes.y;
+		color.xyz = mix(color.xyz, u_fog_color.xyz, pow( fog_factor, 1.0 / u_fog_color.w ));
+	`,
+	modify_ndotl:``,
+	modify_attenuation: ``,
+	modify_prelight_equation: ``,
+	modify_light_equation: ``,
+	modify_color: ``,
+	modify_emissive: ``,
+	custom_uniforms:``
+}
+
+
+Renderer.master_vertex_shader = `
+	precision highp float;
+	attribute vec3 a_vertex;
+	#ifndef FLAT_NORMAL
+		attribute vec3 a_normal;
+	#endif
+	attribute vec2 a_coord;
+	#ifdef COORD1
+		attribute vec2 a_coord1;
+		varying vec2 v_coord1;
+	#endif
+	varying vec3 v_pos;
+	varying vec3 v_normal;
+	varying vec2 v_coord;
+	#ifdef COLOR
+	attribute vec4 a_color;
+	varying vec4 v_color;
+	#endif
+
+	#pragma SKINNING_HEADER
+	#ifdef INSTANCING
+		attribute mat4 u_model;
+	#else
+		uniform mat4 u_model;
+	#endif
+	uniform mat4 u_viewprojection;
+	uniform float u_point_size;
+
+	void main() {
+		v_pos = a_vertex;
+		#pragma SKINNING_BODY
+		v_pos = (u_model * vec4(v_pos,1.0)).xyz;
+		#ifndef FLAT_NORMAL
+		v_normal = a_normal;
+		v_normal = (u_model * vec4(v_normal,0.0)).xyz;
+		#endif
+		v_coord = a_coord;
+		#ifdef COORD1
+			v_coord1 = a_coord1;
+		#endif
+		#ifdef COLOR
+		v_color = a_color;
+		#endif
+		gl_Position = u_viewprojection * vec4( v_pos, 1.0 );
+		gl_PointSize = u_point_size;
+	}
+`;
+
+Renderer.getMasterFragmentShader = function(){ return `
+	#extension GL_OES_standard_derivatives : enable
+	#ifdef SECOND_BUFFER
+	#extension GL_EXT_draw_buffers : require
+	#endif
+	
+	precision highp float;
+	varying vec3 v_pos;
+	varying vec2 v_coord;
+	varying vec3 v_normal;
+	#ifdef COLOR
+	varying vec4 v_color;
+	#endif
+	#ifdef COORD1
+		varying vec2 v_coord1;
+	#else
+		vec2 v_coord1;
+	#endif	
+
+	//material
+	uniform vec4 u_color;
+	uniform vec3 u_emissive;
+	#ifdef TEXTURE
+		uniform sampler2D u_color_texture;
+	#endif
+	#ifdef ALBEDO
+		uniform sampler2D u_albedo_texture;
+	#endif
+	#ifdef EMISSIVE
+		uniform sampler2D u_emissive_texture;
+	#endif
+	#ifdef OCCLUSION
+		uniform sampler2D u_occlusion_texture;
+	#endif
+	uniform float u_global_alpha_clip;
+
+	//globals
+	uniform vec3 u_ambient;
+	uniform vec3 u_sun_light_vector;
+	uniform vec3 u_sun_light_color;
+
+	#ifdef FOG
+		uniform vec4 u_fog_color;
+	#endif
+
+	vec2 remap(in vec2 value, in vec2 low1, in vec2 high1, in vec2 low2, in vec2 high2 ) { vec2 range1 = high1 - low1; vec2 range2 = high2 - low2; return low2 + range2 * (value - low1) / range1; }	
+
+	#ifdef LIGHTS
+		uniform int u_num_lights;
+		uniform vec4 u_light_color[4]; //color, type
+		uniform vec4 u_light_position[4]; //pos or vector, max_dist
+		uniform vec4 u_light_front[4]; //front, 
+		uniform vec4 u_light_params[4]; //cos cone start, cos cone end, shadowmap index, ?
+	#endif
+
+	#ifdef SHADOWS
+	${Renderer.shader_snippets.testShadowmap}
+	#endif
+
+	#ifdef ALPHA_HASH
+		uniform sampler2D u_bayer_texture;
+
+		float bayer8x8() {
+			int x = int(mod(gl_FragCoord.x, 8.0));
+			int y = int(mod(gl_FragCoord.y, 8.0));
+			return texture2D( u_bayer_texture, vec2(float(x)/8.0,float(y)/8.0)).x * 4.0;
+		}
+	#endif
+
+	uniform vec4 u_res;
+	uniform vec3 u_camera_position;
+	uniform vec2 u_camera_planes;
+
+	float linearize_depth(float d)
+	{
+		float z_n = 2.0 * d - 1.0;
+		return 2.0 * u_camera_planes.x * u_camera_planes.y / (u_camera_planes.y + u_camera_planes.x - z_n * (u_camera_planes.y - u_camera_planes.x));
+	}
+
+	${Renderer.shader_snippets.custom_uniforms}
+
+	void main() {
+		vec4 color = u_color;
+		#ifdef FLAT_COLOR
+			gl_FragColor = color;
+			return;
+		#endif
+
+		#ifndef COORD1
+			v_coord1 = v_coord;
+		#endif		
+		#ifdef ALBEDO
+			color *= texture2D(u_albedo_texture, v_coord);
+		#endif
+		#ifdef TEXTURE
+			color *= texture2D(u_color_texture, v_coord);
+		#endif
+		#ifdef COLOR
+			color *= v_color;
+		#endif
+		if(color.a <= u_global_alpha_clip)
+			discard;
+		#ifdef ALPHA_HASH
+		if(color.a < bayer8x8())
+			discard;
+		#endif
+
+		#ifdef FLAT_NORMAL
+			vec3 A = dFdx(v_pos);
+			vec3 B = dFdy(v_pos);
+			vec3 N = normalize(cross(A,B));
+		#else
+			vec3 N = normalize(v_normal);
+		#endif
+
+		#ifdef NO_TRIANGLES
+			N = normalize(v_pos - u_camera_position);
+		#endif
+
+		vec3 total_light = u_ambient + u_sun_light_color * (dot(N,u_sun_light_vector)*0.5 + 0.5);
+		#ifdef OCCLUSION
+			total_light = texture2D(u_occlusion_texture, v_coord1).xyz;
+		#endif
+		#ifdef LIGHTS
+		for(int i = 0; i < 4; ++i)
+		{
+			if(i > u_num_lights)
+				break;
+			vec3 L = u_light_position[i].xyz - v_pos;
+			int light_type = int(u_light_color[i].w);
+			float att = 1.0;
+			if( light_type == 3 ) //directional
+			{
+				L = -u_light_front[i].xyz;
+			}
+			else //spot and point
+			{
+				float light_dist = length(L);
+				if(light_dist > u_light_position[i].w)
+					continue;
+				L /= light_dist;
+				att = max(0.0,(u_light_position[i].w - light_dist) / u_light_position[i].w);
+			}
+			float NdotL = max( 0.0, dot( N, L ) );
+			${Renderer.shader_snippets.modify_ndotl}
+			
+			if( light_type == 1 ) //spot
+			{
+				float cos_angle = dot( u_light_front[i].xyz, -L );
+				if(cos_angle < u_light_params[i].y )
+					att = 0.0;
+				else if (cos_angle < u_light_params[i].x )
+					att *= 1.0 - (cos_angle - u_light_params[i].x) / (u_light_params[i].y - u_light_params[i].x);
+			}
+
+			${Renderer.shader_snippets.modify_attenuation}
+
+			#ifdef SHADOWS
+				if (u_light_params[i].z != -1.0) //has shadowmap
+				{
+					att *= testShadowmap( v_pos, u_shadowmap_rect[ i ], u_shadowmap_vps[ i ] );
+				}
+			#endif
+
+			${Renderer.shader_snippets.modify_prelight_equation}
+			vec3 light = u_light_color[i].xyz * att * NdotL;
+			${Renderer.shader_snippets.modify_light_equation}
+			total_light += light;
+		}
+		#endif
+
+		color.xyz *= total_light;
+		vec3 emissive = u_emissive;
+		#ifdef EMISSIVE
+			emissive *= texture2D(u_emissive_texture, v_coord).xyz;
+		#endif
+
+		${Renderer.shader_snippets.modify_emissive}
+		color.xyz += emissive;
+
+		#ifdef FOG
+			${Renderer.shader_snippets.fog_code}
+		#endif
+
+		${Renderer.shader_snippets.modify_color}
+
+		#ifdef SECOND_BUFFER
+			gl_FragData[0] = color;
+			gl_FragData[1] = vec4(N,1.0);
+		#else
+			gl_FragColor = color;
+		#endif
+	}
+	`;
+}
+
 
 Renderer.prototype.enableCamera = function(camera)
 {
@@ -4116,6 +4530,65 @@ Renderer.prototype.renderSkybox = function(camera, texture_name)
 	this.renderMesh( model, mesh, texture, [1,1,1,1], shader );
 }
 
+Renderer.prototype.renderOutline = function( renderables, camera )
+{
+	var w = gl.viewport_data[2];
+	var h = gl.viewport_data[3];
+	if(!this._selection_buffer || this._selection_buffer.width != w || this._selection_buffer.height != h)
+	{
+		this._selection_buffer = new GL.Texture( w, h, { magFilter: gl.NEAREST});
+	}
+
+	if(!Renderer.outline_material)
+		Renderer.outline_material = new RD.Material();
+
+	var shadername = this.shader;
+	this._selection_buffer.drawTo(()=>{
+		gl.clearColor(0,0,0,1);
+		gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
+		var tmp = this.onNodeShaderUniforms;
+		this.onNodeShaderUniforms = function(node,shader) { shader.setUniform("u_color",[1,1,1,1]); };
+		var tmp2 = this.pipeline;
+		this.pipeline = null;
+
+		this.overwrite_material = RD.Renderer.outline_material;
+		this.rendering_flat = true;
+		for(let i = 0; i < renderables.length; ++i)
+			this.renderRenderable( renderables[i], [] );
+		this.shader_overwrite = null;
+		this.onNodeShaderUniforms = tmp;
+		this.rendering_flat = false;
+		this.pipeline = tmp2;
+		this.overwrite_material = null;
+	});
+	var outline_shader = gl.shaders["outline"];
+	if(!outline_shader)
+		outline_shader = gl.shaders["outline"] = GL.Shader.createFX(`
+			vec3 colorU = texture2D(u_texture, uv - vec2(0.0,u_res.y)).xyz;
+			vec3 colorL = texture2D(u_texture, uv - vec2(u_res.x,0.0)).xyz;
+			`+ (this.outline_diagonals ? `
+			vec3 outline = abs(color.xyz - colorU) * 0.3 + abs(color.xyz - colorL) * 0.3;
+			vec3 colorUL = texture2D(u_texture, uv - u_res).xyz;
+			vec3 colorUR = texture2D(u_texture, uv + vec2(u_res.x,-u_res.y)).xyz;
+			vec3 colorDL = texture2D(u_texture, uv - vec2(u_res.x,-u_res.y)).xyz;
+			outline += (abs(color.xyz - colorUL) + abs(color.xyz - colorDL) + abs(color.xyz - colorUR)) * 0.1;
+			`:`
+			vec3 outline = vec3( abs(color.x - colorU.x) + abs(color.x - colorL.x) > 0.0 ? 1.0 : 0.0);
+			`) + `
+			color = vec4( clamp(outline,vec3(0.0),vec3(1.0)),1.0 );
+			//color = texture2D(u_texture, uv);
+		`,"uniform vec2 u_res;\n");
+
+	gl.blendFunc(gl.ONE,gl.ONE);
+	gl.enable(gl.BLEND);
+	gl.disable(gl.DEPTH_TEST);
+	this._selection_buffer.toViewport(outline_shader, {u_color:this.outline_color, u_res: [1/w,1/h]});
+	gl.disable(gl.BLEND);
+	gl.enable(gl.DEPTH_TEST);
+}
+
+
+
 
 //this functions allow to interrupt the render of one scene to render another one
 Renderer.prototype.saveState = function()
@@ -4139,13 +4612,6 @@ Renderer.prototype.restoreState = function()
 	this._nodes = state.nodes;
 }
 
-//assign and updated viewprojection matrix
-Renderer.prototype.setModelMatrix = function(matrix)
-{
-	this._model_matrix.set( matrix );
-	mat4.multiply(this._mvp_matrix, this._camera._viewprojection_matrix, matrix );
-}
-
 //allows to add some global uniforms without overwritting the existing ones
 Renderer.prototype.setGlobalUniforms = function( uniforms )
 {
@@ -4157,6 +4623,92 @@ Renderer.prototype.setGlobalUniforms = function( uniforms )
 			this._uniforms[i] = uniforms[i];
 	}
 }
+
+Renderer.prototype.updateShadowmaps = function( main_camera, lights, renderables, main_camera_renderables )
+{
+	var SHADOWMAP_ATLAS_SIZE = 2048;
+
+	lights.forEach(l=>l._shadowmap_index = -1);
+	var casting_lights = lights.filter(l=>l.cast_shadows && l.insideCamera(main_camera) && l.light_type !== RD.POINT_LIGHT);
+	if(casting_lights.length == 0)
+		return;
+
+	///prepare shadowmap texture
+	if(!this.shadows_info)
+	{
+		var texture = new GL.Texture( SHADOWMAP_ATLAS_SIZE, SHADOWMAP_ATLAS_SIZE, { format: gl.DEPTH_COMPONENT, type: gl.UNSIGNED_INT, filter: gl.NEAREST });
+		this.shadows_info = {
+			num_shadows: 0,
+			texture,
+			fbo: new GL.FBO(null,texture),
+			uniforms: {
+				u_shadowmap: 0,
+				u_shadowmap_rect: new Float32Array(4*4),
+				u_shadowmap_vps: new Float32Array(16*4),
+			},
+			shadows: []
+		}
+	}
+
+	this.shadows_info.fbo.bind();
+	gl.clear( gl.DEPTH_BUFFER_BIT  ); //| gl.COLOR_BUFFER_BIT
+
+	var shadow_size = SHADOWMAP_ATLAS_SIZE / 2;
+	if(!this.shadow_camera)
+		this.shadow_camera = new Camera();
+	var camera = this.shadow_camera;
+	this.rendering_only_depth = true;
+
+	for(var i = 0; i < casting_lights.length; ++i)
+	{
+		var light = casting_lights[i];
+
+		//assign area
+		var x = (i%2) * shadow_size;
+		var y = Math.floor(i/2)*shadow_size;
+		gl.viewport(x,y,shadow_size,shadow_size);
+
+		//prepare camera
+		if(light.light_type === RD.SPOT_LIGHT)
+			camera.perspective(light.cone_end, 1, 0.1, light.max_distance);
+		else
+			camera.orthographic(light.area, 0.1, light.max_distance, 1);
+		camera.lookAt( light.getGlobalPosition(), light.localToGlobal([0,0,-1]), [0,1,0]);
+
+		this.enableCamera( camera );
+		gl.enable(gl.DEPTH_TEST);
+		
+		//render content
+		var visible_renderables = renderables.filter(rc=>rc.instances || rc.skin || camera.testMesh( rc.mesh, rc.model) !== RD.CLIP_OUTSIDE);
+		visible_renderables = this.groupRenderablesForInstancing(visible_renderables); //grouped
+		for(var j = 0; j < visible_renderables.length; ++j)
+		{
+			var rc = visible_renderables[j];
+			this.renderRenderable( rc, [] );
+		}
+
+		//copy info
+		light._shadowmap_index = i;
+
+		var info = this.shadows_info.shadows[i];
+		if(!info)
+			info = this.shadows_info.shadows[i] = {
+				rect: vec4.create(),
+				vp: mat4.create()
+			};
+		info.rect.set([x/SHADOWMAP_ATLAS_SIZE,y/SHADOWMAP_ATLAS_SIZE,(x+shadow_size)/SHADOWMAP_ATLAS_SIZE,(y+shadow_size)/SHADOWMAP_ATLAS_SIZE]);
+		info.vp.set(camera._viewprojection_matrix);
+	}
+
+	this.shadows_info.num_shadows = casting_lights.length;
+	this.shadows_info.fbo.unbind();
+	this.shadows_info.texture.bind();
+	gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR );
+	gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST );
+	this.rendering_only_depth = false;
+}
+
+
 
 //used to render one node (ignoring its children) based on the shader, texture, mesh, flags, layers and uniforms 
 /*
@@ -4228,9 +4780,12 @@ Renderer.prototype.renderMesh = function( model, mesh, texture, color, shader, m
 Renderer.prototype.getAllRenderables = function( nodes, layers, camera )
 {
 	//reset render calls pool and clear all 
-	this.resetRenderablesPool();	
+	this.resetRenderablesPool();
 	var rcs = this.renderables;
 	rcs.length = 0;
+
+	this.lights.length = 0;
+	this.outline_renderables.length = 0;
 
 	//extract render calls from scene nodes
 	for(var i = 0; i < nodes.length; ++i)
@@ -4240,7 +4795,13 @@ Renderer.prototype.getAllRenderables = function( nodes, layers, camera )
 		if(node.flags.visible === false || !(node.layers & layers) )
 			continue;
 		if(node.mesh || node._mesh)
-			this.getNodeRenderables( node, layers, camera );
+			this.getNodeRenderables( node, camera );
+		if(node.constructor === RD.Light)
+		{
+			node.getGlobalVector(RD.FRONT, node._front);
+			node.getGlobalPosition(node._center);
+			this.lights.push(node);
+		}
 	}
 
 	//sort by alpha and distance
@@ -4293,9 +4854,6 @@ Renderer.prototype.getNodeRenderables = function( node, camera )
 		}
 	}
 
-	//prepare matrix (must be done always or children wont have the right transform)
-	node.updateGlobalMatrix(true);
-
 	if(!mesh)
 		return;
 
@@ -4311,24 +4869,24 @@ Renderer.prototype.getNodeRenderables = function( node, camera )
 	if(skinning && skinning.joints)
 	{
 		//at least once
-		if(!skinning._bone_matrices)
-			node.updateSkinningBones( node.parentNode ); //use parent node as root
+		if(!skinning._bone_matrices || this.force_update_bones)
+			node.updateSkinningBones( node._parent ); //use parent node as root
 	}
 
-	//check if inside frustum (skinned objects are not tested)
-	if(this.test_visibility && !skinning && camera)
+	if(!Renderer.temp_bbox)
 	{
-		if(!Renderer.temp_bbox)
-		{
-			Renderer.temp_bbox = BBox.create();
-			Renderer.aabb_center = BBox.getCenter( Renderer.temp_bbox );
-			Renderer.aabb_halfsize = BBox.getHalfsize( Renderer.temp_bbox );
-		}
-		var aabb = Renderer.temp_bbox;
-		BBox.transformMat4( aabb, mesh.getBoundingBox(), node._global_matrix );
+		Renderer.temp_bbox = BBox.create();
+		Renderer.aabb_center = BBox.getCenter( Renderer.temp_bbox );
+		Renderer.aabb_halfsize = BBox.getHalfsize( Renderer.temp_bbox );
+	}
+	var aabb = Renderer.temp_bbox;
+	BBox.transformMat4( aabb, mesh.getBoundingBox(), node._global_matrix );
+
+	//check if inside frustum (skinned objects are not tested)
+	if(!skinning && camera)
+	{
 		if ( camera.testBox( Renderer.aabb_center, Renderer.aabb_halfsize ) == RD.CLIP_OUTSIDE )
 			return;
-
 		node._last_rendered_frame = this.frame; //mark last visible frame
 	}
 
@@ -4355,10 +4913,21 @@ Renderer.prototype.getNodeRenderables = function( node, camera )
 			rc.draw_range = null;
 			rc._render_priority = material.render_priority || 0;
 			rc.instances = node._instances;
+			rc.flags = (rc.instances || skinning) ? RENDERABLE_IGNORE_BOUNDING : 0;
 			rc.reverse_faces = node.flags.frontFace == GL.CW;
 			rc.skin = skinning;
+			rc.index_buffer_name = "triangles";
 			rc.primitive = prim.mode != null ? prim.mode : material.primitive;
+			rc.bounding.set( aabb );
 			this.renderables.push( rc );
+
+			if(i == 0 && node.flags.outline)
+			{
+				var outline_rc = this.getRenderablesFromPool();
+				outline_rc.copyFrom(rc);
+				outline_rc.group_index = -1;
+				this.outline_renderables.push(outline_rc);
+			}
 		}
 
 		return;
@@ -4381,7 +4950,18 @@ Renderer.prototype.getNodeRenderables = function( node, camera )
 			rc.primitive = node.primitive != null ? node.primitive : material.primitive;
 			rc._render_priority = material.render_priority || 0;
 			rc.reverse_faces = node.flags.frontFace == GL.CW;
+			rc.bounding.set( aabb );
+			rc.index_buffer_name = node.indices_name || "triangles";
+			rc.flags = (rc.instances || skinning) ? RENDERABLE_IGNORE_BOUNDING : 0;
 			this.renderables.push( rc );
+
+			if(node.flags.outline)
+			{
+				var outline_rc = this.getRenderablesFromPool();
+				outline_rc.copyFrom(rc);
+				outline_rc.group_index = -1;
+				this.outline_renderables.push(outline_rc);
+			}			
 		}
 	}
 }
@@ -4434,7 +5014,12 @@ Renderer.prototype.groupRenderablesForInstancing = function(rcs)
 		rc.copyFrom( group[0] );
 		rc.instances = new Array(group.length);
 		for(var j = 0; j < group.length; ++j)
-			rc.instances[j] = group[j].model;
+		{
+			var inst = group[j];
+			if(j)//skip first one
+				BBox.merge( rc.bounding, rc.bounding, inst.bounding );
+			rc.instances[j] = inst.model;
+		}
 		final_rcs.push( rc );
 	}
 
@@ -4447,6 +5032,32 @@ Renderer.rc_sort_function = function(a,b)
 	return b._render_priority - a._render_priority;
 }
 
+/*
+Renderer.prototype.generateShadowmap = function( renderables, area )
+{
+	if(!this.shadowmap.fbo)
+		throw("no shadowmap fbo");
+
+	this.shadow_camera.view_texel_grid = [this.shadowmap.resolution,this.shadowmap.resolution];
+
+	renderer.generating_shadowmap = true;
+	this.shadowmap.fbo.bind();
+		gl.clear( gl.DEPTH_BUFFER_BIT );
+		renderer.shader_overwrite = "flat"; //what about skinning?
+		if(scene.constructor === Array)
+		{
+			for(var i = 0; i < scene.length; ++i)
+				renderer.render( scene[i], this.camera, null, layers || 0xFF );
+		}
+		else
+			renderer.render( scene, this.camera, null, layers || 0xFF );
+		renderer.shader_overwrite = null;
+	this.shadowmap.fbo.unbind();
+	renderer.generating_shadowmap = false;
+	this.shadowmap.texture.bind(4);
+	gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR );
+}
+*/
 
 
 //allows to pass a mesh or a bounding box
@@ -4488,9 +5099,18 @@ Renderer.prototype.enableItemFlags = function(item)
 		gl.disable( gl.CULL_FACE );
 	else
 		gl.enable( gl.CULL_FACE );
+
+	/* I cant see any change
+	if(item.extras && item.extras.offsetDepth)
+	{
+		gl.enable(gl.POLYGON_OFFSET_FILL);
+		gl.polygonOffset( 1, 1 ); //item.extras.offsetDepth
+	}
+	*/
+
 	
 	//blend
-	if(	item.blend_mode !== RD.BLEND_NONE && !this.use_alpha_hash)
+	if(	!this.rendering_only_depth && item.blend_mode !== RD.BLEND_NONE && !this.use_alpha_hash)
 	{
 		gl.enable( gl.BLEND );
 		switch( item.blend_mode )
@@ -4504,12 +5124,19 @@ Renderer.prototype.enableItemFlags = function(item)
 		gl.disable( gl.BLEND );
 
 	//PBR Materials
-	if(!this.use_alpha_hash && item.alphaMode === "BLEND")
+	if(!this.rendering_only_depth && !this.use_alpha_hash && item.alphaMode === "BLEND")
 	{
 		gl.enable( gl.BLEND );
 		gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
 		gl.depthMask( false );
 	}
+
+	/*
+	if(item.extras && item.extras.offsetDepth)
+	{
+		gl.disable(gl.POLYGON_OFFSET_FILL);
+	}
+	*/
 }
 
 Renderer.prototype.disableItemFlags = function(item)
@@ -4818,6 +5445,24 @@ RD.Renderer.prototype.drawImage = function( texture, sx, sy, sw, sh, x, y, w, h 
 		texture = this.loadTexture(texture);
 	if(!texture)
 		return;
+	if(sw==null||sh==null)
+	{
+		x = sx;
+		y = sy;
+		sw = w = texture.width;
+		sh = h = texture.height;
+	}
+	else if(x==null||y==null||w==null||h==null)
+	{
+		x = sx;
+		y = sy;
+		w = sw;
+		h = sh;
+		sx = 0;
+		sy = 0;
+		sw = texture.width;
+		sh = texture.height;
+	}
 	var shader = this.shaders["_textured_quad"];
 	if(!shader)
 	{
@@ -4850,7 +5495,7 @@ RD.Renderer.prototype.drawImage = function( texture, sx, sy, sw, sh, x, y, w, h 
 		uniform vec4 u_color;
 		uniform sampler2D u_texture;
 		void main() {
-			vec4 color = texture2D( u_texture, v_coord );
+			vec4 color = u_color * texture2D( u_texture, v_coord );
 			if(color.a == 0.0) discard;
 			gl_FragColor = color;
 		}
@@ -5091,11 +5736,13 @@ Renderer.prototype.createShaders = function()
 	this._point_shader = new GL.Shader(`
 				precision highp float;
 				attribute vec3 a_vertex;
-				uniform mat4 u_mvp;
+				uniform mat4 u_model;
+				uniform mat4 u_viewprojection;
 				uniform float u_pointSize;
 				void main() {
 					gl_PointSize = u_pointSize;
-					gl_Position = u_mvp * vec4(a_vertex,1.0);
+					vec3 vertex = (u_model * vec4(a_vertex,1.0)).xyz;
+					gl_Position = u_viewprojection * vec4(vertex,1.0);
 				}
 				`, `
 				precision highp float;
@@ -5114,10 +5761,12 @@ Renderer.prototype.createShaders = function()
 		attribute vec4 a_color;
 		varying vec4 v_color;
 		uniform vec4 u_color;
-		uniform mat4 u_mvp;
+		uniform mat4 u_model;
+		uniform mat4 u_viewprojection;
 		void main() {
 			v_color = a_color * u_color;
-			gl_Position = u_mvp * vec4(a_vertex,1.0);
+			vec3 vertex = (u_model * vec4(a_vertex,1.0)).xyz;
+			gl_Position = u_viewprojection * vec4(vertex,1.0);
 			gl_PointSize = 5.0;
 		}
 		`, `
@@ -5712,109 +6361,6 @@ RD.Factory.templates = {
 	floor: { mesh:"planeXZ", scaling: 10 }
 };
 
-//**other useful classes
-
-//This node allows to render a mesh where vertices are changing constantly
-//Used for particles
-class DynamicMeshNode extends SceneNode
-{
-	constructor(o){
-		super();
-		this.build();
-		if(o)
-			this.fromJSON(o);
-	}
-}
-
-DynamicMeshNode.prototype.build = function()
-{
-	this.vertices = [];
-	this.normals = [];
-	this.coords = [];
-	this.indices = [];
-
-	var size = 1024;
-	this._vertices_data = new Float32Array( size * 3 );
-	this._normals_data = null;
-	this._coords_data = null;
-	this._indices_data = null;
-	this._total = 0;
-	this._total_indices = 0;
-	this._mesh = GL.Mesh.load({ vertices: this._vertices_data });
-}
-
-DynamicMeshNode.prototype.updateVertices = function( vertices )
-{
-	if(vertices)
-		this.vertices = vertices;
-	this._total = this.vertices.length;
-	if( this._vertices_data.length < this.vertices.length )
-	{
-		this._vertices_data = new Float32Array( this.vertices.length * 2 );
-		this._mesh.getBuffer("vertices").data = this._vertices_data;
-	}
-	this._vertices_data.set( this.vertices );
-	this._mesh.getBuffer("vertices").upload( GL.STREAM_DRAW );
-}
-
-DynamicMeshNode.prototype.updateNormals = function( normals )
-{
-	if(normals)
-		this.normals = normals;
-	if( !this._normals_data || this._normals_data.length < this.normals.length )
-	{
-		this._normals_data = new Float32Array( this.normals.length * 2 );
-		var buffer = this._mesh.getBuffer("normals");
-		if(!buffer)
-			this._mesh.createVertexBuffer("normals",null,3,this._normals_data, GL.STREAM_DRAW);
-	}
-	this._normals_data.set( this.normals );
-	this._mesh.getBuffer("normals").upload( GL.STREAM_DRAW );
-}
-
-DynamicMeshNode.prototype.updateCoords = function( coords )
-{
-	if(coords)
-		this.coords = coords;
-	if( !this._coords_data || this._coords_data.length < this.normals.length )
-	{
-		this._coords_data = new Float32Array( this.coords.length * 2 );
-		var buffer = this._mesh.getBuffer("coords");
-		if(!buffer)
-			this._mesh.createVertexBuffer("coords",null,2,this._coords_data, GL.STREAM_DRAW);
-	}
-	this._coords_data.set( this.coords );
-	this._mesh.getBuffer("coords").upload( GL.STREAM_DRAW );
-}
-
-DynamicMeshNode.prototype.updateIndices = function( indices )
-{
-	if(indices)
-		this.indices = indices;
-	if( !this._indices_data || this._indices_data.length < this.indices.length )
-	{
-		this._indices_data = new Float32Array( this.indices.length * 2 );
-		var buffer = this._mesh.getIndexBuffer("triangles");
-		if(!buffer)
-			this._mesh.createIndicesBuffer( "triangles",this._indices_data, GL.STREAM_DRAW );
-	}
-	this._indices_data.set( this.indices );
-	this._mesh.getIndexBuffer("triangles").upload( GL.STREAM_DRAW );
-	this._total_indices = indices.length;
-}
-
-DynamicMeshNode.prototype.preRender = function()
-{
-	if(!this._total)
-		return;
-	var mesh = this._mesh;
-	var range = this._total_indices ? this._total_indices : this._total / 3;
-	this.draw_range = [0, range];
-	//shader.uniforms( renderer._uniforms ).uniforms( this._uniforms ).drawRange( mesh, this.primitive == null ? GL.TRIANGLES : this.primitive, , this._total_indices ? "triangles" : null );
-}
-
-RD.DynamicMeshNode = DynamicMeshNode;
-
 /* used functions */
 
 function distanceToPlane(plane, point)
@@ -5891,7 +6437,7 @@ RD.parseTextConfig = function(text)
 	return root;
 }
 
-var temp_vec3 = vec3.create();
+var RENDERABLE_IGNORE_BOUNDING = 1;
 
 //encapsulates one render call, helps sorting
 class Renderable {
@@ -5899,6 +6445,7 @@ class Renderable {
 	{
 		this.name = "";
 		this.id = -1;
+		this.flags = 0;
 		this.mesh = null;
 		this.model = null;
 		this.index_buffer_name = "triangles";
@@ -5908,6 +6455,7 @@ class Renderable {
 		this.reverse_faces = false;
 		this.primitive = -1;
 		this.skin = null; //could be RD.Skeleton or { bindMatrices:[], joints:[], skeleton_root }
+		this.bounding = BBox.create();
 
 		this.instances = null; //models
 		this.node = null;
@@ -5917,6 +6465,7 @@ class Renderable {
 	copyFrom( rc ) {
 		this.name = rc.name;
 		this.id = rc.id;
+		this.flags = rc.flags;
 		this.mesh = rc.mesh;
 		this.model = rc.model;
 		this.index_buffer_name = rc.index_buffer_name;
@@ -5928,6 +6477,7 @@ class Renderable {
 		this.draw_range = rc.draw_range;
 		this.primitive = rc.primitive;
 		this.instances = rc.instances;
+		this.bounding.set( rc.bounding );
 
 		this._render_priority = rc._render_priority;
 	}
@@ -6005,7 +6555,7 @@ RD.orientNodeToCamera = function( mode, node, camera, renderer )
 		}
 	}
 	
-	renderer.setModelMatrix( node._global_matrix );
+	//renderer.setModelMatrix( node._global_matrix );
 }
 
 RD.makeHash = function(length) {
@@ -6155,3 +6705,4 @@ if(typeof(GL) == "undefined")
 //footer
 
 })( typeof(window) != "undefined" ? window : (typeof(self) != "undefined" ? self : global ) );
+

@@ -169,6 +169,108 @@ PointCloud._pixel_shader = '\
 		';
 */
 
+//This node allows to render a mesh where vertices are changing constantly
+//Used for particles
+class DynamicMeshNode extends RD.SceneNode
+{
+	constructor(o){
+		super();
+		this.build();
+		if(o)
+			this.fromJSON(o);
+	}
+}
+
+DynamicMeshNode.prototype.build = function()
+{
+	this.vertices = [];
+	this.normals = [];
+	this.coords = [];
+	this.indices = [];
+
+	var size = 1024;
+	this._vertices_data = new Float32Array( size * 3 );
+	this._normals_data = null;
+	this._coords_data = null;
+	this._indices_data = null;
+	this._total = 0;
+	this._total_indices = 0;
+	this._mesh = GL.Mesh.load({ vertices: this._vertices_data });
+}
+
+DynamicMeshNode.prototype.updateVertices = function( vertices )
+{
+	if(vertices)
+		this.vertices = vertices;
+	this._total = this.vertices.length;
+	if( this._vertices_data.length < this.vertices.length )
+	{
+		this._vertices_data = new Float32Array( this.vertices.length * 2 );
+		this._mesh.getBuffer("vertices").data = this._vertices_data;
+	}
+	this._vertices_data.set( this.vertices );
+	this._mesh.getBuffer("vertices").upload( GL.STREAM_DRAW );
+}
+
+DynamicMeshNode.prototype.updateNormals = function( normals )
+{
+	if(normals)
+		this.normals = normals;
+	if( !this._normals_data || this._normals_data.length < this.normals.length )
+	{
+		this._normals_data = new Float32Array( this.normals.length * 2 );
+		var buffer = this._mesh.getBuffer("normals");
+		if(!buffer)
+			this._mesh.createVertexBuffer("normals",null,3,this._normals_data, GL.STREAM_DRAW);
+	}
+	this._normals_data.set( this.normals );
+	this._mesh.getBuffer("normals").upload( GL.STREAM_DRAW );
+}
+
+DynamicMeshNode.prototype.updateCoords = function( coords )
+{
+	if(coords)
+		this.coords = coords;
+	if( !this._coords_data || this._coords_data.length < this.normals.length )
+	{
+		this._coords_data = new Float32Array( this.coords.length * 2 );
+		var buffer = this._mesh.getBuffer("coords");
+		if(!buffer)
+			this._mesh.createVertexBuffer("coords",null,2,this._coords_data, GL.STREAM_DRAW);
+	}
+	this._coords_data.set( this.coords );
+	this._mesh.getBuffer("coords").upload( GL.STREAM_DRAW );
+}
+
+DynamicMeshNode.prototype.updateIndices = function( indices )
+{
+	if(indices)
+		this.indices = indices;
+	if( !this._indices_data || this._indices_data.length < this.indices.length )
+	{
+		this._indices_data = new Float32Array( this.indices.length * 2 );
+		var buffer = this._mesh.getIndexBuffer("triangles");
+		if(!buffer)
+			this._mesh.createIndicesBuffer( "triangles",this._indices_data, GL.STREAM_DRAW );
+	}
+	this._indices_data.set( this.indices );
+	this._mesh.getIndexBuffer("triangles").upload( GL.STREAM_DRAW );
+	this._total_indices = indices.length;
+}
+
+DynamicMeshNode.prototype.preRender = function()
+{
+	if(!this._total)
+		return;
+	var mesh = this._mesh;
+	var range = this._total_indices ? this._total_indices : this._total / 3;
+	this.draw_range = [0, range];
+	//shader.uniforms( renderer._uniforms ).uniforms( this._uniforms ).drawRange( mesh, this.primitive == null ? GL.TRIANGLES : this.primitive, , this._total_indices ? "triangles" : null );
+}
+
+RD.DynamicMeshNode = DynamicMeshNode;
+
+
 
 
 /**

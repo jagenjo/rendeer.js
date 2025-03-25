@@ -19,6 +19,7 @@
 	var scene = null;
 	var anims = {};
     var character = null;
+    var shadow = null;
     var velocity = 0;
 
     function loadAnimation(name,url)
@@ -49,10 +50,9 @@
 		camera.lookAt( [-40,40,80],[0,10,0],[0,1,0] );
 
 		var floor = new RD.SceneNode();
-		floor.color = [0.3,0.3,0.3,1];
 		floor.mesh = "circle";
 		floor.scale(100,100,100);
-		floor.material = (new RD.Material()).register().name;
+		floor.material = (new RD.Material({color:[0.4,0.4,0.4,1]})).register().name;
 		scene.root.addChild(floor);
 
         //character
@@ -60,6 +60,11 @@
 		character.createMaterial({texture:"data/casual.png"});
         character.skeleton = new RD.Skeleton();
         scene.root.addChild(character);
+
+        shadow = new RD.SceneNode({mesh: "planeXZ", scale:15});
+		shadow.position = [0,0.1,0];
+		shadow.createMaterial({texture:"data/gaussian_alpha.png", blend_mode: RD.BLEND_ALPHA, color:[0,0,0,0.5]});
+        scene.root.addChild(shadow);
 
 		loadAnimation("idle", "data/idle.skanim" );
         loadAnimation("walk", "data/walking.skanim" );
@@ -101,6 +106,7 @@
             if(velocity)
                 character.moveLocal([0,0,velocity]);
             character.rotate(delta_angle * DEG2RAD,[0,1,0]);
+			shadow.position = [character.position[0],0.1,character.position[2]];
 
             var t = getTime()*0.001;
             var primary_anim, secondary_anim;

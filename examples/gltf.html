@@ -76,7 +76,7 @@
 			scene.update(dt);
 
 			if(gltf_node && animation)
-				animation.applyAnimation( gltf_node, (getTime()*0.001) % animation.duration, RD.LINEAR );
+				animation.applyAnimation( gltf_node, (getTime()*0.001) % animation.duration, RD.LINEAR, true );
 		}
 
 		//input

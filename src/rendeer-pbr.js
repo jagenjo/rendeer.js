@@ -314,7 +314,7 @@ PBRPipeline.prototype.renderRenderables = function( renderables, camera, layers 
 			model = GL.linearizeArray( renderable.instances, Float32Array );
 
 		//render opaque stuff
-		this.renderMeshWithMaterial( model, renderable.mesh, renderable.material, renderable.index_buffer_name, renderable.group_index, renderable.node.extra_uniforms, renderable.reverse_faces, renderable.skin );
+		this.renderMeshWithMaterial( model, renderable.mesh, renderable.material, renderable.index_buffer_name, renderable.group_index, renderable.primitive, renderable.node.extra_uniforms, renderable.reverse_faces, renderable.skin );
 	}
 }
 
@@ -410,12 +410,12 @@ PBRPipeline.prototype.renderRenderable = function( rc )
 	if( rc.instances && rc.instances.length )
 		model = new Float32Array( rc.instances.flat() );
 
-	this.renderMeshWithMaterial( model, rc.mesh, rc.material, rc.index_buffer_name, rc.group_index, rc.node?.extra_uniforms, rc.reverse_faces, rc.skin );
+	this.renderMeshWithMaterial( model, rc.mesh, rc.material, rc.index_buffer_name, rc.group_index, rc.primitive, rc.node?.extra_uniforms, rc.reverse_faces, rc.skin );
 }
 
 PBRPipeline.default_backface_color = [0.1,0.1,0.1];
 
-PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, material, index_buffer_name, group_index, extra_uniforms, reverse_faces, skinning_info )
+PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, material, index_buffer_name, group_index, primitive, extra_uniforms, reverse_faces, skinning_info )
 {
 	var renderer = this.renderer;
 
@@ -626,6 +626,9 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 	if( group_index != null && mesh.info && mesh.info.groups && mesh.info.groups[ group_index ] )
 		group = mesh.info.groups[ group_index ];
 
+	if( material.primitive > -1)
+		primitive = material.primitive;
+
 	var instancing_uniforms = this._instancing_uniforms;
 	instancing_uniforms.u_model = model_matrix;
 
@@ -638,11 +641,11 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 		//gl.enable( gl.CULL_FACE );
 		//gl.frontFace( reverse_faces ? gl.CCW : gl.CW );
 		if(num_instances > 1)
-			shader.drawInstanced( mesh, material.primitive === undefined ? gl.TRIANGLES : material.primitive, index_buffer_name, instancing_uniforms );
+			shader.drawInstanced( mesh, primitive, index_buffer_name, instancing_uniforms );
 		else if(group)
-			shader.drawRange( mesh, material.primitive, group.start, group.length, index_buffer_name );
+			shader.drawRange( mesh, primitive, group.start, group.length, index_buffer_name );
 		else
-			shader.draw( mesh, material.primitive, index_buffer_name );
+			shader.draw( mesh, primitive, index_buffer_name );
 		gl.colorMask(true,true,true,true);
 		gl.depthFunc( gl.LEQUAL );
 		//gl.frontFace( reverse_faces ? gl.CW : gl.CCW );
@@ -652,16 +655,16 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 	if(num_instances > 1)
 	{
 		if(group)
-			shader.drawInstanced( mesh, material.primitive === undefined ? gl.TRIANGLES : material.primitive, index_buffer_name, instancing_uniforms, group.start, group.length );
+			shader.drawInstanced( mesh, primitive, index_buffer_name, instancing_uniforms, group.start, group.length );
 		else
-			shader.drawInstanced( mesh, material.primitive === undefined ? gl.TRIANGLES : material.primitive, index_buffer_name, instancing_uniforms );
+			shader.drawInstanced( mesh, primitive, index_buffer_name, instancing_uniforms );
 	}
 	else
 	{
 		if(group)
-			shader.drawRange( mesh, material.primitive, group.start, group.length, index_buffer_name );
+			shader.drawRange( mesh, primitive, group.start, group.length, index_buffer_name );
 		else
-			shader.draw( mesh, material.primitive, index_buffer_name );
+			shader.draw( mesh, primitive, index_buffer_name );
 	}
 	this.rendered_renderables++;
 
@@ -1019,7 +1022,6 @@ PBRPipeline.prototype.renderSkybox = function( camera )
 	mat4.identity( model );
 	mat4.translate( model, model, camera.position );
 	mat4.scale( model, model, [10,10,10] ); //to avoid overlaps
-	this.renderer.setModelMatrix(model);
 	shader.uniforms( this.renderer._uniforms );
 	shader.uniforms( camera._uniforms );
 	shader.uniforms({
