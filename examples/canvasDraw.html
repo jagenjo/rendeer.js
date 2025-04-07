@@ -21,8 +21,7 @@
 		var scene = new RD.Scene();
 
 		//create the rendering context
-		var context = GL.create({ width: window.innerWidth, height:window.innerHeight });
-		var renderer = new RD.Renderer( context );
+		var renderer = new RD.Renderer( { width: window.innerWidth, height:window.innerHeight } );
 		document.body.appendChild( renderer.canvas ); //attach
 
         //create an offscreen canvas where we will draw

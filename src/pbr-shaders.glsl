@@ -1,7 +1,7 @@
 \shaders
 
 degamma_material default.vs degamma_material.fs
-degamma @SCREEN degamma.fs
+degamma @SCREEN_300 degamma.fs
 pbr default.vs pbr.fs
 nopbr default.vs nopbr.fs
 albedo default.vs albedo.fs
@@ -9,10 +9,11 @@ occlusion default.vs occlusion.fs
 overlay default.vs overlay.fs
 normals default.vs normals.fs
 gbuffer default.vs gbuffer.fs
-brdf_integrator @SCREEN brdf_integrator.fs
+deferred_global @SCREEN_300 deferred_global.fs
+brdf_integrator @SCREEN_300 brdf_integrator.fs
 skybox default.vs skybox.fs
-fxaa_tonemapper @SCREEN fxaa_tonemapper.fs
-tonemapper @SCREEN tonemapper.fs
+fxaa_tonemapper @SCREEN_300 fxaa_tonemapper.fs
+tonemapper @SCREEN_300 tonemapper.fs
 
 \skinning
 
@@ -35,29 +36,30 @@ void computeSkinning(inout vec4 vertex, inout vec4 normal)
 
 
 \default.vs
+	#version 300 es
 
 	precision highp float;
 	precision highp int;
 
-	attribute vec3 a_vertex;
-	attribute vec3 a_normal;
-	attribute vec2 a_coord;
+	in vec3 a_vertex;
+	in vec3 a_normal;
+	in vec2 a_coord;
 	#ifdef UVS2
-		attribute vec2 a_coord1;
+		in vec2 a_coord1;
 	#endif
 	#ifdef COLOR
-		attribute vec4 a_color;
+		in vec4 a_color;
 	#endif
 
-	varying vec3 v_wPosition;
-	varying vec3 v_wNormal;
-	varying vec2 v_coord;
-	varying vec2 v_coord1;
-	varying vec2 v_coord2;
-	varying vec4 v_color;
+	out vec3 v_wPosition;
+	out vec3 v_wNormal;
+	out vec2 v_coord;
+	out vec2 v_coord1;
+	out vec2 v_coord2;
+	out vec4 v_color;
 
 	#ifdef INSTANCING
-		attribute mat4 u_model;
+		in mat4 u_model;
 	#else
 		uniform mat4 u_model;
 	#endif
@@ -119,7 +121,7 @@ void computeSkinning(inout vec4 vertex, inout vec4 normal)
 		#endif
 
 		if( u_maps_info[DISPLACEMENTMAP] != -1 && u_displacement_factor != 0.0 ){
-			float displace = texture2D(u_displacement_texture, getUV( u_maps_info[DISPLACEMENTMAP] ) ).x;
+			float displace = texture(u_displacement_texture, getUV( u_maps_info[DISPLACEMENTMAP] ) ).x;
 			vertex4.xyz += normal4.xyz * displace * u_displacement_factor;
 		}
 
@@ -418,27 +420,24 @@ void computeSkinning(inout vec4 vertex, inout vec4 normal)
 	}
 
 
-\header.inc
+\header_fs.inc
 
-	#ifndef WEBGL2
-		#extension GL_OES_standard_derivatives : enable
-		#extension GL_EXT_shader_texture_lod : enable
-	#endif
+	#version 300 es
 	precision highp float;
 	precision highp int;
 
-	varying vec3 v_wPosition;
-	varying vec3 v_wNormal;
-	varying vec2 v_coord;
+	in vec3 v_wPosition;
+	in vec3 v_wNormal;
+	in vec2 v_coord;
 	#ifdef UVS2
-		varying vec2 v_coord1;
+		in vec2 v_coord1;
 	#else
 		vec2 v_coord1;
 	#endif
-	varying vec2 v_coord2;
+	in vec2 v_coord2;
 
 	#ifdef COLOR
-		varying vec4 v_color;
+		in vec4 v_color;
 	#else
 		vec4 v_color;
 	#endif
@@ -579,12 +578,9 @@ float dither4x4(vec2 position, float brightness)
 
 
 \pbr.fs
-
-	//SHADER FOR PBR ***************************
-
-	#import "header.inc"
+	#import "header_fs.inc"
 	#import "global_pbr.inc"
-
+	//SHADER FOR PBR ***************************
 	vec3 getReflectedVector( PBRMat material ) {
 		
 		float anisotropy = material.anisotropy;
@@ -606,7 +602,7 @@ float dither4x4(vec2 position, float brightness)
 			n *= -1.0;
 
 		if( u_maps_info[NORMALMAP] != -1 ){
-			vec3 normal_map = texture2D(u_normal_texture, getUV( u_maps_info[NORMALMAP] ) ).xyz;
+			vec3 normal_map = texture(u_normal_texture, getUV( u_maps_info[NORMALMAP] ) ).xyz;
 			vec3 n2 = perturbNormal( n, -v, v_coord, normal_map );
 			n = normalize(mix(n, n2, u_normalFactor));
 		}
@@ -646,12 +642,12 @@ float dither4x4(vec2 position, float brightness)
 		vec3 baseColor = u_albedo;
 
 		if(u_maps_info[DETAILMAP] != -1){
-			vec3 detail_tex = texture2D(u_detail_texture, getUV( u_maps_info[DETAILMAP] ) * 10.0 ).rgb;
+			vec3 detail_tex = texture(u_detail_texture, getUV( u_maps_info[DETAILMAP] ) * 10.0 ).rgb;
 			baseColor *= detail_tex;
 		}
 
 		if(u_maps_info[ALBEDOMAP] != -1){
-			vec3 albedo_tex = texture2D(u_albedo_texture, getUV( u_maps_info[ALBEDOMAP] ) ).rgb;
+			vec3 albedo_tex = texture(u_albedo_texture, getUV( u_maps_info[ALBEDOMAP] ) ).rgb;
 			albedo_tex = pow(albedo_tex, vec3(u_gamma)); //degamma
 			baseColor *= max(albedo_tex,vec3(0.01));
 		}
@@ -667,7 +663,7 @@ float dither4x4(vec2 position, float brightness)
 		// GET METALLIC AND ROUGHNESS PARAMS
 		if(u_maps_info[ METALLICROUGHNESSMAP ] != -1 )
 		{
-			vec4 sampler = texture2D(u_metallicRoughness_texture, getUV( u_maps_info[METALLICROUGHNESSMAP] ) );
+			vec4 sampler = texture(u_metallicRoughness_texture, getUV( u_maps_info[METALLICROUGHNESSMAP] ) );
 			if(u_metallicRough) {
 				roughness *= sampler.g; // roughness stored in g
 				metallic *= sampler.b; // recompute metallness using metallic-rough texture
@@ -735,7 +731,7 @@ float dither4x4(vec2 position, float brightness)
 		//f = fract(f);
 		//color = mix( textureCubeLodEXT(u_SpecularEnvSampler_texture, r, level), textureCubeLodEXT(u_SpecularEnvSampler_texture, r, level + 1.0), f );
 
-		color = textureCubeLodEXT(u_SpecularEnvSampler_texture, r, f);
+		color = textureLod(u_SpecularEnvSampler_texture, r, f);
 		
 		//float offset = 3.0;
 		//color = mix( textureCube(u_SpecularEnvSampler_texture, r, level + offset), textureCube(u_SpecularEnvSampler_texture, r, level + 1.0 + offset), f );
@@ -755,7 +751,7 @@ float dither4x4(vec2 position, float brightness)
 		float NdotV = material.NoV;
 
 		vec2 brdfSamplePoint = vec2( NdotV, material.roughness );
-		vec2 brdf = texture2D( u_brdf_texture, brdfSamplePoint ).rg;
+		vec2 brdf = texture( u_brdf_texture, brdfSamplePoint ).rg;
 		//brdf.y = 1.0 - brdf.y;
 		brdf = pow(brdf, vec2(2.2));
 
@@ -828,7 +824,7 @@ float dither4x4(vec2 position, float brightness)
 
 			/*
 			if(u_maps_info[DISPLACEMENTMAP] != -1){
-				vec3 coat_bump = texture2D( u_displacement_texture, getUV(u_maps_info[DISPLACEMENTMAP]) ).xyz;
+				vec3 coat_bump = texture( u_displacement_texture, getUV(u_maps_info[DISPLACEMENTMAP]) ).xyz;
 				coat_bump = normalize( perturbNormal( material.R, -material.V, v_coord, coat_bump ) );
 
 				float coatNoV = clamp(dot(coat_bump, material.V), 0.0, 0.99) + 1e-6;
@@ -857,7 +853,7 @@ float dither4x4(vec2 position, float brightness)
 		// Apply baked ambient oclusion 
 		if(u_maps_info[OCCLUSIONMAP] != -1)
 		{
-			vec3 occ = texture2D( u_occlusion_texture, getUV(u_maps_info[OCCLUSIONMAP]) ).xyz;
+			vec3 occ = texture( u_occlusion_texture, getUV(u_maps_info[OCCLUSIONMAP]) ).xyz;
 			if( u_metallicRough == true )
 				occ.xyz = vec3(occ.x); //force to use only one channel
 			occ = pow(occ, vec3(u_gamma * u_occlusion_gamma)); //degamma
@@ -867,6 +863,8 @@ float dither4x4(vec2 position, float brightness)
 
 		color = indirect;
 	}
+
+	out vec4 FragColor;
 
 	void main() {
 
@@ -901,9 +899,9 @@ float dither4x4(vec2 position, float brightness)
 		createMaterial( material );
 
 		if(u_maps_info[OPACITYMAP] != -1)
-			alpha *= texture2D( u_opacity_texture, getUV(u_maps_info[OPACITYMAP]) ).r;
+			alpha *= texture( u_opacity_texture, getUV(u_maps_info[OPACITYMAP]) ).r;
 		else if(u_maps_info[ALBEDOMAP] != -1)
-			alpha *= texture2D( u_albedo_texture, getUV(u_maps_info[ALBEDOMAP]) ).a;
+			alpha *= texture( u_albedo_texture, getUV(u_maps_info[ALBEDOMAP]) ).a;
 		#ifdef COLOR
 			alpha *= v_color.a;
 		#endif
@@ -912,7 +910,7 @@ float dither4x4(vec2 position, float brightness)
 		if(u_maps_info[EMISSIVEMAP] != -1)
 		{
 			vec2 emissive_uv = getUV(u_maps_info[EMISSIVEMAP]);
-			vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
+			vec4 emissive_tex = texture(u_emissive_texture, emissive_uv );
 			emissive_tex.xyz = pow(emissive_tex.xyz, vec3(u_gamma)); //degamma
 			emissive *= emissive_tex.xyz;
 			alpha *= emissive_tex.a;
@@ -932,17 +930,21 @@ float dither4x4(vec2 position, float brightness)
 
 		//color.xyz = material.N;
 
-		gl_FragColor = vec4( vec3(color) * u_exposure, alpha );
-		//gl_FragColor.a = min(1.0,gl_FragColor.a + length( gl_FragColor.xyz ) * alpha * 0.2);
+		FragColor = vec4( vec3(color) * u_exposure, alpha );
+		//FragColor.a = min(1.0,FragColor.a + length( FragColor.xyz ) * alpha * 0.2);
 	}
 
 \gbuffer.fs
-#extension GL_EXT_draw_buffers : require
-#import "header.inc"
+#import "header_fs.inc"
 
 //defined also in global_pbr.inc
 #define MIN_ROUGHNESS            0.002025
 #define MIN_METALNESS            0.001
+
+layout(location = 0) out vec4 FragColor;
+layout(location = 1) out vec4 FragMaterial;
+layout(location = 2) out vec4 FragEmissive;
+layout(location = 3) out vec4 FragNormal;
 
 void main()
 {
@@ -962,12 +964,12 @@ void main()
 	vec3 baseColor = u_albedo;
 
 	if(u_maps_info[DETAILMAP] != -1){
-		vec3 detail_tex = texture2D( u_detail_texture, getUV( u_maps_info[DETAILMAP] ) * 10.0 ).rgb;
+		vec3 detail_tex = texture( u_detail_texture, getUV( u_maps_info[DETAILMAP] ) * 10.0 ).rgb;
 		baseColor *= detail_tex;
 	}
 
 	if(u_maps_info[ALBEDOMAP] != -1){
-		vec4 albedo_tex = texture2D( u_albedo_texture, getUV( u_maps_info[ALBEDOMAP] ) );
+		vec4 albedo_tex = texture( u_albedo_texture, getUV( u_maps_info[ALBEDOMAP] ) );
 		albedo_tex.xyz = pow( albedo_tex.xyz, vec3(u_gamma)); //degamma
 		alpha *= albedo_tex.a;
 		baseColor *= max( albedo_tex.xyz, vec3(0.01) );
@@ -977,14 +979,14 @@ void main()
 	if(u_maps_info[ EMISSIVEMAP ] != -1)
 	{
 		vec2 emissive_uv = getUV(u_maps_info[EMISSIVEMAP]);
-		vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
+		vec4 emissive_tex = texture(u_emissive_texture, emissive_uv );
 		emissive_tex.xyz = pow( emissive_tex.xyz, vec3(u_gamma) ); //degamma
 		emissive *= emissive_tex.xyz;
 		alpha *= emissive_tex.a;
 	}
 
 	if(u_maps_info[OPACITYMAP] != -1)
-		alpha *= texture2D( u_opacity_texture, getUV(u_maps_info[OPACITYMAP]) ).r;
+		alpha *= texture( u_opacity_texture, getUV(u_maps_info[OPACITYMAP]) ).r;
 	#ifdef COLOR
 		alpha *= v_color.a;
 	#endif
@@ -1002,7 +1004,7 @@ void main()
 	// GET METALLIC AND ROUGHNESS PARAMS
 	if(u_maps_info[ METALLICROUGHNESSMAP ] != -1 )
 	{
-		vec4 sampler = texture2D(u_metallicRoughness_texture, getUV( u_maps_info[METALLICROUGHNESSMAP] ) );
+		vec4 sampler = texture(u_metallicRoughness_texture, getUV( u_maps_info[METALLICROUGHNESSMAP] ) );
 		if(u_metallicRough) {
 			roughness *= sampler.g; // roughness stored in g
 			metallic *= sampler.b; // recompute metallness using metallic-rough texture
@@ -1017,7 +1019,7 @@ void main()
 	vec3 occ = vec3(0.0);
 	if(u_maps_info[ OCCLUSIONMAP ] != -1)
 	{
-		occ = texture2D( u_occlusion_texture, getUV(u_maps_info[OCCLUSIONMAP]) ).xyz;
+		occ = texture( u_occlusion_texture, getUV(u_maps_info[OCCLUSIONMAP]) ).xyz;
 		occ = pow(occ, vec3( u_gamma * u_occlusion_gamma )); //degamma
 		occ *= u_occlusion_factor;
 	}
@@ -1029,27 +1031,64 @@ void main()
 
 	if( u_maps_info[NORMALMAP] != -1 ) {
 		vec2 norm_uv = getUV( u_maps_info[NORMALMAP] );
-		vec3 normal_map = texture2D( u_normal_texture, norm_uv ).xyz;
+		vec3 normal_map = texture( u_normal_texture, norm_uv ).xyz;
 		vec3 n2 = perturbNormal( n, -v, norm_uv, normal_map );
 		n = normalize(mix(n, n2, u_normalFactor));
 	}
 
 	//map buffers
-	gl_FragData[0] = vec4( baseColor, 1.0 );
-	gl_FragData[1] = vec4( metallic, roughness, 1.0 , 1.0 );
-	gl_FragData[2] = vec4( emissive + occ, 1.0 );
-	gl_FragData[3] = vec4( n, 1.0 );
+	FragColor = vec4( baseColor, 1.0 );
+	FragMaterial = vec4( metallic, roughness, 1.0 , 1.0 );
+	FragEmissive = vec4( emissive + occ, 1.0 );
+	FragNormal = vec4( n, 1.0 );
 }
 
+\deferred_global.fs 
+	#version 300 es
+	precision highp float;
+
+	in vec2 v_coord;
+
+	#import "global_pbr.inc"
+
+	uniform sampler2D albedo_texture;
+	uniform sampler2D normal_texture;
+	uniform sampler2D material_texture;
+	uniform sampler2D depth_texture;
+
+	uniform mat4 u_invVP;
+
+
+	out vec4 FragColor;
+
+	void main()
+	{
+		vec2 uv = v_coord;
+		vec4 color = texture(albedo_texture, uv);
+		vec4 normal_tex = texture(normal_texture, uv);
+		
+		float depth = texture( depth_texture, uv ).x;
+		vec4 screen_pos = vec4(uv.x*2.0-1.0, uv.y*2.0-1.0, depth*2.0-1.0, 1.0);
+		vec4 proj_worldpos = u_invVP * screen_pos;
+		vec3 worldpos = proj_worldpos.xyz / proj_worldpos.w;
+
+		vec3 N = normalize( normal_tex.xyz * 2.0 - vec3(1.0) );
+		color.xyz = worldpos;
+		FragColor = color;
+	}
+
+
+
 \nopbr.fs
+	#import "header_fs.inc"
+	#import "global_pbr.inc"
 
 	//SHADER FOR NON-PBR ***************************
 
-	#import "header.inc"
-	#import "global_pbr.inc"
-
 	uniform float u_tonemapper;
 	//uniform float u_gamma;
+
+	out vec4 FragColor;
 
 	void main() {
        		#ifndef UVS2
@@ -1066,13 +1105,13 @@ void main()
 		float alpha = u_alpha;
 
 		if(u_maps_info[DETAILMAP] != -1){
-			vec3 detail_tex = texture2D(u_detail_texture, getUV( u_maps_info[DETAILMAP] ) * 10.0 ).rgb;
+			vec3 detail_tex = texture(u_detail_texture, getUV( u_maps_info[DETAILMAP] ) * 10.0 ).rgb;
 			color *= detail_tex;
 		}
 
 		if(u_maps_info[ALBEDOMAP] != -1)
 		{
-			vec4 color4 = texture2D( u_albedo_texture, getUV(u_maps_info[ALBEDOMAP]) );
+			vec4 color4 = texture( u_albedo_texture, getUV(u_maps_info[ALBEDOMAP]) );
 			color4.xyz = pow(color4.xyz, vec3(u_gamma)); //degamma
 			color *= color4.xyz;
 			alpha *= color4.a;
@@ -1080,18 +1119,18 @@ void main()
 
 		if(u_maps_info[ OCCLUSIONMAP ] != -1)
 		{
-			vec3 occ = texture2D( u_occlusion_texture, getUV(u_maps_info[OCCLUSIONMAP]) ).xyz;
+			vec3 occ = texture( u_occlusion_texture, getUV(u_maps_info[OCCLUSIONMAP]) ).xyz;
 			color *= pow(occ, vec3(u_gamma)); //degamma
 		}
 
 		if(u_maps_info[ OPACITYMAP ] != -1)
-			alpha *= texture2D( u_opacity_texture, getUV(u_maps_info[OPACITYMAP]) ).r;
+			alpha *= texture( u_opacity_texture, getUV(u_maps_info[OPACITYMAP]) ).r;
 
 		vec3 emissive = u_emissive;	
 		if(u_maps_info[ EMISSIVEMAP ] != -1)
 		{
 			vec2 emissive_uv = getUV(u_maps_info[EMISSIVEMAP]);
-			vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
+			vec4 emissive_tex = texture(u_emissive_texture, emissive_uv );
 			emissive_tex.xyz = pow( emissive_tex.xyz, vec3(u_gamma) ); //degamma
 			emissive *= emissive_tex.xyz;
 			alpha *= emissive_tex.a;
@@ -1109,18 +1148,17 @@ void main()
 		if( u_tonemapper != 0.0 )
 			color = pow(color, vec3(1.0 / u_gamma));
 
-		gl_FragColor = vec4( color, alpha );
+		FragColor = vec4( color, alpha );
 	}
 
 \albedo.fs
-
-	//SHADER FOR NON-PBR ***************************
-
-	#import "header.inc"
+	#import "header_fs.inc"
 	#import "global_pbr.inc"
-
+	//SHADER FOR NON-PBR ***************************
 	uniform float u_tonemapper;
 	//uniform float u_gamma;
+
+	out vec4 FragColor;
 
 	void main() {
        		#ifndef UVS2
@@ -1137,13 +1175,13 @@ void main()
 		float alpha = u_alpha;
 
 		if(u_maps_info[DETAILMAP] != -1){
-			vec3 detail_tex = texture2D(u_detail_texture, getUV( u_maps_info[DETAILMAP] ) * 10.0 ).rgb;
+			vec3 detail_tex = texture(u_detail_texture, getUV( u_maps_info[DETAILMAP] ) * 10.0 ).rgb;
 			color *= detail_tex;
 		}
 
 		if(u_maps_info[ALBEDOMAP] != -1)
 		{
-			vec4 color4 = texture2D( u_albedo_texture, getUV(u_maps_info[ALBEDOMAP]) );
+			vec4 color4 = texture( u_albedo_texture, getUV(u_maps_info[ALBEDOMAP]) );
 			color4.xyz = pow(color4.xyz, vec3(u_gamma)); //degamma
 			color *= color4.xyz;
 			alpha *= color4.a;
@@ -1160,18 +1198,17 @@ void main()
 		if( u_tonemapper != 0.0 )
 			color = pow(color, vec3(1.0 / u_gamma));
 
-		gl_FragColor = vec4( color, alpha );
+		FragColor = vec4( color, alpha );
 	}
 
 \occlusion.fs
-
-	//SHADER FOR NON-PBR ***************************
-
-	#import "header.inc"
+	#import "header_fs.inc"
 	#import "global_pbr.inc"
-
+	//SHADER FOR NON-PBR ***************************
 	uniform float u_tonemapper;
 	//uniform float u_gamma;
+
+	out vec4 FragColor;
 
 	void main() {
        		#ifndef UVS2
@@ -1189,7 +1226,7 @@ void main()
 
 		if(u_maps_info[ OCCLUSIONMAP ] != -1)
 		{
-			vec3 occ = texture2D( u_occlusion_texture, getUV(u_maps_info[OCCLUSIONMAP]) ).xyz;
+			vec3 occ = texture( u_occlusion_texture, getUV(u_maps_info[OCCLUSIONMAP]) ).xyz;
 			occ *= u_occlusion_factor;
 			occ *= pow(occ, vec3(u_gamma * u_occlusion_gamma)); //degamma
 			color *= occ;
@@ -1203,16 +1240,16 @@ void main()
 		if( u_tonemapper != 0.0 )
 			color = pow(color, vec3(1.0 / u_gamma));
 
-		gl_FragColor = vec4( color, alpha );
+		FragColor = vec4( color, alpha );
 	}
 
 
 \overlay.fs
-
+	#import "header_fs.inc"
+	#import "global_pbr.inc"
 	//SHADER FOR SURFACES THAT SHOULD NOT BE COLOR CORRECTED ***************************
 
-	#import "header.inc"
-	#import "global_pbr.inc"
+	out vec4 FragColor;
 
 	void main() {
        		#ifndef UVS2
@@ -1229,30 +1266,30 @@ void main()
 		float alpha = u_alpha;
 
 		if(u_maps_info[DETAILMAP] != -1){
-			vec3 detail_tex = texture2D(u_detail_texture, getUV( u_maps_info[DETAILMAP] ) * 10.0 ).rgb;
+			vec3 detail_tex = texture(u_detail_texture, getUV( u_maps_info[DETAILMAP] ) * 10.0 ).rgb;
 			color *= detail_tex;
 		}
 
 		if(u_maps_info[ALBEDOMAP] != -1)
 		{
-			vec4 color4 = texture2D( u_albedo_texture, getUV(u_maps_info[ALBEDOMAP]) );
+			vec4 color4 = texture( u_albedo_texture, getUV(u_maps_info[ALBEDOMAP]) );
 			color *= color4.xyz;
 			alpha *= color4.a;
 		}
 
 		if(u_maps_info[ OCCLUSIONMAP ] != -1)
 		{
-			vec3 occ = texture2D( u_occlusion_texture, getUV(u_maps_info[OCCLUSIONMAP]) ).xyz;
+			vec3 occ = texture( u_occlusion_texture, getUV(u_maps_info[OCCLUSIONMAP]) ).xyz;
 		}
 
 		if(u_maps_info[ OPACITYMAP ] != -1)
-			alpha *= texture2D( u_opacity_texture, getUV(u_maps_info[OPACITYMAP]) ).r;
+			alpha *= texture( u_opacity_texture, getUV(u_maps_info[OPACITYMAP]) ).r;
 
 		vec3 emissive = u_emissive;	
 		if(u_maps_info[ EMISSIVEMAP ] != -1)
 		{
 			vec2 emissive_uv = getUV(u_maps_info[EMISSIVEMAP]);
-			vec4 emissive_tex = texture2D(u_emissive_texture, emissive_uv );
+			vec4 emissive_tex = texture(u_emissive_texture, emissive_uv );
 			emissive *= emissive_tex.xyz;
 			alpha *= emissive_tex.a;
 		}
@@ -1264,61 +1301,62 @@ void main()
 		if( gl_FrontFacing == false )
 			color.xyz *= 0.1;
 
-		gl_FragColor = vec4( color, alpha );
+		FragColor = vec4( color, alpha );
 	}
 
 
 \degamma.fs
-
+	#version 300 es
 	precision highp float;
 
-	varying vec2 v_coord;
+	in vec2 v_coord;
 	uniform sampler2D u_texture;
 	uniform float u_gamma;
 	uniform float u_exposure;
 	uniform vec4 u_color;
 
+	out vec4 FragColor;
+
 	void main() {
-		vec4 color4 = u_color * texture2D( u_texture, v_coord );
+		vec4 color4 = u_color * texture( u_texture, v_coord );
 		color4.xyz = pow(color4.xyz, vec3(u_gamma)) * u_exposure; //degamma
-		gl_FragColor = color4;
+		FragColor = color4;
 	}
 
 \degamma_material.fs
-
+	#version 300 es
 	precision highp float;
 
-	varying vec2 v_coord;
+	in vec2 v_coord;
 	uniform vec4 u_color;
 	uniform sampler2D u_color_texture;
 	uniform float u_exposure;
 	uniform float u_gamma;
 
+	out vec4 FragColor;
+
 	void main() {
-		vec4 color4 = u_color * texture2D( u_color_texture, v_coord );
+		vec4 color4 = u_color * texture( u_color_texture, v_coord );
 		color4.xyz = pow(color4.xyz, vec3(u_gamma)) * u_exposure; //degamma
-		gl_FragColor = color4;
+		FragColor = color4;
 	}
 
 
 \normals.fs
 
-	#ifndef WEBGL2
-		#extension GL_OES_standard_derivatives : enable
-		#extension GL_EXT_shader_texture_lod : enable
-	#endif
+	#version 300 es
 	precision highp float;
 	precision highp int;
 
-	varying vec3 v_wPosition;
-	varying vec3 v_wNormal;
-	varying vec2 v_coord;
+	in vec3 v_wPosition;
+	in vec3 v_wNormal;
+	in vec2 v_coord;
 	#ifdef UVS2
-		varying vec2 v_coord1;
+		in vec2 v_coord1;
 	#else
 		vec2 v_coord1;
 	#endif
-	varying vec2 v_coord2;
+	in vec2 v_coord2;
 
 	uniform mat4 u_invp;
 	uniform mat4 u_invv;
@@ -1377,6 +1415,8 @@ void main()
 		return (dot(plane.xyz, p) - plane.w) / dot(plane.xyz,plane.xyz);
 	}
 
+	out vec4 FragColor;
+
 	void main() {
        		#ifndef UVS2
 			v_coord1 = v_coord;
@@ -1390,12 +1430,12 @@ void main()
 
 		if(u_maps_info[ALBEDOMAP] != -1)
 		{
-			vec4 color4 = texture2D( u_albedo_texture, getUV(u_maps_info[ALBEDOMAP]) );
+			vec4 color4 = texture( u_albedo_texture, getUV(u_maps_info[ALBEDOMAP]) );
 			alpha *= color4.a;
 		}
 
 		if(u_maps_info[ OPACITYMAP ] != -1)
-			alpha *= texture2D( u_opacity_texture, getUV(u_maps_info[OPACITYMAP]) ).r;
+			alpha *= texture( u_opacity_texture, getUV(u_maps_info[OPACITYMAP]) ).r;
 
 		if( alpha < u_alpha_cutoff)
 			discard;
@@ -1407,23 +1447,22 @@ void main()
 
 		if( u_maps_info[NORMALMAP] != -1 ) {
 			vec2 norm_uv = getUV(u_maps_info[NORMALMAP]);
-			vec3 normal_map = texture2D(u_normal_texture, norm_uv ).xyz;
+			vec3 normal_map = texture(u_normal_texture, norm_uv ).xyz;
 			vec3 n2 = perturbNormal( n, -v, norm_uv, normal_map );
 			n = normalize(mix(n, n2, u_normalFactor));
 		}
 
 		color = abs(n);
 
-		gl_FragColor = vec4( color, alpha );
+		FragColor = vec4( color, alpha );
 	}
 
 
 \brdf_integrator.fs
-
-	// BLENDER METHOD
+	#version 300 es
 	precision highp float;
-	varying vec2 v_coord;
-	varying vec3 v_vertex;
+	in vec2 v_coord;
+	in vec3 v_vertex;
 	vec2 jitternoise = vec2(0.0);
 
 	uniform sampler2D u_hammersley_sample_texture;
@@ -1467,7 +1506,7 @@ void main()
 
 	  int u = int(mod(i + jitternoise.y * HAMMERSLEY_SIZE, HAMMERSLEY_SIZE));
 
-	  Xi.yz = texture2D(u_hammersley_sample_texture, vec2(u, 0)).rg;
+	  Xi.yz = texture(u_hammersley_sample_texture, vec2(u, 0)).rg;
 
 	  return Xi;
 	}
@@ -1495,6 +1534,8 @@ void main()
 	  return NX + sqrt(NX * (NX - NX * a2) + a2);
 	  /* return 2 / (1 + sqrt(1 + a2 * (1 - NX*NX) / (NX*NX) ) ); /* Reference function */
 	}
+
+	out vec4 FragColor;
 	
 	void main() {
 
@@ -1540,21 +1581,18 @@ void main()
 		brdf_accum /= float(sampleCount);
 		fresnel_accum /= float(sampleCount);
 
-		gl_FragColor = vec4(brdf_accum, fresnel_accum, 0.0, 1.0);
+		FragColor = vec4(brdf_accum, fresnel_accum, 0.0, 1.0);
 	}
 
 
 \skybox.fs
-// Shader used to show skybox 
-
-	#ifndef WEBGL2
-		#extension GL_EXT_shader_texture_lod : enable
-	#endif
+	#version 300 es
+	// Shader used to show skybox 
 
 	precision highp float;
-	varying vec3 v_wPosition;
-	varying vec3 v_wNormal;
-	varying vec2 v_coord;
+	in vec3 v_wPosition;
+	in vec3 v_wNormal;
+	in vec2 v_coord;
 	uniform float u_rotation;
 	uniform vec3 u_camera_position;
 	uniform float u_mipmap_offset;
@@ -1576,12 +1614,14 @@ void main()
 			0.0,0.0,0.0,1.0);
 	}
 
+	out vec4 FragColor;
+
 	void main() {
 		//E is camera to point
 		vec3 E = normalize(v_wPosition - u_camera_position);
 		E = (rotationMatrix(vec3(0.0,1.0,0.0),u_rotation) * vec4(E,1.0)).xyz;
 
-		vec4 color = textureCubeLodEXT(u_color_texture, E, u_mipmap_offset );
+		vec4 color = textureLod(u_color_texture, E, u_mipmap_offset );
 
 		// color = pow(color, vec4(2.2));
 
@@ -1589,7 +1629,7 @@ void main()
 			color = vec4(color.rgb * pow(2.0, color.a * 255.0 - 128.0), 1.0);
 
 		color.xyz *= u_exposure;
-		gl_FragColor = color;
+		FragColor = color;
 	}
 
 
@@ -1684,11 +1724,11 @@ float testClippingPlane(vec4 plane, vec3 p)
 	} 
 
 \fxaa_tonemapper.fs
-
+	#version 300 es
 	precision highp float;
-	varying vec3 v_wPosition;
-	varying vec3 v_wNormal;
-	varying vec2 v_coord;
+	in vec3 v_wPosition;
+	in vec3 v_wNormal;
+	in vec2 v_coord;
 	uniform vec4 u_color;
 	uniform float u_brightness;
 	uniform float u_contrast;
@@ -1710,11 +1750,11 @@ float testClippingPlane(vec4 plane, vec3 p)
 		
 		//vec2 u_iViewportSize = vec2(1.0 / u_viewportSize.x, 1.0 / u_viewportSize.y);
 
-		vec3 rgbNW = texture2D(tex, (fragCoord + vec2(-1.0, -1.0)) * u_iViewportSize).xyz;
-		vec3 rgbNE = texture2D(tex, (fragCoord + vec2(1.0, -1.0)) * u_iViewportSize).xyz;
-		vec3 rgbSW = texture2D(tex, (fragCoord + vec2(-1.0, 1.0)) * u_iViewportSize).xyz;
-		vec3 rgbSE = texture2D(tex, (fragCoord + vec2(1.0, 1.0)) * u_iViewportSize).xyz;
-		vec3 rgbM  = texture2D(tex, fragCoord  * u_iViewportSize).xyz;
+		vec3 rgbNW = texture(tex, (fragCoord + vec2(-1.0, -1.0)) * u_iViewportSize).xyz;
+		vec3 rgbNE = texture(tex, (fragCoord + vec2(1.0, -1.0)) * u_iViewportSize).xyz;
+		vec3 rgbSW = texture(tex, (fragCoord + vec2(-1.0, 1.0)) * u_iViewportSize).xyz;
+		vec3 rgbSE = texture(tex, (fragCoord + vec2(1.0, 1.0)) * u_iViewportSize).xyz;
+		vec3 rgbM  = texture(tex, fragCoord  * u_iViewportSize).xyz;
 		vec3 luma = vec3(0.299, 0.587, 0.114);
 		float lumaNW = dot(rgbNW, luma);
 		float lumaNE = dot(rgbNE, luma);
@@ -1733,10 +1773,10 @@ float testClippingPlane(vec4 plane, vec3 p)
 		float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);
 		dir = min(vec2(FXAA_SPAN_MAX, FXAA_SPAN_MAX), max(vec2(-FXAA_SPAN_MAX, -FXAA_SPAN_MAX), dir * rcpDirMin)) * u_iViewportSize;
 		
-		vec3 rgbA = 0.5 * (texture2D(tex, fragCoord * u_iViewportSize + dir * (1.0 / 3.0 - 0.5)).xyz + 
-			texture2D(tex, fragCoord * u_iViewportSize + dir * (2.0 / 3.0 - 0.5)).xyz);
-		vec3 rgbB = rgbA * 0.5 + 0.25 * (texture2D(tex, fragCoord * u_iViewportSize + dir * -0.5).xyz + 
-			texture2D(tex, fragCoord * u_iViewportSize + dir * 0.5).xyz);
+		vec3 rgbA = 0.5 * (texture(tex, fragCoord * u_iViewportSize + dir * (1.0 / 3.0 - 0.5)).xyz + 
+			texture(tex, fragCoord * u_iViewportSize + dir * (2.0 / 3.0 - 0.5)).xyz);
+		vec3 rgbB = rgbA * 0.5 + 0.25 * (texture(tex, fragCoord * u_iViewportSize + dir * -0.5).xyz + 
+			texture(tex, fragCoord * u_iViewportSize + dir * 0.5).xyz);
 		
 		//return vec4(rgbA,1.0);
 		
@@ -1767,9 +1807,11 @@ float testClippingPlane(vec4 plane, vec3 p)
 		return curr * whiteScale;
 	}
 
+	out vec4 FragColor;
+
 	void main() {
 
-		//vec4 color = texture2D(u_color_texture, v_coord);
+		//vec4 color = texture(u_color_texture, v_coord);
 
 		//FXAA
 		vec4 color = applyFXAA(u_color_texture, v_coord);
@@ -1786,16 +1828,16 @@ float testClippingPlane(vec4 plane, vec3 p)
 		//brightness
 		color.rgb *= u_brightness;
 
-		gl_FragColor = color;
+		FragColor = color;
 	}
 
 
 \tonemapper.fs
-
+	#version 300 es
 	precision highp float;
-	varying vec3 v_wPosition;
-	varying vec3 v_wNormal;
-	varying vec2 v_coord;
+	in vec3 v_wPosition;
+	in vec3 v_wNormal;
+	in vec2 v_coord;
 	uniform vec4 u_color;
 	uniform float u_brightness;
 	uniform float u_contrast;
@@ -1825,9 +1867,11 @@ float testClippingPlane(vec4 plane, vec3 p)
 		return curr * whiteScale;
 	}
 
+	out vec4 FragColor;
+
 	void main() {
 
-		vec4 color = texture2D(u_color_texture, v_coord);
+		vec4 color = texture(u_color_texture, v_coord);
 
 		//Tonemapper
 		color.rgb = tonemapUncharted2(color.rgb);
@@ -1841,5 +1885,5 @@ float testClippingPlane(vec4 plane, vec3 p)
 		//brightness
 		color.rgb *= u_brightness;
 
-		gl_FragColor = color;
+		FragColor = color;
 	}

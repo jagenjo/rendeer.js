@@ -28,11 +28,7 @@
 		scene = new RD.Scene();
 
 		//create the rendering context
-		var context = GL.create({width: window.innerWidth, height:window.innerHeight});
-		renderer = new RD.Renderer(context);
-		renderer.light_model = 'phong'
-		renderer.sort_by_distance = true;
-		renderer.sort_by_priority = true;
+		renderer = new RD.Renderer({width: window.innerWidth, height:window.innerHeight});
         renderer.skybox_texture = "data/blursky_CUBEMAP.png";
 		document.body.appendChild(renderer.canvas); //attach
 

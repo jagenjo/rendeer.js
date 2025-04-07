@@ -21,7 +21,6 @@ function PBRPipeline( renderer )
 	this.emissive_factor = 1.0; //to boost emissive
 	this.postfx_shader_name = null; //allows to apply a final FX after tonemapper
 	this.timer_queries_enabled = true;
-	this.allow_overlay = true;
 
 	this.contrast = 1.0;
 	this.brightness = 1.0;
@@ -137,23 +136,23 @@ PBRPipeline.maps_sampler = [];
 for( var i = 0; i <  PBRPipeline.maps.length; ++i )
 	PBRPipeline.maps_sampler[i] = "u_" + PBRPipeline.maps[i] + "_texture";
 
-PBRPipeline.prototype.render = function( renderer, renderables, camera, scene, skip_fbo, layers )
+PBRPipeline.prototype.render = function( renderer, renderables, lights, camera, scene, skip_fbo, layers )
 {
 	this.renderer = renderer;
 	this.current_camera = camera;
 
 	//render
 	if(this.mode == PBRPipeline.FORWARD)
-		this.renderForward( renderables, camera, skip_fbo, layers );
+		this.renderForward( renderables, lights, camera, skip_fbo, layers );
 	else if(this.mode == PBRPipeline.DEFERRED)
-		this.renderDeferred( renderables, camera, layers );
+		this.renderDeferred( renderables, lights, camera, layers );
 }
 
 //gathers uniforms that do not change between rendered objects
 //called when the rendering of a scene starts, before the skybox
 PBRPipeline.prototype.fillGlobalUniforms = function( camera )
 {
-	var brdf_tex = this.getBRDFIntegratorTexture();
+	var brdf_tex = this.getBRDFIntegratorTexture();// "data/brdf_integrator.bin"
 	if(brdf_tex)
 		brdf_tex.bind( 0 );
 	if(this.environment_texture)
@@ -191,7 +190,7 @@ PBRPipeline.prototype.fillGlobalUniforms = function( camera )
 	}
 }
 
-PBRPipeline.prototype.renderForward = function( renderables, camera, skip_fbo, layers )
+PBRPipeline.prototype.renderForward = function( renderables, lights, camera, skip_fbo, layers )
 {
 	//prepare buffers
 	var w = Math.floor( gl.viewport_data[2] * this.resolution_factor );
@@ -206,7 +205,7 @@ PBRPipeline.prototype.renderForward = function( renderables, camera, skip_fbo, l
 	{
 		if(!this.frame_texture || this.frame_texture.width != w || this.frame_texture.height != h )
 		{
-			this.frame_texture = new GL.Texture( w,h, { format: gl.RGBA, type: gl.HIGH_PRECISION_FORMAT, filter: gl.LINEAR } );
+			this.frame_texture = new GL.Texture( w,h, { format: gl.RGBA, type: gl.HALF_FLOAT, filter: gl.LINEAR } );
 			if(!this.final_fbo)
 				this.final_fbo = new GL.FBO( [this.frame_texture], null, true );
 			else
@@ -265,7 +264,7 @@ PBRPipeline.prototype.renderForward = function( renderables, camera, skip_fbo, l
 
 	//overlay nodes are special case of nodes that should not be affected by postprocessing
 	var opaque = true;
-	if( this.renderer.overlay_renderables.length )
+	if( this.renderer.overlay_renderables && this.renderer.overlay_renderables.length )
 	{
 		var overlay_rcs = this.renderer.overlay_renderables;
 		this.global_uniforms.u_gamma = 1.0;
@@ -284,18 +283,11 @@ PBRPipeline.prototype.renderRenderables = function( renderables, camera, layers 
 {
 	var precompose_opaque = (this.alpha_composite_callback || this.alpha_composite_target_texture) && GL.FBO.current;
 	var opaque = true;
-	var overlay_rcs = this.renderer.overlay_renderables;
-	overlay_rcs.length = 0;
 
 	//do the render call for every renderable
 	for(var i = 0; i < renderables.length; ++i)
 	{
 		var renderable = renderables[i];
-		if(renderable.material.overlay && this.allow_overlay )
-		{
-			overlay_rcs.push(renderable);
-			continue;
-		}
 
 		//clone the opaque framebuffer into a separate texture once the first semitransparent material is found (to allow refractive materials)
 		//allows to have refractive materials
@@ -676,22 +668,21 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 	gl.depthMask( true );
 }
 
-PBRPipeline.prototype.renderDeferred = function( nodes, camera, skip_fbo, layers )
+PBRPipeline.prototype.renderDeferred = function( renderables, lights, camera, skip_fbo, layers )
 {
 	//TODO
-
 	//setup GBuffers
-	var GB = this.prepareBuffers();
+	var GB = this.prepareGBuffers();
 
 	//render to GBuffers
 	GB.fbo.bind();
-	this.renderToGBuffers( nodes, camera, layers );
+	this.renderToGBuffers( renderables, camera, layers );
 	GB.fbo.unbind();
 
 	GB.final_fbo.bind();
 
 	//get  lights
-	var lights = this.gatherLightsFromNodes( nodes, layers );
+	//var lights = this.gatherLightsFromNodes( renderables, layers );
 
 	//apply lights
 	this.renderFinalPass(GB, lights, camera);
@@ -705,7 +696,7 @@ PBRPipeline.prototype.renderDeferred = function( nodes, camera, skip_fbo, layers
 	this.applyPostFX( GB );
 }
 
-PBRPipeline.prototype.prepareBuffers = function( camera )
+PBRPipeline.prototype.prepareGBuffers = function( camera )
 {
 	var w = gl.drawingBufferWidth;
 	var h = gl.drawingBufferHeight;
@@ -720,29 +711,30 @@ PBRPipeline.prototype.prepareBuffers = function( camera )
 		GB.fbo = new GL.FBO();
 	if(!GB.final_fbo)
 		GB.final_fbo = new GL.FBO();
-	var options = { format: GL.RGBA, minFilter: gl.NEAREST, magFilter: gl.NEAREST, wrap: gl.CLAMP_TO_EDGE };
+	GB.width = w;
+	GB.height = h;
+	var options = { format: GL.RGBA, filter: gl.NEAREST, wrap: gl.CLAMP_TO_EDGE };
 	var albedo = new GL.Texture(w,h,options); //albedo, back?
 	var matprop = new GL.Texture(w,h,options); //metalness, roughness, selfocclusion, mat_id
 	var emissive = new GL.Texture(w,h,options); //emissive + lightmap, exp
 	var normal = new GL.Texture(w,h,options); //normal, 
-	var depth = new GL.Texture(w,h,{ format: GL.DEPTH_STENCIL, type: GL.UNSIGNED_INT_24_8_WEBGL }); //depth stencil
-	var final_buffer = new GL.Texture(w,h,{ format: GL.RGB, type: gl.HIGH_PRECISION_FORMAT, magFilter: gl.NEAREST, wrap: gl.CLAMP_TO_EDGE });
+	var depth = new GL.Texture(w,h,{ format: GL.DEPTH_STENCIL, type: GL.UNSIGNED_INT_24_8, filter: gl.NEAREST }); //depth stencil
 	GB.fbo.setTextures([ albedo, matprop, emissive, normal ], depth );
+	var final_buffer = new GL.Texture(w,h,{ format: GL.RGBA, type: gl.HALF_FLOAT, filter: gl.NEAREST, wrap: gl.CLAMP_TO_EDGE });
 	GB.final_fbo.setTextures([final_buffer]);
+
 	GB.albedo = albedo;
 	GB.matprop = matprop;
 	GB.emissive = emissive;
 	GB.normal = normal;
-	GB.width = w;
-	GB.height = h;
+	GB.depth = depth;
+	GB.final = final_buffer;
 
 	return GB;
 }
 
-PBRPipeline.prototype.renderToGBuffers = function( nodes, camera, layers )
+PBRPipeline.prototype.renderToGBuffers = function( renderables, camera, layers )
 {
-	var rcs = this.getAllRenderables( nodes, layers, camera );
-
 	//prepare render
 	gl.clearColor( this.bgcolor[0], this.bgcolor[1], this.bgcolor[2], this.bgcolor[3] );
 	gl.clear( (!this.skip_background ? gl.COLOR_BUFFER_BIT : 0) | gl.DEPTH_BUFFER_BIT );
@@ -758,30 +750,30 @@ PBRPipeline.prototype.renderToGBuffers = function( nodes, camera, layers )
 
 
 	//do the render call for every rcs
-	for(var i = 0; i < rcs.length; ++i)
+	for(var i = 0; i < renderables.length; ++i)
 	{
-		var rc = rcs[i];
-		if(rc.material.overlay && this.allow_overlay )
-		{
-			overlay_rcs.push(rc);
-			continue;
-		}
-
-		//in case of instancing
-		var model = rc.model;
-		if( rc.instances && rc.instances.length )
-			model = GL.linearizeArray( rc.instances, Float32Array );
-
-		//render opaque stuff
-		this.renderMeshWithMaterialToGBuffers( model, rc.mesh, rc.material, rc.index_buffer_name, rc.group_index, rc.node.extra_uniforms, rc.reverse_faces, rc.skin );
+		var rc = renderables[i];
+		this.renderMeshWithMaterialToGBuffers( rc.model, rc.mesh, rc.material, rc.index_buffer_name, rc.group_index, rc.node.extra_uniforms, rc.reverse_faces, rc.skin );
 	}
 }
 
 PBRPipeline.prototype.renderFinalPass = function( GB, lights, camera )
 {
 	//for every light...
+	gl.disable( gl.DEPTH_TEST );
+	gl.disable( gl.BLEND );
 
-	GB.albedo.toViewport();
+	var shader = gl.shaders["deferred_global"];
+	if(!shader)
+		return;
+
+	GB.albedo.toViewport( shader, {
+		normal_texture: GB.normal.bind(1),
+		material_texture: GB.matprop.bind(2),
+		emissive_texture: GB.emissive.bind(3),
+		depth_texture: GB.depth.bind(4),
+		u_invVP: camera._inv_viewprojection_matrix
+	});
 }
 
 PBRPipeline.prototype.applyPostFX = function( GB )
@@ -791,20 +783,19 @@ PBRPipeline.prototype.applyPostFX = function( GB )
 	var w = GB.width;
 	var h = GB.height;
 
-	gl.viewport(0,0,w*0.5,h*0.5);
-	GB.albedo.toViewport();
-	gl.viewport(w*0.5,0,w*0.5,h*0.5);
-	GB.matprop.toViewport();
-	gl.viewport(0,h*0.5,w*0.5,h*0.5);
-	GB.emissive.toViewport();
-	gl.viewport(w*0.5,h*0.5,w*0.5,h*0.5);
-	GB.normal.toViewport();
-	gl.viewport(0,0,w,h);
-}
-
-PBRPipeline.prototype.gatherLightsFromNodes = function( nodes, layers )
-{
-
+	if(this.debug)
+	{
+		gl.viewport(0,0,w*0.5,h*0.5);
+		GB.albedo.toViewport();
+		gl.viewport(w*0.5,0,w*0.5,h*0.5);
+		GB.matprop.toViewport();
+		gl.viewport(0,h*0.5,w*0.5,h*0.5);
+		GB.emissive.toViewport();
+		gl.viewport(w*0.5,h*0.5,w*0.5,h*0.5);
+		GB.normal.toViewport();
+		gl.viewport(0,0,w,h);
+	}
+	GB.final.toViewport();
 }
 
 PBRPipeline.prototype.renderMeshWithMaterialToGBuffers = function( model_matrix, mesh, material, index_buffer_name, group_index, extra_uniforms, reverse_faces, skinning_info )
@@ -966,20 +957,21 @@ PBRPipeline.prototype.renderMeshWithMaterialToGBuffers = function( model_matrix,
 
 	var instancing_uniforms = this._instancing_uniforms;
 	instancing_uniforms.u_model = model_matrix;
+	var primitive = gl.TRIANGLES;
 
 	if(num_instances > 1)
 	{
 		if(group)
-			shader.drawInstanced( mesh, material.primitive === undefined ? gl.TRIANGLES : material.primitive, index_buffer_name, instancing_uniforms, group.start, group.length );
+			shader.drawInstanced( mesh, primitive, index_buffer_name, instancing_uniforms, group.start, group.length );
 		else
-			shader.drawInstanced( mesh, material.primitive === undefined ? gl.TRIANGLES : material.primitive, index_buffer_name, instancing_uniforms );
+			shader.drawInstanced( mesh, primitive, index_buffer_name, instancing_uniforms );
 	}
 	else
 	{
 		if(group)
-			shader.drawRange( mesh, material.primitive, group.start, group.length, index_buffer_name );
+			shader.drawRange( mesh, primitive, group.start, group.length, index_buffer_name );
 		else
-			shader.draw( mesh, material.primitive, index_buffer_name );
+			shader.draw( mesh, primitive, index_buffer_name );
 	}
 	this.rendered_renderables++;
 
@@ -1131,7 +1123,8 @@ PBRPipeline.prototype.getBRDFIntegratorTexture = function(path_to_bin)
 		return;
 	}
 
-	var options = { type: gl.FLOAT, texture_type: gl.TEXTURE_2D, filter: gl.LINEAR};
+	//should be float
+	var options = { format: gl.RGBA, type: gl.FLOAT, texture_type: gl.TEXTURE_2D, filter: gl.LINEAR};
 	var tex = gl.textures[tex_name] = new GL.Texture(128, 128, options);
 
 	//fetch from precomputed one
@@ -1160,22 +1153,21 @@ PBRPipeline.prototype.getBRDFIntegratorTexture = function(path_to_bin)
 	return tex;
 }
 
+//they are random values
 PBRPipeline.prototype.createHammersleySampleTexture = function( samples )
 {
 	samples = samples || 8192;
-	var size = samples * 3;
+	var size = samples * 4;
 	var texels = new Float32Array(size);
 
-	for (var i = 0; i < size; i+=3) {
+	for (var i = 0; i < size; i+=4) {
 		//var dphi = Tools.BLI_hammersley_1d(i);
 		var dphi = Math.radical_inverse(i);
 		var phi = dphi * 2.0 * Math.PI;
 		texels[i] = Math.cos(phi);
 		texels[i+1] = Math.sin(phi);
-		texels[i+2] = 0;
 	}
-
-	var texture = new GL.Texture(samples, 1, { pixel_data: texels, type: GL.FLOAT, format: GL.RGB });
+	var texture = new GL.Texture(samples, 1, { type: gl.FLOAT, format: gl.RGBA, filter: gl.LINEAR, pixel_data: texels });
 	gl.textures["hammersley_sample_texture"] = texture;
 	return texture;
 }

@@ -18,12 +18,15 @@ if(typeof(glMatrix) == "undefined")
 	}
 	else if( typeof(window) == "undefined" ) //nodejs?
 	{
-		console.log("importing glMatrix");
-		//import * as glMatrix from './core/libs/gl-matrix-min.js';		
-		global.glMatrix = require("./gl-matrix-min.js");
-		var glMatrix = global.glMatrix;
-		for(var i in glMatrix)
-			global[i] = glMatrix[i];
+		if( typeof(SKIP_REQUIRES) === "undefined" )
+		{
+			console.log("importing glMatrix");
+			//import * as glMatrix from './core/libs/gl-matrix-min.js';		
+			global.glMatrix = require("./gl-matrix-min.js");
+			var glMatrix = global.glMatrix;
+			for(var i in glMatrix)
+				global[i] = glMatrix[i];
+		}
 	}
 	else if( typeof(glMatrix) == "undefined" )
 		throw("litegl.js requires gl-matrix to work. It must be included before litegl.");
@@ -2606,7 +2609,8 @@ global.Mesh = GL.Mesh = function Mesh( vertexbuffers, indexbuffers, options, gl 
 	}
 
 	//used to avoid problems with resources moving between different webgl context
-	this._context_id = gl.context_id; 
+	if(this.gl)
+		this._context_id = this.gl.context_id; 
 
 	this.vertexBuffers = {};
 	this.indexBuffers = {};
@@ -2816,7 +2820,7 @@ Mesh.prototype.createVertexBuffer = function( name, attribute, buffer_spacing, b
 		throw("Buffer data MUST be typed array");
 
 	//used to ensure the buffers are held in the same gl context as the mesh
-	var buffer = this.vertexBuffers[name] = new GL.Buffer( gl.ARRAY_BUFFER, buffer_data, buffer_spacing, stream_type, this.gl );
+	var buffer = this.vertexBuffers[name] = new GL.Buffer( GL.ARRAY_BUFFER, buffer_data, buffer_spacing, stream_type, this.gl );
 	buffer.name = name;
 	buffer.attribute = attribute;
 
@@ -2913,7 +2917,7 @@ Mesh.prototype.createIndexBuffer = function(name, buffer_data, stream_type) {
 		}
 	}
 
-	var buffer = this.indexBuffers[name] = new GL.Buffer(gl.ELEMENT_ARRAY_BUFFER, buffer_data, 0, stream_type, this.gl );
+	var buffer = this.indexBuffers[name] = new GL.Buffer(GL.ELEMENT_ARRAY_BUFFER, buffer_data, 0, stream_type, this.gl );
 	return buffer;
 }
 
@@ -4357,7 +4361,7 @@ Mesh.mergeMeshes = function( meshes, options )
 		extra.bones = bones;
 
 	//return
-	if( typeof(gl) != "undefined" || options.only_data )
+	if( !options.only_data )
 	{
 		var mesh = new GL.Mesh( vertex_buffers,index_buffers, extra );
 		mesh.updateBoundingBox();
@@ -6991,13 +6995,13 @@ Texture.fromImage = function( image, options ) {
 	options = options || {};
 
 	var texture = options.texture || new GL.Texture( image.width, image.height, options);
-	texture.uploadImage( image, options );
+	texture.uploadImage( image, options ); //options could have a prototype 
 
 	texture.bind();
-	gl.texParameteri(texture.texture_type, gl.TEXTURE_MAG_FILTER, texture.magFilter || GL.LINEAR );
-	gl.texParameteri(texture.texture_type, gl.TEXTURE_MIN_FILTER, texture.minFilter || GL.LINEAR_MIPMAP_LINEAR );
-	gl.texParameteri(texture.texture_type, gl.TEXTURE_WRAP_S, texture.wrapS || GL.REPEAT );
-	gl.texParameteri(texture.texture_type, gl.TEXTURE_WRAP_T, texture.wrapT || GL.REPEAT );
+	gl.texParameteri(texture.texture_type, gl.TEXTURE_MAG_FILTER, texture.magFilter || Texture.DEFAULT_MAG_FILTER );
+	gl.texParameteri(texture.texture_type, gl.TEXTURE_MIN_FILTER, texture.minFilter || Texture.DEFAULT_MIN_FILTER );
+	gl.texParameteri(texture.texture_type, gl.TEXTURE_WRAP_S, texture.wrapS || Texture.DEFAULT_WRAP_S );
+	gl.texParameteri(texture.texture_type, gl.TEXTURE_WRAP_T, texture.wrapT || Texture.DEFAULT_WRAP_T );
 
 	if ((GL.isPowerOfTwo(texture.width) && GL.isPowerOfTwo(texture.height)) || gl.webgl_version > 1)
 	{
@@ -7012,6 +7016,7 @@ Texture.fromImage = function( image, options ) {
 	{
 		//no mipmaps supported
 		gl.texParameteri(texture.texture_type, gl.TEXTURE_MIN_FILTER, GL.LINEAR );
+		//gl.texParameteri(texture.texture_type, gl.TEXTURE_MAG_FILTER, GL.LINEAR );
 		gl.texParameteri(texture.texture_type, gl.TEXTURE_WRAP_S, GL.CLAMP_TO_EDGE );
 		gl.texParameteri(texture.texture_type, gl.TEXTURE_WRAP_T, GL.CLAMP_TO_EDGE );
 		texture.has_mipmaps = false;
@@ -9401,6 +9406,17 @@ Shader.SCREEN_VERTEX_SHADER = "\n\
 				gl_Position = vec4(a_coord * 2.0 - 1.0, 0.0, 1.0); \n\
 			}\n\
 			";
+
+Shader.SCREEN_300_VERTEX_SHADER = "#version 300 es\n\
+			precision highp float;\n\
+			in vec3 a_vertex;\n\
+			in vec2 a_coord;\n\
+			out vec2 v_coord;\n\
+			void main() { \n\
+				v_coord = a_coord; \n\
+				gl_Position = vec4(a_coord * 2.0 - 1.0, 0.0, 1.0); \n\
+			}\n\
+			";			
 
 Shader.SCREEN_FRAGMENT_SHADER = "\n\
 			precision highp float;\n\

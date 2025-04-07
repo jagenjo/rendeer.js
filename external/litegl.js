@@ -18,12 +18,15 @@ if(typeof(glMatrix) == "undefined")
 	}
 	else if( typeof(window) == "undefined" ) //nodejs?
 	{
-		console.log("importing glMatrix");
-		//import * as glMatrix from './core/libs/gl-matrix-min.js';		
-		global.glMatrix = require("./gl-matrix-min.js");
-		var glMatrix = global.glMatrix;
-		for(var i in glMatrix)
-			global[i] = glMatrix[i];
+		if( typeof(SKIP_REQUIRES) === "undefined" )
+		{
+			console.log("importing glMatrix");
+			//import * as glMatrix from './core/libs/gl-matrix-min.js';		
+			global.glMatrix = require("./gl-matrix-min.js");
+			var glMatrix = global.glMatrix;
+			for(var i in glMatrix)
+				global[i] = glMatrix[i];
+		}
 	}
 	else if( typeof(glMatrix) == "undefined" )
 		throw("litegl.js requires gl-matrix to work. It must be included before litegl.");
@@ -125,7 +128,7 @@ GL.RGBA = 6408;
 GL.LUMINANCE = 6409;
 GL.LUMINANCE_ALPHA = 6410;
 GL.DEPTH_STENCIL = 34041;
-GL.UNSIGNED_INT_24_8_WEBGL = 34042;
+GL.UNSIGNED_INT_24_8 = GL.UNSIGNED_INT_24_8_WEBGL = 34042;
 
 //webgl2 formats
 GL.R8 = 33321;
@@ -152,6 +155,7 @@ GL.RGBA16I = 36232;
 GL.RGBA16UI = 36214;
 GL.RGBA32I = 36226;
 GL.RGBA32UI = 36208;
+GL.DEPTH24_STENCIL8 = 35056;
 
 GL.NEAREST = 9728;
 GL.LINEAR = 9729;
@@ -2606,7 +2610,8 @@ global.Mesh = GL.Mesh = function Mesh( vertexbuffers, indexbuffers, options, gl 
 	}
 
 	//used to avoid problems with resources moving between different webgl context
-	this._context_id = gl.context_id; 
+	if(this.gl)
+		this._context_id = this.gl.context_id; 
 
 	this.vertexBuffers = {};
 	this.indexBuffers = {};
@@ -2816,7 +2821,7 @@ Mesh.prototype.createVertexBuffer = function( name, attribute, buffer_spacing, b
 		throw("Buffer data MUST be typed array");
 
 	//used to ensure the buffers are held in the same gl context as the mesh
-	var buffer = this.vertexBuffers[name] = new GL.Buffer( gl.ARRAY_BUFFER, buffer_data, buffer_spacing, stream_type, this.gl );
+	var buffer = this.vertexBuffers[name] = new GL.Buffer( GL.ARRAY_BUFFER, buffer_data, buffer_spacing, stream_type, this.gl );
 	buffer.name = name;
 	buffer.attribute = attribute;
 
@@ -2913,7 +2918,7 @@ Mesh.prototype.createIndexBuffer = function(name, buffer_data, stream_type) {
 		}
 	}
 
-	var buffer = this.indexBuffers[name] = new GL.Buffer(gl.ELEMENT_ARRAY_BUFFER, buffer_data, 0, stream_type, this.gl );
+	var buffer = this.indexBuffers[name] = new GL.Buffer(GL.ELEMENT_ARRAY_BUFFER, buffer_data, 0, stream_type, this.gl );
 	return buffer;
 }
 
@@ -4180,9 +4185,12 @@ Mesh.mergeMeshes = function( meshes, options )
 	var offsets = {}; //tells how many positions indices must be offseted
 	var vertex_offsets = [];
 	var current_vertex_offset = 0;
+	var num_vertices = 0;
 	var groups = [];
 	var bones = [];
 	var bones_by_index = {};
+	var num_morphs = 0;
+	var morphs = null;
 
 	//vertex buffers
 	//compute size
@@ -4246,6 +4254,14 @@ Mesh.mergeMeshes = function( meshes, options )
 
 		groups.push( group );
 
+		if(mesh.morphs)
+		{
+			var num = Object.values( mesh.morphs ).length;
+			if(num_morphs == 0)
+				num_morphs = num;
+			else if (num_morphs !== num)
+				throw ("cannot merge meshes with and without morph targets")
+		}
 	}
 
 	//allocate
@@ -4274,8 +4290,30 @@ Mesh.mergeMeshes = function( meshes, options )
 
 		vertex_buffers[j] = new datatype( vertex_buffers[j] );
 		offsets[j] = 0;
+		if(j === "vertices")
+			num_vertices = vertex_buffers[j].length / 3;
 	}
 
+	//allocate for morph targets too
+	if(num_morphs)
+	{
+		morphs = [];
+		for(var i = 0; i < num_morphs; ++i)
+		{
+			var base_mesh = meshes[0].mesh;
+			var morph_data = {
+				name: base_mesh.morphs[i].name,
+				weight: base_mesh.morphs[i].weight,
+				buffers: {
+					vertices: new Float32Array(num_vertices*3),
+					normals: new Float32Array(num_vertices*3)
+				}
+			}
+			morphs.push(morph_data);
+		}
+	}
+
+	//and for indices
 	for(var j in index_buffers)
 	{
 		var datatype = current_vertex_offset < 256*256 ? Uint16Array : Uint32Array;
@@ -4288,7 +4326,7 @@ Mesh.mergeMeshes = function( meshes, options )
 	{
 		var mesh_info = meshes[i];
 		var mesh = mesh_info.mesh;
-		var offset = 0;
+		var offset = offsets["vertices"];
 		var length = 0;
 
 		for(var j in mesh.vertexBuffers)
@@ -4319,6 +4357,17 @@ Mesh.mergeMeshes = function( meshes, options )
 			index_buffers[j].set( mesh.indexBuffers[j].data, offsets[j] );
 			apply_offset( index_buffers[j], offsets[j], mesh.indexBuffers[j].data.length, vertex_offsets[i] );
 			offsets[j] += mesh.indexBuffers[j].data.length;
+		}
+
+		if(num_morphs)
+		for(var j = 0; j < mesh.morphs.length; ++j)
+		{
+			var morph = mesh.morphs[j]
+			for(var k in morph.buffers)
+			{
+				var morph_data = morph.buffers[k];
+				morphs[j].buffers[k].set( morph_data, offset );
+			}
 		}
 	}
 
@@ -4357,16 +4406,19 @@ Mesh.mergeMeshes = function( meshes, options )
 		extra.bones = bones;
 
 	//return
-	if( typeof(gl) != "undefined" || options.only_data )
+	if( !options.only_data )
 	{
 		var mesh = new GL.Mesh( vertex_buffers,index_buffers, extra );
 		mesh.updateBoundingBox();
+		if(morphs)
+			mesh.morphs = morphs;
 		return mesh;
 	}
 	return { 
 		vertexBuffers: vertex_buffers, 
 		indexBuffers: index_buffers, 
-		info: { groups: groups } 
+		info: { groups: groups },
+		morphs: morphs
 	};
 }
 
@@ -5833,14 +5885,35 @@ Texture.prototype.computeInternalFormat = function()
 {
 	this.internalFormat = this.format; //default
 
-	//automatic selection of internal format for depth textures to avoid problems between webgl1 and 2
-	if( this.format == GL.DEPTH_COMPONENT )
+	if( gl.webgl_version == 1 )
 	{
-		this.minFilter = GL.NEAREST; //this.magFilter = 
+		if( this.type == GL.HALF_FLOAT )
+		{
+			console.warn("webgl 1 does not use HALF_FLOAT, converting to HALF_FLOAT_OES")
+			this.type = GL.HALF_FLOAT_OES;
+		}
+	}
+	else
+	{
+		if( this.type == GL.HALF_FLOAT_OES )
+		{
+			console.warn("webgl 2 does not use HALF_FLOAT_OES, converting to HALF_FLOAT")
+			this.type = GL.HALF_FLOAT;
+		}		
+	}
+
+	//automatic selection of internal format for depth textures to avoid problems between webgl1 and 2
+	if( this.format == GL.DEPTH_COMPONENT || this.format === GL.DEPTH_STENCIL )
+	{
+		this.minFilter = GL.NEAREST;
 
 		if( gl.webgl_version == 2 ) 
 		{
-			if( this.type == GL.UNSIGNED_SHORT )
+			if( this.type === GL.UNSIGNED_INT_24_8 && this.format === GL.DEPTH_STENCIL)
+				this.internalFormat = GL.DEPTH24_STENCIL8; 
+			else if(this.type === GL.FLOAT && this.format === GL.DEPTH_STENCIL)
+				this.internalFormat = gl.FLOAT_32_UNSIGNED_INT_24_8_REV;
+			else if( this.type == GL.UNSIGNED_SHORT )
 				this.internalFormat = GL.DEPTH_COMPONENT16;
 			else if( this.type == GL.UNSIGNED_INT )
 				this.internalFormat = GL.DEPTH_COMPONENT24;
@@ -5864,12 +5937,6 @@ Texture.prototype.computeInternalFormat = function()
 				this.internalFormat = GL.RGBA32F;
 			else if( this.type == GL.HALF_FLOAT )
 				this.internalFormat = GL.RGBA16F;
-			else if( this.type == GL.HALF_FLOAT_OES )
-			{
-				console.warn("webgl 2 does not use HALF_FLOAT_OES, converting to HALF_FLOAT")
-				this.type = GL.HALF_FLOAT;
-				this.internalFormat = GL.RGBA16F;
-			}
 			/*
 			else if( this.type == GL.UNSIGNED_SHORT )
 			{
@@ -5883,21 +5950,18 @@ Texture.prototype.computeInternalFormat = function()
 			}
 			*/
 		}
-		else if( gl.webgl_version == 1 )
+	}
+	else if( this.format == gl.RGB )
+	{
+		if( gl.webgl_version == 2 ) 
 		{
-			if( this.type == GL.HALF_FLOAT )
+			if( this.type == GL.FLOAT )
+				this.internalFormat = GL.RGB32F;
+			else if( this.type == GL.HALF_FLOAT )
 			{
-				console.warn("webgl 1 does not use HALF_FLOAT, converting to HALF_FLOAT_OES")
-				this.type = GL.HALF_FLOAT_OES;
+				throw "GL.RGB HALF_FLOAT is not supported, use RGBA instead";
+				this.internalFormat = GL.RGB; //not GL.RGB16F
 			}
-			/*
-			else if( this.type == GL.FLOAT )
-			{
-				//if(gl.extensions.WEBGL_color_buffer_float)
-				//	this.internalFormat = this.format == GL.RGB ? gl.extensions.WEBGL_color_buffer_float.RGB32F_EXT : gl.extensions.WEBGL_color_buffer_float.RGBA32F_EXT;
-				//this.internalFormat = this.format == GL.RGB ? GL.RGB32F : GL.RGBA32F;
-			}
-			*/
 		}
 	}
 }
@@ -6991,13 +7055,13 @@ Texture.fromImage = function( image, options ) {
 	options = options || {};
 
 	var texture = options.texture || new GL.Texture( image.width, image.height, options);
-	texture.uploadImage( image, options );
+	texture.uploadImage( image, options ); //options could have a prototype 
 
 	texture.bind();
-	gl.texParameteri(texture.texture_type, gl.TEXTURE_MAG_FILTER, texture.magFilter || GL.LINEAR );
-	gl.texParameteri(texture.texture_type, gl.TEXTURE_MIN_FILTER, texture.minFilter || GL.LINEAR_MIPMAP_LINEAR );
-	gl.texParameteri(texture.texture_type, gl.TEXTURE_WRAP_S, texture.wrapS || GL.REPEAT );
-	gl.texParameteri(texture.texture_type, gl.TEXTURE_WRAP_T, texture.wrapT || GL.REPEAT );
+	gl.texParameteri(texture.texture_type, gl.TEXTURE_MAG_FILTER, texture.magFilter || Texture.DEFAULT_MAG_FILTER );
+	gl.texParameteri(texture.texture_type, gl.TEXTURE_MIN_FILTER, texture.minFilter || Texture.DEFAULT_MIN_FILTER );
+	gl.texParameteri(texture.texture_type, gl.TEXTURE_WRAP_S, texture.wrapS || Texture.DEFAULT_WRAP_S );
+	gl.texParameteri(texture.texture_type, gl.TEXTURE_WRAP_T, texture.wrapT || Texture.DEFAULT_WRAP_T );
 
 	if ((GL.isPowerOfTwo(texture.width) && GL.isPowerOfTwo(texture.height)) || gl.webgl_version > 1)
 	{
@@ -7012,6 +7076,7 @@ Texture.fromImage = function( image, options ) {
 	{
 		//no mipmaps supported
 		gl.texParameteri(texture.texture_type, gl.TEXTURE_MIN_FILTER, GL.LINEAR );
+		//gl.texParameteri(texture.texture_type, gl.TEXTURE_MAG_FILTER, GL.LINEAR );
 		gl.texParameteri(texture.texture_type, gl.TEXTURE_WRAP_S, GL.CLAMP_TO_EDGE );
 		gl.texParameteri(texture.texture_type, gl.TEXTURE_WRAP_T, GL.CLAMP_TO_EDGE );
 		texture.has_mipmaps = false;
@@ -8633,8 +8698,10 @@ Shader.prototype.extractShaderInfo = function()
 			type_length: type_length,
 			size: data.size,
 			loc: null 
-		}; //gl.getAttribLocation( this.program, data.name )
-		this.attributes[ data.name ] = gl.getAttribLocation(this.program, data.name );	
+		}; 
+		//gl.getAttribLocation( this.program, data.name )
+		if( data.name !== "gl_VertexID" ) //if gl_VertexID is used, it appears as a attribute!
+			this.attributes[ data.name ] = gl.getAttribLocation(this.program, data.name );	
 	}
 }
 
@@ -9401,6 +9468,17 @@ Shader.SCREEN_VERTEX_SHADER = "\n\
 				gl_Position = vec4(a_coord * 2.0 - 1.0, 0.0, 1.0); \n\
 			}\n\
 			";
+
+Shader.SCREEN_300_VERTEX_SHADER = "#version 300 es\n\
+			precision highp float;\n\
+			in vec3 a_vertex;\n\
+			in vec2 a_coord;\n\
+			out vec2 v_coord;\n\
+			void main() { \n\
+				v_coord = a_coord; \n\
+				gl_Position = vec4(a_coord * 2.0 - 1.0, 0.0, 1.0); \n\
+			}\n\
+			";			
 
 Shader.SCREEN_FRAGMENT_SHADER = "\n\
 			precision highp float;\n\

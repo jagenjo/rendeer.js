@@ -35,6 +35,7 @@ RD.GLTF = {
 	
 	texture_options: { format: GL.RGBA, magFilter: GL.LINEAR, minFilter: GL.LINEAR_MIPMAP_LINEAR, wrap: GL.REPEAT, no_flip: false },
 	supports_anisotropy: false,
+	force_anisotropy: false,
 
 	load: function( url, callback, extension, callback_progress )
 	{
@@ -423,7 +424,9 @@ RD.GLTF = {
 							if(!node.material && material)
 								node.material = material.name;
 						}
-					}
+						if(mesh.morphs)
+							node.morphs = mesh.morphs.map(m=>{return { name: m.name, weight: m.weight }});
+						}
 					break;
 				case "skin":
 					node.skin = this.parseSkin( v, json );
@@ -513,9 +516,11 @@ RD.GLTF = {
 		var start = 0;
 		for(var i = 0; i < mesh_info.primitives.length; ++i)
 		{
-			var prim = this.parsePrimitive( mesh_info, i, json );
+			var primitive_info = mesh_info.primitives[ i ];
+			var prim = this.parsePrimitive( primitive_info, json );
 			if(!prim)
 				continue;
+			var current = null;
 			prim.start = start;
 			start += prim.length;
 			prims.push(prim);
@@ -530,21 +535,56 @@ RD.GLTF = {
 				else
 					mesh_primitive.vertexBuffers[buffer_name] = { data: prim.buffers[j] };
 			}
-			meshes.push({ mesh: mesh_primitive });
+			var current = { mesh: mesh_primitive };
+			meshes.push(current);
+
+			//it has morph targets
+			if(primitive_info.targets)
+			{
+				mesh_primitive.morphs = [];
+				for(let j = 0; j < primitive_info.targets.length; ++j)
+				{
+					var morph_attrs = primitive_info.targets[j];
+					var morph = {
+						name: "",
+						weight: 0,
+						buffers: {}
+					};
+					if(mesh_info.extras && mesh_info.extras.targetNames)
+						morph.name = mesh_info.extras.targetNames[j];
+					if(mesh_info.weights)
+						morph.weight = mesh_info.weights[j];
+
+					//for every possible valid name
+					for(var k in this.buffer_names)
+					{
+						var prop_name = this.buffer_names[k];
+						var att_index = morph_attrs[k];
+						if(att_index == null)
+							continue;
+						var data = this.parseAccessor( att_index, json, false );
+						if(data)
+							morph.buffers[prop_name] = data;
+					}
+
+					mesh_primitive.morphs.push( morph );
+				}
+			}
 		}
 
-		//merge primitives
+		//merge primitives: because if submaterials they are independent meshes, and we want one single mesh
 		var mesh = null;
 		if(meshes.length > 1)
 		{
 			mesh = GL.Mesh.mergeMeshes( meshes );
 		}
-		else if (meshes.length == 1)
+		else if (meshes.length == 1) //create a mesh
 		{
 			var mesh_data = meshes[0].mesh;
 			mesh = new GL.Mesh( mesh_data.vertexBuffers, mesh_data.indexBuffers );
 			if( mesh.info && mesh_data.info)
 				mesh.info = mesh_data.info;
+			mesh.morphs = mesh_data.morphs;
 		}
 
 		if(!mesh)
@@ -572,17 +612,17 @@ RD.GLTF = {
 		mesh.updateBoundingBox();
 		mesh.computeGroupsBoundingBoxes();
 		meshes_container[ mesh.name ] = mesh;
+
 		return mesh;
 	},
 
-	parsePrimitive: function( mesh_info, index, json )
+	parsePrimitive: function( primitive_info, json )
 	{
 		var primitive = {
 			buffers: {}
 		};
 
 		var buffers = primitive.buffers;
-		var primitive_info = mesh_info.primitives[ index ];
 		if(primitive_info.extensions)
 		{
 			if(primitive_info.extensions["KHR_draco_mesh_compression"])
@@ -604,16 +644,21 @@ RD.GLTF = {
 			if(!primitive_info.attributes.POSITION == null)
 				console.warn("gltf mesh without positions");
 
+			//for every possible valid name
 			for(var i in this.buffer_names)
 			{
 				var prop_name = this.buffer_names[i];
-				var flip = this.flip_uv && (prop_name == "coords" || prop_name == "coords1");
 				var att_index = primitive_info.attributes[i];
 				if(att_index == null)
 					continue;
+				var flip = this.flip_uv && (prop_name == "coords" || prop_name == "coords1");
 				var data = this.parseAccessor( att_index, json, flip );
 				if(data)
+				{
+					if(i === "COLOR_0") //special case
+						data = this.convertVertexColor(data, json.accessors[att_index]);
 					buffers[prop_name] = data;
+				}
 			}
 
 			//indices
@@ -634,21 +679,102 @@ RD.GLTF = {
 		return primitive;
 	},
 
-	convertSkinToSkeleton: function(node,root)
+	parseAccessor: function( index, json, flip_y, bufferView, decoder )
 	{
-		if(node.skin)
+		var accessor = json.accessors[index];
+		if(!accessor)
 		{
-			var skeleton_root = root.findNodeByName( node.skin.skeleton_root )
-			if(!node.skeleton)
-				node.skeleton = new RD.Skeleton();
-			node.skeleton.importSkeleton( skeleton_root || root );
+			console.warn("gltf accessor not found");
+			return null;
 		}
 
-		for( var i = 0; i < node.children.length; ++i )
+		var components = this.numComponents[ accessor.type ];
+		if(!components)
 		{
-			var child = node.children[i];
-			this.convertSkinToSkeleton(child,root);
+			console.warn("gltf accessor of unknown type:",accessor.type);
+			return null;
 		}
+
+		//num numbers
+		var size = accessor.count * components;
+		var databuffer = null;
+
+		//create buffer
+		switch( accessor.componentType )
+		{
+			case RD.GLTF.FLOAT: databuffer = new Float32Array( size ); break;
+			case RD.GLTF.UNSIGNED_INT: databuffer = new Uint32Array( size ); break;
+			case RD.GLTF.SHORT: databuffer = new Int16Array( size );  break;
+			case RD.GLTF.UNSIGNED_SHORT: databuffer = new Uint16Array( size );  break;
+			case RD.GLTF.BYTE: databuffer = new Int8Array( size );  break;
+			case RD.GLTF.UNSIGNED_BYTE: databuffer = new Uint8Array( size );  break;
+			default:
+				console.warn("gltf accessor of unsupported type: ", accessor.componentType);
+				databuffer = new Float32Array( size );
+		}
+
+		var bufferViewIndex = accessor.bufferView;
+		if( accessor.sparse && accessor.sparse.values )
+			bufferViewIndex = accessor.sparse.values.bufferView;
+
+		bufferView = json.bufferViews[ bufferViewIndex ];
+
+		if(!bufferView)
+		{
+			console.warn("gltf bufferView not found");
+			return null;
+		}
+
+		var buffer = json.buffers[ bufferView.buffer ];
+		if(!buffer || !buffer.data)
+		{
+			console.warn("gltf buffer not found or data not loaded");
+			return null;
+		}
+
+		var databufferview = new Uint8Array( databuffer.buffer );
+
+		if(bufferView.byteOffset == null)//could happend when is 0
+			bufferView.byteOffset = 0;
+
+		var start = bufferView.byteOffset + (accessor.byteOffset || 0);
+
+		//is interlaved, then we need to separate it
+		if(bufferView.byteStride && bufferView.byteStride != components * databuffer.BYTES_PER_ELEMENT)
+		{
+			var item_size = components * databuffer.BYTES_PER_ELEMENT;
+			var chunk = buffer.dataview.subarray( start, start + bufferView.byteLength );
+			var temp = new databuffer.constructor(components);
+			var temp_bytes = new Uint8Array(temp.buffer);
+			var index = 0;
+			for(var i = 0; i < accessor.count; ++i)
+			{
+				temp_bytes.set( chunk.subarray(index,index+item_size) );
+				databuffer.set( temp, i*components );
+				index += bufferView.byteStride;
+			}
+			//console.warn("gltf buffer data is not tightly packed, not supported");
+			//return null;
+		}
+		else
+		{
+			//extract chunk from binary (not using the size from the bufferView because sometimes it doesnt match!)
+			var chunk = buffer.dataview.subarray( start, start + databufferview.length );
+
+			//copy data to buffer
+			databufferview.set( chunk );
+		}
+
+
+		//decode?
+		//if(decoder)
+		//	databufferview = this.decodeBuffer( databufferview.buffer, decoder );
+
+		if(flip_y)
+			for(var i = 1; i < databuffer.length; i += components )
+				databuffer[i] = 1.0 - databuffer[i]; 
+
+		return databuffer;
 	},
 
 	installDracoModule: function( callback )
@@ -796,101 +922,6 @@ RD.GLTF = {
 		};
 	},
 
-	parseAccessor: function( index, json, flip_y, bufferView, decoder )
-	{
-		var accessor = json.accessors[index];
-		if(!accessor)
-		{
-			console.warn("gltf accessor not found");
-			return null;
-		}
-
-		var components = this.numComponents[ accessor.type ];
-		if(!components)
-		{
-			console.warn("gltf accessor of unknown type:",accessor.type);
-			return null;
-		}
-
-		//num numbers
-		var size = accessor.count * components;
-		var databuffer = null;
-
-		//create buffer
-		switch( accessor.componentType )
-		{
-			case RD.GLTF.FLOAT: databuffer = new Float32Array( size ); break;
-			case RD.GLTF.UNSIGNED_INT: databuffer = new Uint32Array( size ); break;
-			case RD.GLTF.SHORT: databuffer = new Int16Array( size );  break;
-			case RD.GLTF.UNSIGNED_SHORT: databuffer = new Uint16Array( size );  break;
-			case RD.GLTF.BYTE: databuffer = new Int8Array( size );  break;
-			case RD.GLTF.UNSIGNED_BYTE: databuffer = new Uint8Array( size );  break;
-			default:
-				console.warn("gltf accessor of unsupported type: ", accessor.componentType);
-				databuffer = new Float32Array( size );
-		}
-
-		if(bufferView == null)
-			bufferView = json.bufferViews[ accessor.bufferView ];
-
-		if(!bufferView)
-		{
-			console.warn("gltf bufferView not found");
-			return null;
-		}
-
-		var buffer = json.buffers[ bufferView.buffer ];
-		if(!buffer || !buffer.data)
-		{
-			console.warn("gltf buffer not found or data not loaded");
-			return null;
-		}
-
-		var databufferview = new Uint8Array( databuffer.buffer );
-
-		if(bufferView.byteOffset == null)//could happend when is 0
-			bufferView.byteOffset = 0;
-
-		var start = bufferView.byteOffset + (accessor.byteOffset || 0);
-
-		//is interlaved, then we need to separate it
-		if(bufferView.byteStride && bufferView.byteStride != components * databuffer.BYTES_PER_ELEMENT)
-		{
-			var item_size = components * databuffer.BYTES_PER_ELEMENT;
-			var chunk = buffer.dataview.subarray( start, start + bufferView.byteLength );
-			var temp = new databuffer.constructor(components);
-			var temp_bytes = new Uint8Array(temp.buffer);
-			var index = 0;
-			for(var i = 0; i < accessor.count; ++i)
-			{
-				temp_bytes.set( chunk.subarray(index,index+item_size) );
-				databuffer.set( temp, i*components );
-				index += bufferView.byteStride;
-			}
-			//console.warn("gltf buffer data is not tightly packed, not supported");
-			//return null;
-		}
-		else
-		{
-			//extract chunk from binary (not using the size from the bufferView because sometimes it doesnt match!)
-			var chunk = buffer.dataview.subarray( start, start + databufferview.length );
-
-			//copy data to buffer
-			databufferview.set( chunk );
-		}
-
-
-		//decode?
-		//if(decoder)
-		//	databufferview = this.decodeBuffer( databufferview.buffer, decoder );
-
-		if(flip_y)
-			for(var i = 1; i < databuffer.length; i += components )
-				databuffer[i] = 1.0 - databuffer[i]; 
-
-		return databuffer;
-	},
-
 	parseMaterial: function( index, json )
 	{
 		var info = json.materials[index];
@@ -934,7 +965,7 @@ RD.GLTF = {
 			if(info.pbrMetallicRoughness.baseColorTexture)
 			{
 				material.textures.albedo = this.parseTexture( info.pbrMetallicRoughness.baseColorTexture, json );
-				if( material.alphaMode == "MASK" && this.supports_anisotropy ) //force anisotropy
+				if( material.alphaMode == "MASK" && this.supports_anisotropy && RD.GLTF.force_anisotropy) //force anisotropy
 				{
 					var tex = gl.textures[ material.textures.albedo.texture ];
 					if(tex)
@@ -1106,6 +1137,23 @@ RD.GLTF = {
 		return skin;
 	},
 
+	convertSkinToSkeleton: function(node,root)
+	{
+		if(node.skin)
+		{
+			var skeleton_root = root.findNodeByName( node.skin.skeleton_root )
+			if(!node.skeleton)
+				node.skeleton = new RD.Skeleton();
+			node.skeleton.importSkeleton( skeleton_root || root );
+		}
+
+		for( var i = 0; i < node.children.length; ++i )
+		{
+			var child = node.children[i];
+			this.convertSkinToSkeleton(child,root);
+		}
+	},	
+
 	splitBuffer: function( buffer, length )
 	{
 		if(!buffer)
@@ -1115,6 +1163,26 @@ RD.GLTF = {
 		for(var i = 0; i < l; i+= length)
 			result.push( new buffer.constructor( buffer.subarray(i,i+length) ) );
 		return result;
+	},
+
+	convertVertexColor: function( data, accessor )
+	{
+		if(accessor.type === "VEC4")
+			return data;
+		var numcomps = accessor.type === "VEC4" ? 4 : 3;
+		var datau8 = new Uint8Array(4 * accessor.count);
+		var factor = 1;
+		if(accessor.componentType === GL.FLOAT)
+			factor = 255;
+		for(let i = 0; i < data.length; i+= numcomps)
+		{
+			var j = Math.floor(i/numcomps)*4;
+			datau8[j] = data[i] * factor;
+			datau8[j+1] = data[i+1] * factor;
+			datau8[j+2] = data[i+2] * factor;
+			datau8[j+3] = numcomps === 4 ? data[i+3] * factor : factor;
+		}
+		return datau8;
 	},
 
 	//parses an animation and returns it as a RD.Animation
@@ -1145,19 +1213,19 @@ RD.GLTF = {
 				console.warn("animation accedor missing")
 				continue;
 			}
-			var type = json.accessors[ sampler.output ].type;
+			var out_accessor = json.accessors[ sampler.output ];
+			var type = out_accessor.type;
 			var type_enum = RD.TYPES[type];
 			if( type_enum == RD.VEC4 && track.target_property == "rotation")
 				type_enum = RD.QUAT;
 			track.type = type_enum;
-			var num_components = RD.TYPES_SIZE[ type_enum ];
-
+			var num_components = keyframedata.length / timestamps.length;
 			if(!num_components)
 			{
 				console.warn("gltf unknown type:",type);
 				continue;
 			}
-			var num_elements = keyframedata.length / num_components;
+			var num_elements = keyframedata.length;
 			var keyframes = new Float32Array( (1+num_components) * num_elements );
 			for(var j = 0; j < num_elements; ++j)
 			{
@@ -1169,6 +1237,7 @@ RD.GLTF = {
 			}
 			track.data = keyframes;
 			track.packed_data = true;
+			track.num_components = out_accessor.type === "SCALAR" && num_components > 1 ? num_components : 1;
 			duration = Math.max( duration, timestamps[ timestamps.length - 1] );
 
 			animation.addTrack( track );
@@ -1218,12 +1287,12 @@ RD.GLTF = {
 				files_data["main"] = this.filename;
 			else if(extension == "bin")
 				bins.push(this.filename);
-			else if(extension == "jpeg" || extension == "jpg" || extension == "png")
+			else if(extension == "jpeg" || extension == "jpg" || extension == "png" || extension == "webp")
 			{
 				if(typeof(gl) !== "undefined")
 				{
 					var image_url = URL.createObjectURL( new Blob([data],{ type : e.target.mimeType }) );
-					var texture = GL.Texture.fromURL( image_url, { wrap: gl.REPEAT, extension: extension, magFilter, minFilter } );				
+					var texture = GL.Texture.fromURL( image_url, { wrap: gl.REPEAT, extension: extension, magFilter, minFilter } );
 					texture.name = this.filename;
 					gl.textures[ texture.name ] = texture;
 					//hack in case we drag textures individually
@@ -1596,11 +1665,11 @@ RD.GLTF = {
 	}
 };
 
-RD.SceneNode.prototype.loadGLTF = function( url, callback )
+RD.SceneNode.prototype.loadGLTF = function( url, callback, force )
 {
 	var that = this;
 
-	if( RD.GLTF.prefabs[url] )
+	if( RD.GLTF.prefabs[url] && !force)
 	{
 		var node = new RD.SceneNode();
 		node.configure( RD.GLTF.prefabs[url] );

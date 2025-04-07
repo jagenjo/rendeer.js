@@ -112,31 +112,27 @@ Animation.prototype.findNearestRight = function( time )
 RD.Animation = Animation;
 
 //a Track stores a set of keyframes that affect a single property of an object (usually transform info from nodes)
-function Track()
+class Track
 {
-	this.enabled = true;
-	this.target_node = ""; //id of target name
-	this.target_property = ""; //name of property
-	this.type = RD.SCALAR; //value_size per keyframe is derived from this type using RD.TYPES_SIZE[ type ]. 0 means an object/string/boolean
-	this.data = [];
-	this.packed_data = false;//tells if data is in Array format (easy to manipulate) or Typed Array format (faster)
+	enabled = true;
+	target_node = ""; //id of target name
+	target_property = ""; //name of property
+	type = RD.SCALAR; //value_size per keyframe is derived from this type using RD.TYPES_SIZE[ type ]. 0 means an object/string/boolean
+	num_components = 1; //weights could have several scalars
+	data = [];
+	packed_data = false;//tells if data is in Array format (easy to manipulate) or Typed Array format (faster)
 
-	this._target = null; //the object that will receive the samples
+	_target = null; //the object that will receive the samples
+
+	constructor(){
+	}
+
+	get value_size(){
+		return RD.TYPES_SIZE[ this.type ];
+	}
 }
 
 Animation.Track = Track;
-
-Object.defineProperty( Track.prototype, "value_size", {
-	set: function(v)
-	{
-		throw("cannot be set, use type instead");
-	},
-	get: function()
-	{
-		return RD.TYPES_SIZE[ this.type ];
-	}
-});
-
 
 /**
 * Adds a new keyframe to this track given a value
@@ -210,7 +206,7 @@ Track.prototype.findTimeIndex = function(time)
 	if(!data || data.length == 0)
 		return -1;
 
-	var value_size = RD.TYPES_SIZE[ this.type ];
+	var value_size = RD.TYPES_SIZE[ this.type ] * this.num_components;
 
 	if(this.packed_data)
 	{
@@ -376,7 +372,7 @@ Track.prototype.getSamplePacked = function( time, interpolation, result )
 	if(!this.data.length)
 		return null;
 
-	var value_size = RD.TYPES_SIZE[ this.type ];
+	var value_size = RD.TYPES_SIZE[ this.type ] * this.num_components;
 	var duration = this.data[ this.data.length - value_size - 1 ];
 	time = Math.clamp( time, 0, duration );
 
@@ -472,7 +468,13 @@ Track.prototype.applyTrack = function( root, time, interpolation )
 			node = root.findNodeByName( this.target_node );
 		if(node)
 		{
-			node[ this.target_property ] = sample;
+			if(node.morphs && this.target_property === "weights")
+			{
+				for(let i = 0; i < this.num_components; ++i)
+					node.morphs[i].weight = sample[i];
+			}
+			else
+				node[ this.target_property ] = sample;
 		}
 	}
 	else if( root.constructor === RD.Skeleton )
@@ -1112,8 +1114,13 @@ Skeleton.blend = function(a, b, w, result, layer, skip_normalize )
 
 //shader block to include
 Skeleton.shader_code = `
+	#ifdef WEBGL1
 	attribute vec4 a_bone_indices;
 	attribute vec4 a_weights;
+	#else
+	in vec4 a_bone_indices;
+	in vec4 a_weights;
+	#endif
 	uniform mat4 u_bones[64];
 	void computeSkinning(inout vec3 vertex, inout vec3 normal)
 	{

@@ -29,10 +29,7 @@
 		scene = new RD.Scene();
 
 		//create the rendering context
-		var context = GL.create({width: window.innerWidth, height:window.innerHeight});
-		renderer = new RD.Renderer(context);
-		renderer.light_model = 'phong'
-		renderer.sort_by_distance = true;
+		renderer = new RD.Renderer({width: window.innerWidth, height:window.innerHeight, version: 2});
 		document.body.appendChild(renderer.canvas); //attach
 
 		//create camera
@@ -47,7 +44,8 @@
 
 		//var url = "data/Fox/glTF/Fox.gltf";
 		//var url = "data/Buggy.glb";
-		var url = "data/DamagedHelmet.glb";
+		//var url = "data/DamagedHelmet.glb";
+		var url = "data/MorphStressTest.glb";
 
 		RD.GLTF.load(url, function(node){
 			if(!node)
