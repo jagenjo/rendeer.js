@@ -47,15 +47,7 @@
 		//var url = "data/DamagedHelmet.glb";
 		var url = "data/MorphStressTest.glb";
 
-		RD.GLTF.load(url, function(node){
-			if(!node)
-				return;
-			console.log(node);
-			scene.root.addChild(node);
-			gltf_node = node;
-			if(node.animations)
-				animation = node.animations[0];
-		});
+		RD.GLTF.load(url, onSceneReady);
 
 		//global settings
 		var bg_color = vec4.fromValues(0.9,0.9,0.9,1);
@@ -74,7 +66,7 @@
 			scene.update(dt);
 
 			if(gltf_node && animation)
-				animation.applyAnimation( gltf_node, (getTime()*0.001) % animation.duration, RD.LINEAR, true );
+				animation.applyAnimation( gltf_node, scene.time % animation.duration, RD.LINEAR, true );
 		}
 
 		//input
@@ -138,6 +130,18 @@
 		}
 	}
 
+	function onSceneReady(node)
+	{
+		if(gltf_node)
+				scene.root.removeChild(gltf_node);
+		gltf_node = node;
+		scene.root.addChild(gltf_node);
+		console.log(node);
+		window.root = node;
+		if(node.animations)
+			animation = node.animations[0];
+	}
+
 	function onFileDrop(evt)
 	{
 		evt.stopPropagation();
@@ -145,15 +149,7 @@
 
 		var files = evt.dataTransfer.files;
 		var count = files.length;
-		RD.GLTF.loadFromFiles(files, function(node){
-			if(gltf_node)
-				scene.root.removeChild(gltf_node);
-			gltf_node = node;
-			scene.root.addChild(gltf_node);
-			console.log(node);
-			if(node.animations)
-				animation = node.animations[0];
-		});
+		RD.GLTF.loadFromFiles(files, onSceneReady);
 	}
 
 	</script>

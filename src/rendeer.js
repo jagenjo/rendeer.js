@@ -105,25 +105,24 @@ var SHADER_MACROS = {
 	COORD1:		1<<1,
 	INSTANCING: 1<<2,
 	SKINNING:	1<<3,
-	POINTS:		1<<4,
-	NO_TRIANGLES:1<<5,
+	MORPHTARGETS:1<<4,
+	POINTS:		1<<5,
+	NO_TRIANGLES:1<<6,
 
-	TEXTURE:	1<<6,
-	ALBEDO:		1<<7,
-	EMISSIVE:	1<<8,
-	OCCLUSION:	1<<9,
-	ALPHA_HASH:	1<<10,
-	UV_TRANSFORM:1<<11,
-	LIGHTS: 	1<<12,
-	SHADOWS: 	1<<13,
-	FOG:		1<<143,
-	FLAT_NORMAL:1<<15,
-	UNLIT:		1<<16,
+	TEXTURE:	1<<7,
+	ALBEDO:		1<<8,
+	EMISSIVE:	1<<9,
+	OCCLUSION:	1<<10,
+	ALPHA_HASH:	1<<11,
+	UV_TRANSFORM:1<<12,
+	LIGHTS: 	1<<13,
+	SHADOWS: 	1<<14,
+	FOG:		1<<15,
+	FLAT_NORMAL:1<<16,
+	UNLIT:		1<<17,
 
-	SECOND_BUFFER:1<<17,
-	FLAT_COLOR:	1<<18,
-
-	MORPHTARGETS:1<<19,
+	SECOND_BUFFER:1<<18,
+	FLAT_COLOR:	1<<19,
 };
 
 var temp_vec3 = vec3.create();
@@ -1492,6 +1491,22 @@ class SceneNode {
 
 		return bb;
 	}
+
+	/**
+	* @method updateSkinningBones it updates the bone_matrices of every skinned mesh inside this
+	* @param { SceneNode } root where to start searching for the bones, so the armature root
+	*/
+	updateSkinningBones(root)
+	{
+		root = root || this;
+
+		if(this.skin && this.mesh)
+			RD.Renderer.collectBones( root, this.skin, gl.meshes[ this.mesh ] );
+
+		if(this.children && this.children.length)
+			for(var i = 0; i < this.children.length; ++i)
+				this.children[i].updateSkinningBones(root);
+	}	
 
 	/**
 	* @method createMaterial
@@ -3623,6 +3638,8 @@ class Renderer {
 
 	_main_view = new View();
 
+	_features = {};
+
 	set color(v){
 		this._color.set(v);
 	}
@@ -3704,6 +3721,8 @@ class Renderer {
 		this.small_objects_ratio_threshold = 0; //change this ignore objects with small projected size (0.01 is a good value)
 		this.layers_affect_children = false;
 		this.allow_instancing = true;
+		this.allow_morphtargets = true;
+		this.allow_skinning = true;
 		this.force_update_bones = true; //set to false if you want to handle it manually
 		this.point_size = 1;
 
@@ -3795,6 +3814,9 @@ class Renderer {
 
 		if(options.shaders_file)
 			this.loadShaders( options.shaders_file, null, options.shaders_macros );
+
+		//extract features set
+		Object.keys(gl.constructor).filter(v=>v.substr(0,4) === "MAX_").forEach(v=>this._features[v] = gl.getParameter(gl[v]));
 	}
 }
 
@@ -3953,14 +3975,6 @@ Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, sk
 	if(this.outline_renderables.length)
 		this.renderOutline(this.outline_renderables,camera);
 
-	if(this.morph_texture)
-	{
-		gl.disable( gl.DEPTH_TEST );
-		gl.disable( gl.CULL_FACE );
-		gl.disable( gl.BLEND );
-		this.morph_texture.toViewport();
-	}
-
 	if(this.onPostRender)
 		this.onPostRender( camera );
 	
@@ -4041,7 +4055,7 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 
 			if( skeleton )
 				shader_hash |= SHADER_MACROS.SKINNING;
-			if( rc.morphs && 1)
+			if( rc.morphs )
 				shader_hash |= SHADER_MACROS.MORPHTARGETS;
 			if( rc.instances && this.supports_instancing)
 				shader_hash |= SHADER_MACROS.INSTANCING;
@@ -4074,7 +4088,11 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 					if( material.textures.emissive )
 						shader_hash |= SHADER_MACROS.EMISSIVE;
 					if( material.textures.occlusion )
-						shader_hash |= SHADER_MACROS.OCCLUSION;
+					{
+						//case of using an Occ Metal Roughness texture
+						if(!material.textures.metallicRoughness || material.textures.metallicRoughness.texture !== material.textures.occlusion.texture )
+							shader_hash |= SHADER_MACROS.OCCLUSION;
+					}
 					if( material.uv_transform )
 						shader_hash |= SHADER_MACROS.UV_TRANSFORM;
 					if( material.model === "unlit" )
@@ -4257,6 +4275,30 @@ Renderer.shader_snippets = {
 		float fog_factor = length( u_camera_position - v_pos ) / u_camera_planes.y;
 		color.xyz = mix(color.xyz, u_fog_color.xyz, pow( fog_factor, 1.0 / u_fog_color.w ));
 	`,
+	skinning: `
+	#ifdef WEBGL1
+	attribute vec4 a_bone_indices;
+	attribute vec4 a_weights;
+	#else
+	in vec4 a_bone_indices;
+	in vec4 a_weights;
+	#endif
+	uniform mat4 u_bones[64];
+	void computeSkinning(inout vec3 vertex, inout vec3 normal)
+	{
+		vec4 v = vec4(vertex,1.0);
+		vertex = (u_bones[int(a_bone_indices.x)] * a_weights.x * v + 
+				u_bones[int(a_bone_indices.y)] * a_weights.y * v + 
+				u_bones[int(a_bone_indices.z)] * a_weights.z * v + 
+				u_bones[int(a_bone_indices.w)] * a_weights.w * v).xyz;
+		vec4 N = vec4(normal,0.0);
+		normal =	(u_bones[int(a_bone_indices.x)] * a_weights.x * N + 
+				u_bones[int(a_bone_indices.y)] * a_weights.y * N + 
+				u_bones[int(a_bone_indices.z)] * a_weights.z * N + 
+				u_bones[int(a_bone_indices.w)] * a_weights.w * N).xyz;
+		normal = normalize(normal);
+	}
+	`,
 	modify_ndotl:``,
 	modify_attenuation: ``,
 	modify_prelight_equation: ``,
@@ -4285,7 +4327,7 @@ out vec2 v_coord;
 	out vec4 v_color;
 #endif
 
-${macros & SHADER_MACROS.SKINNING ? RD.Skeleton.shader_code : ''}
+${macros & SHADER_MACROS.SKINNING ? Renderer.shader_snippets.skinning : ''}
 
 #ifdef MORPHTARGETS
 	uniform sampler2D u_morph_texture;
@@ -4306,14 +4348,14 @@ uniform mat3 u_uvtransform;
 void main() {
 	v_pos = a_vertex;
 
-	${macros & SHADER_MACROS.MORPHTARGETS ? 'v_pos += texelFetch(u_morph_texture,ivec2(gl_VertexID,0),0).xyz;' : ''}
+	${macros & SHADER_MACROS.MORPHTARGETS ? 'v_pos += texelFetch(u_morph_texture,ivec2(gl_VertexID,1),0).xyz;' : ''}
 	
 	${macros & SHADER_MACROS.SKINNING ? 'computeSkinning(v_pos,v_normal);' : ''}
 
 	v_pos = (u_model * vec4(v_pos,1.0)).xyz;
 	#ifndef FLAT_NORMAL
 	v_normal = a_normal;
-	${macros & SHADER_MACROS.MORPHTARGETS ? 'v_pos += texelFetch(u_morph_texture,ivec2(gl_VertexID,1),0).xyz;' : ''}
+	${macros & SHADER_MACROS.MORPHTARGETS ? 'v_normal += texelFetch(u_morph_texture,ivec2(gl_VertexID,0),0).xyz;' : ''}
 	v_normal = (u_model * vec4(v_normal,0.0)).xyz;
 	#endif
 	v_coord = a_coord;
@@ -4534,6 +4576,7 @@ Renderer.prototype.clearMorphTargets = function()
 	this.morph_textures.clear();
 }
 
+/** creates a texture that contains the offsets */
 Renderer.prototype.computeMorphTargets = function(node)
 {
 	if(!node.morphs.length)
@@ -4543,6 +4586,9 @@ Renderer.prototype.computeMorphTargets = function(node)
 		return null;
 	var vertices = mesh.getBuffer("vertices").data;
 	var numVertices = vertices.length / 3;
+	if( numVertices > this._features.MAX_TEXTURE_SIZE )
+		return null; //too big
+
 	var final_tex = this.morph_textures.get(mesh);
 	if(!final_tex)
 	{
@@ -4551,11 +4597,12 @@ Renderer.prototype.computeMorphTargets = function(node)
 	}
 	var shader = GL.Shader.getColoredScreenShader();
 	var weights = 0;
+	var compute_deltas = false;
 
 	for(let i = 0; i < node.morphs.length; ++i)
 	{
 		var morph_info = node.morphs[i];
-		if(morph_info.weight <= 0)
+		if(Math.abs(morph_info.weight) <= 0.001 || isNaN(morph_info.weight))
 			continue;
 		weights += Math.abs(morph_info.weight);
 		var morph_vertices_buffer = mesh.morphs[i].buffers.vertices;
@@ -4563,12 +4610,10 @@ Renderer.prototype.computeMorphTargets = function(node)
 		var morph_texture = this.morph_textures.get(morph_vertices_buffer);
 		if(!morph_texture)
 		{
-			var data = new Float32Array( morph_vertices_buffer.length * 2 );
+			var data = new Float32Array( morph_vertices_buffer.length * 2 ); //to store vertices and normals
 			data.set( morph_vertices_buffer, 0 );
 			if(morph_normals_buffer)
 				data.set( morph_normals_buffer, morph_vertices_buffer.length );
-			//for(let j = 0; j < data.length; ++j) //as delta
-			//	data[j] -= vertices[j];
 			morph_texture = new GL.Texture(numVertices,2,{ type: GL.FLOAT, format: GL.RGB, pixel_data: data, filter:GL.NEAREST, wrap: GL.CLAMP_TO_EDGE });
 			this.morph_textures.set( morph_vertices_buffer, morph_texture );
 		}
@@ -4585,7 +4630,7 @@ Renderer.prototype.computeMorphTargets = function(node)
 		for(let i = 0; i < node.morphs.length; ++i)
 		{
 			var morph_info = node.morphs[i];
-			if(morph_info.weight <= 0)
+			if(Math.abs(morph_info.weight) <= 0.001)
 				continue;
 			var morph_vertices_buffer = mesh.morphs[i].buffers.vertices;
 			var morph_texture = this.morph_textures.get(morph_vertices_buffer);
@@ -4899,6 +4944,8 @@ Renderer.prototype.getNodeRenderables = function( node, camera )
 
 	//skinning can work in two ways: through a RD.Skeleton, or through info about the joints node in the scene
 	var skinning = node.skeleton || node.skin || null;
+	if( !this.allow_skinning )
+		skinning = null;
 	if( skinning && !skinning.bones && !skinning.joints )
 		skinning = null;
 	if( skinning && skinning.bones && !skinning.bones.length )
@@ -4931,7 +4978,7 @@ Renderer.prototype.getNodeRenderables = function( node, camera )
 	}
 
 	var morphs = null;
-	if( node.morphs)
+	if( node.morphs && this.allow_morphtargets)
 		morphs = this.computeMorphTargets(node);
 
 	//it has multiple submaterials
@@ -4957,7 +5004,7 @@ Renderer.prototype.getNodeRenderables = function( node, camera )
 			rc.draw_range = null;
 			rc._render_priority = material.render_priority || 0;
 			rc.instances = node._instances;
-			rc.flags = (rc.instances || skinning) ? RENDERABLE_IGNORE_BOUNDING : 0;
+			rc.flags = (rc.instances || skinning || morphs) ? RENDERABLE_IGNORE_BOUNDING : 0;
 			rc.reverse_faces = node.flags.frontFace == GL.CW;
 			rc.skin = skinning;
 			rc.index_buffer_name = "triangles";
@@ -4998,7 +5045,7 @@ Renderer.prototype.getNodeRenderables = function( node, camera )
 			rc.bounding.set( aabb );
 			rc.index_buffer_name = node.indices_name || "triangles";
 			rc.morphs = morphs;
-			rc.flags = (rc.instances || skinning) ? RENDERABLE_IGNORE_BOUNDING : 0;
+			rc.flags = (rc.instances || skinning || morphs) ? RENDERABLE_IGNORE_BOUNDING : 0;
 			this.renderables.push( rc );
 
 			if(node.flags.outline)
@@ -5171,6 +5218,66 @@ Renderer.prototype.setPointSize = function(v)
 {
 	this.point_size = v;
 	gl.shaders["point"].uniforms({u_pointSize: this.point_size});
+}
+
+Renderer.collectBones = function( root, skin_info, mesh )
+{
+	if(!mesh || !mesh.bones)
+		return;
+
+	var num_bones = mesh.bones.length;
+	if(!skin_info._bone_matrices)
+		skin_info._bone_matrices = new Float32Array( 16 * num_bones );
+	var bone_matrices = skin_info._bone_matrices;
+	var inner_m = mat4.create();
+	var root_node = null;
+	if(skin_info.skeleton_root)
+		root_node = root.findNodeByName( skin_info.skeleton_root );
+	if(!root_node)
+		root_node = root;
+	var bm = mat4.create();
+	var inv = mat4.invert(mat4.create(),root.getGlobalMatrix());
+
+	for (var i = 0; i < mesh.bones.length; ++i)
+	{
+		var bone_info = mesh.bones[i];
+		var m = bone_matrices.subarray(i*16,i*16+16);
+		var bone_name = bone_info[0];
+		var bone_node = null;
+		if(bone_name)
+			bone_node = root.findNodeByName( bone_name );
+		if(!bone_node)
+		{
+			mat4.identity( m );
+			continue;
+		}
+		mat4.identity( bm );
+		inner_getGlobalMatrix( bone_node, root_node, bm );
+		//bm = bone_node.getGlobalMatrix();
+		if( inv ) //as joints have the root transform applied, we need to remove it
+			mat4.multiply( bm, inv, bm );
+		mat4.multiply( m, bm, bone_info[1] ); //use globals
+		//skin_info.bindMatrices are in mesh.bones[i][1]
+		if( mesh.bind_matrix )
+			mat4.multiply( m, m, mesh.bind_matrix );
+	}
+
+	function inner_getGlobalMatrix( node, root_node, bm )
+	{
+		if(!root_node || !node)
+			return bm;
+
+		if(node == root_node)
+		{
+			mat4.mul( bm, node.getGlobalMatrix(), bm );
+			return bm;
+		}
+
+		mat4.mul( bm, node.matrix, bm );
+		return inner_getGlobalMatrix( node._parent, root_node, bm );
+	}
+
+	return bone_matrices;
 }
 
 

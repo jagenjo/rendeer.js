@@ -107,25 +107,24 @@ var SHADER_MACROS = {
 	COORD1:		1<<1,
 	INSTANCING: 1<<2,
 	SKINNING:	1<<3,
-	POINTS:		1<<4,
-	NO_TRIANGLES:1<<5,
+	MORPHTARGETS:1<<4,
+	POINTS:		1<<5,
+	NO_TRIANGLES:1<<6,
 
-	TEXTURE:	1<<6,
-	ALBEDO:		1<<7,
-	EMISSIVE:	1<<8,
-	OCCLUSION:	1<<9,
-	ALPHA_HASH:	1<<10,
-	UV_TRANSFORM:1<<11,
-	LIGHTS: 	1<<12,
-	SHADOWS: 	1<<13,
-	FOG:		1<<143,
-	FLAT_NORMAL:1<<15,
-	UNLIT:		1<<16,
+	TEXTURE:	1<<7,
+	ALBEDO:		1<<8,
+	EMISSIVE:	1<<9,
+	OCCLUSION:	1<<10,
+	ALPHA_HASH:	1<<11,
+	UV_TRANSFORM:1<<12,
+	LIGHTS: 	1<<13,
+	SHADOWS: 	1<<14,
+	FOG:		1<<15,
+	FLAT_NORMAL:1<<16,
+	UNLIT:		1<<17,
 
-	SECOND_BUFFER:1<<17,
-	FLAT_COLOR:	1<<18,
-
-	MORPHTARGETS:1<<19,
+	SECOND_BUFFER:1<<18,
+	FLAT_COLOR:	1<<19,
 };
 
 var temp_vec3 = vec3.create();
@@ -1494,6 +1493,22 @@ class SceneNode {
 
 		return bb;
 	}
+
+	/**
+	* @method updateSkinningBones it updates the bone_matrices of every skinned mesh inside this
+	* @param { SceneNode } root where to start searching for the bones, so the armature root
+	*/
+	updateSkinningBones(root)
+	{
+		root = root || this;
+
+		if(this.skin && this.mesh)
+			RD.Renderer.collectBones( root, this.skin, gl.meshes[ this.mesh ] );
+
+		if(this.children && this.children.length)
+			for(var i = 0; i < this.children.length; ++i)
+				this.children[i].updateSkinningBones(root);
+	}	
 
 	/**
 	* @method createMaterial
@@ -3625,6 +3640,8 @@ class Renderer {
 
 	_main_view = new View();
 
+	_features = {};
+
 	set color(v){
 		this._color.set(v);
 	}
@@ -3706,6 +3723,8 @@ class Renderer {
 		this.small_objects_ratio_threshold = 0; //change this ignore objects with small projected size (0.01 is a good value)
 		this.layers_affect_children = false;
 		this.allow_instancing = true;
+		this.allow_morphtargets = true;
+		this.allow_skinning = true;
 		this.force_update_bones = true; //set to false if you want to handle it manually
 		this.point_size = 1;
 
@@ -3797,6 +3816,9 @@ class Renderer {
 
 		if(options.shaders_file)
 			this.loadShaders( options.shaders_file, null, options.shaders_macros );
+
+		//extract features set
+		Object.keys(gl.constructor).filter(v=>v.substr(0,4) === "MAX_").forEach(v=>this._features[v] = gl.getParameter(gl[v]));
 	}
 }
 
@@ -3955,14 +3977,6 @@ Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, sk
 	if(this.outline_renderables.length)
 		this.renderOutline(this.outline_renderables,camera);
 
-	if(this.morph_texture)
-	{
-		gl.disable( gl.DEPTH_TEST );
-		gl.disable( gl.CULL_FACE );
-		gl.disable( gl.BLEND );
-		this.morph_texture.toViewport();
-	}
-
 	if(this.onPostRender)
 		this.onPostRender( camera );
 	
@@ -4043,7 +4057,7 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 
 			if( skeleton )
 				shader_hash |= SHADER_MACROS.SKINNING;
-			if( rc.morphs && 1)
+			if( rc.morphs )
 				shader_hash |= SHADER_MACROS.MORPHTARGETS;
 			if( rc.instances && this.supports_instancing)
 				shader_hash |= SHADER_MACROS.INSTANCING;
@@ -4076,7 +4090,11 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 					if( material.textures.emissive )
 						shader_hash |= SHADER_MACROS.EMISSIVE;
 					if( material.textures.occlusion )
-						shader_hash |= SHADER_MACROS.OCCLUSION;
+					{
+						//case of using an Occ Metal Roughness texture
+						if(!material.textures.metallicRoughness || material.textures.metallicRoughness.texture !== material.textures.occlusion.texture )
+							shader_hash |= SHADER_MACROS.OCCLUSION;
+					}
 					if( material.uv_transform )
 						shader_hash |= SHADER_MACROS.UV_TRANSFORM;
 					if( material.model === "unlit" )
@@ -4259,6 +4277,30 @@ Renderer.shader_snippets = {
 		float fog_factor = length( u_camera_position - v_pos ) / u_camera_planes.y;
 		color.xyz = mix(color.xyz, u_fog_color.xyz, pow( fog_factor, 1.0 / u_fog_color.w ));
 	`,
+	skinning: `
+	#ifdef WEBGL1
+	attribute vec4 a_bone_indices;
+	attribute vec4 a_weights;
+	#else
+	in vec4 a_bone_indices;
+	in vec4 a_weights;
+	#endif
+	uniform mat4 u_bones[64];
+	void computeSkinning(inout vec3 vertex, inout vec3 normal)
+	{
+		vec4 v = vec4(vertex,1.0);
+		vertex = (u_bones[int(a_bone_indices.x)] * a_weights.x * v + 
+				u_bones[int(a_bone_indices.y)] * a_weights.y * v + 
+				u_bones[int(a_bone_indices.z)] * a_weights.z * v + 
+				u_bones[int(a_bone_indices.w)] * a_weights.w * v).xyz;
+		vec4 N = vec4(normal,0.0);
+		normal =	(u_bones[int(a_bone_indices.x)] * a_weights.x * N + 
+				u_bones[int(a_bone_indices.y)] * a_weights.y * N + 
+				u_bones[int(a_bone_indices.z)] * a_weights.z * N + 
+				u_bones[int(a_bone_indices.w)] * a_weights.w * N).xyz;
+		normal = normalize(normal);
+	}
+	`,
 	modify_ndotl:``,
 	modify_attenuation: ``,
 	modify_prelight_equation: ``,
@@ -4287,7 +4329,7 @@ out vec2 v_coord;
 	out vec4 v_color;
 #endif
 
-${macros & SHADER_MACROS.SKINNING ? RD.Skeleton.shader_code : ''}
+${macros & SHADER_MACROS.SKINNING ? Renderer.shader_snippets.skinning : ''}
 
 #ifdef MORPHTARGETS
 	uniform sampler2D u_morph_texture;
@@ -4308,14 +4350,14 @@ uniform mat3 u_uvtransform;
 void main() {
 	v_pos = a_vertex;
 
-	${macros & SHADER_MACROS.MORPHTARGETS ? 'v_pos += texelFetch(u_morph_texture,ivec2(gl_VertexID,0),0).xyz;' : ''}
+	${macros & SHADER_MACROS.MORPHTARGETS ? 'v_pos += texelFetch(u_morph_texture,ivec2(gl_VertexID,1),0).xyz;' : ''}
 	
 	${macros & SHADER_MACROS.SKINNING ? 'computeSkinning(v_pos,v_normal);' : ''}
 
 	v_pos = (u_model * vec4(v_pos,1.0)).xyz;
 	#ifndef FLAT_NORMAL
 	v_normal = a_normal;
-	${macros & SHADER_MACROS.MORPHTARGETS ? 'v_pos += texelFetch(u_morph_texture,ivec2(gl_VertexID,1),0).xyz;' : ''}
+	${macros & SHADER_MACROS.MORPHTARGETS ? 'v_normal += texelFetch(u_morph_texture,ivec2(gl_VertexID,0),0).xyz;' : ''}
 	v_normal = (u_model * vec4(v_normal,0.0)).xyz;
 	#endif
 	v_coord = a_coord;
@@ -4536,6 +4578,7 @@ Renderer.prototype.clearMorphTargets = function()
 	this.morph_textures.clear();
 }
 
+/** creates a texture that contains the offsets */
 Renderer.prototype.computeMorphTargets = function(node)
 {
 	if(!node.morphs.length)
@@ -4545,6 +4588,9 @@ Renderer.prototype.computeMorphTargets = function(node)
 		return null;
 	var vertices = mesh.getBuffer("vertices").data;
 	var numVertices = vertices.length / 3;
+	if( numVertices > this._features.MAX_TEXTURE_SIZE )
+		return null; //too big
+
 	var final_tex = this.morph_textures.get(mesh);
 	if(!final_tex)
 	{
@@ -4553,11 +4599,12 @@ Renderer.prototype.computeMorphTargets = function(node)
 	}
 	var shader = GL.Shader.getColoredScreenShader();
 	var weights = 0;
+	var compute_deltas = false;
 
 	for(let i = 0; i < node.morphs.length; ++i)
 	{
 		var morph_info = node.morphs[i];
-		if(morph_info.weight <= 0)
+		if(Math.abs(morph_info.weight) <= 0.001 || isNaN(morph_info.weight))
 			continue;
 		weights += Math.abs(morph_info.weight);
 		var morph_vertices_buffer = mesh.morphs[i].buffers.vertices;
@@ -4565,12 +4612,10 @@ Renderer.prototype.computeMorphTargets = function(node)
 		var morph_texture = this.morph_textures.get(morph_vertices_buffer);
 		if(!morph_texture)
 		{
-			var data = new Float32Array( morph_vertices_buffer.length * 2 );
+			var data = new Float32Array( morph_vertices_buffer.length * 2 ); //to store vertices and normals
 			data.set( morph_vertices_buffer, 0 );
 			if(morph_normals_buffer)
 				data.set( morph_normals_buffer, morph_vertices_buffer.length );
-			//for(let j = 0; j < data.length; ++j) //as delta
-			//	data[j] -= vertices[j];
 			morph_texture = new GL.Texture(numVertices,2,{ type: GL.FLOAT, format: GL.RGB, pixel_data: data, filter:GL.NEAREST, wrap: GL.CLAMP_TO_EDGE });
 			this.morph_textures.set( morph_vertices_buffer, morph_texture );
 		}
@@ -4587,7 +4632,7 @@ Renderer.prototype.computeMorphTargets = function(node)
 		for(let i = 0; i < node.morphs.length; ++i)
 		{
 			var morph_info = node.morphs[i];
-			if(morph_info.weight <= 0)
+			if(Math.abs(morph_info.weight) <= 0.001)
 				continue;
 			var morph_vertices_buffer = mesh.morphs[i].buffers.vertices;
 			var morph_texture = this.morph_textures.get(morph_vertices_buffer);
@@ -4901,6 +4946,8 @@ Renderer.prototype.getNodeRenderables = function( node, camera )
 
 	//skinning can work in two ways: through a RD.Skeleton, or through info about the joints node in the scene
 	var skinning = node.skeleton || node.skin || null;
+	if( !this.allow_skinning )
+		skinning = null;
 	if( skinning && !skinning.bones && !skinning.joints )
 		skinning = null;
 	if( skinning && skinning.bones && !skinning.bones.length )
@@ -4933,7 +4980,7 @@ Renderer.prototype.getNodeRenderables = function( node, camera )
 	}
 
 	var morphs = null;
-	if( node.morphs)
+	if( node.morphs && this.allow_morphtargets)
 		morphs = this.computeMorphTargets(node);
 
 	//it has multiple submaterials
@@ -4959,7 +5006,7 @@ Renderer.prototype.getNodeRenderables = function( node, camera )
 			rc.draw_range = null;
 			rc._render_priority = material.render_priority || 0;
 			rc.instances = node._instances;
-			rc.flags = (rc.instances || skinning) ? RENDERABLE_IGNORE_BOUNDING : 0;
+			rc.flags = (rc.instances || skinning || morphs) ? RENDERABLE_IGNORE_BOUNDING : 0;
 			rc.reverse_faces = node.flags.frontFace == GL.CW;
 			rc.skin = skinning;
 			rc.index_buffer_name = "triangles";
@@ -5000,7 +5047,7 @@ Renderer.prototype.getNodeRenderables = function( node, camera )
 			rc.bounding.set( aabb );
 			rc.index_buffer_name = node.indices_name || "triangles";
 			rc.morphs = morphs;
-			rc.flags = (rc.instances || skinning) ? RENDERABLE_IGNORE_BOUNDING : 0;
+			rc.flags = (rc.instances || skinning || morphs) ? RENDERABLE_IGNORE_BOUNDING : 0;
 			this.renderables.push( rc );
 
 			if(node.flags.outline)
@@ -5173,6 +5220,66 @@ Renderer.prototype.setPointSize = function(v)
 {
 	this.point_size = v;
 	gl.shaders["point"].uniforms({u_pointSize: this.point_size});
+}
+
+Renderer.collectBones = function( root, skin_info, mesh )
+{
+	if(!mesh || !mesh.bones)
+		return;
+
+	var num_bones = mesh.bones.length;
+	if(!skin_info._bone_matrices)
+		skin_info._bone_matrices = new Float32Array( 16 * num_bones );
+	var bone_matrices = skin_info._bone_matrices;
+	var inner_m = mat4.create();
+	var root_node = null;
+	if(skin_info.skeleton_root)
+		root_node = root.findNodeByName( skin_info.skeleton_root );
+	if(!root_node)
+		root_node = root;
+	var bm = mat4.create();
+	var inv = mat4.invert(mat4.create(),root.getGlobalMatrix());
+
+	for (var i = 0; i < mesh.bones.length; ++i)
+	{
+		var bone_info = mesh.bones[i];
+		var m = bone_matrices.subarray(i*16,i*16+16);
+		var bone_name = bone_info[0];
+		var bone_node = null;
+		if(bone_name)
+			bone_node = root.findNodeByName( bone_name );
+		if(!bone_node)
+		{
+			mat4.identity( m );
+			continue;
+		}
+		mat4.identity( bm );
+		inner_getGlobalMatrix( bone_node, root_node, bm );
+		//bm = bone_node.getGlobalMatrix();
+		if( inv ) //as joints have the root transform applied, we need to remove it
+			mat4.multiply( bm, inv, bm );
+		mat4.multiply( m, bm, bone_info[1] ); //use globals
+		//skin_info.bindMatrices are in mesh.bones[i][1]
+		if( mesh.bind_matrix )
+			mat4.multiply( m, m, mesh.bind_matrix );
+	}
+
+	function inner_getGlobalMatrix( node, root_node, bm )
+	{
+		if(!root_node || !node)
+			return bm;
+
+		if(node == root_node)
+		{
+			mat4.mul( bm, node.getGlobalMatrix(), bm );
+			return bm;
+		}
+
+		mat4.mul( bm, node.matrix, bm );
+		return inner_getGlobalMatrix( node._parent, root_node, bm );
+	}
+
+	return bone_matrices;
 }
 
 
@@ -9338,6 +9445,8 @@ RD.GLTF = {
 	supports_anisotropy: false,
 	force_anisotropy: false,
 
+	nodes_by_index: {},
+
 	load: function( url, callback, extension, callback_progress )
 	{
 		if(!url)
@@ -9419,7 +9528,7 @@ RD.GLTF = {
 			json = main.data;
 
 			//gltf
-			this.parseBuffers();
+			this.parseBuffers(json);
 
 			onFetchComplete();
 		}
@@ -9502,7 +9611,10 @@ RD.GLTF = {
 				continue;
 			var data = null;
 			if( buffer.uri && buffer.uri.substr(0,5) == "data:")
-				buffer.data = _base64ToArrayBuffer( buffer.uri.substr(37) );
+			{
+				var index = buffer.uri.indexOf(",");
+				buffer.data = _base64ToArrayBuffer( buffer.uri.substr(index+1) );
+			}
 			else
 			{
 				if(!files_data)
@@ -9584,6 +9696,7 @@ RD.GLTF = {
 
 		var root = null;
 		var nodes_by_id = {};
+		this.nodes_by_index = {};
 		if( json.scenes.length > 1 )
 			console.warn("gltf importer only supports one scene per file, skipping the rest");
 
@@ -9624,19 +9737,33 @@ RD.GLTF = {
 			root.name = "root";
 		}
 
-		//build hierarchy
+		//build hierarchy first so if somebody references it exists already
+		for(var i = 0; i < json.nodes.length; ++i)
+		{
+			var info = json.nodes[i];
+			var node = null;
+			if(info.extensions && info.extensions.KHR_lights_punctual)
+				node = new RD.Light();
+			else
+				node = new RD.SceneNode();
+			if(info.name)
+				node.name = info.name;
+			this.nodes_by_index[i] = node;				
+		}
+	
+		//now parse content
 		for(var i = 0; i < nodes_info.length; ++i)
 		{
-			var info = nodes_info[i];
-			var index = info;
-			if(info.node != null)
-				index = info.node;
-			var node = RD.GLTF.parseNode( null, index, json );
+			var index = nodes_info[i];
+			//if(info.node != null)//????
+			//	index = info.node;
+			var node = this.nodes_by_index[index];
+			RD.GLTF.parseNode( node, index, json );
 			if(!root)
 				root = node;
 			if(nodes_info.length > 1)
 				root.addChild( node );
-			node.id = json.url.replace(/\//gi,"_") + "::node_" + i;
+			node.id = json.url.replace(/\//gi,"_") + "::node_" + index;
 			nodes_by_id[ node.id ] = nodes_by_id[ i ] = node;
 		}
 
@@ -9998,72 +10125,104 @@ RD.GLTF = {
 
 		//num numbers
 		var size = accessor.count * components;
-		var databuffer = null;
 
 		//create buffer
-		switch( accessor.componentType )
+		var databuffer = this.createTypedBuffer( accessor.componentType, size );
+
+		//regular buffer
+		if(accessor.bufferView !== undefined)
 		{
-			case RD.GLTF.FLOAT: databuffer = new Float32Array( size ); break;
-			case RD.GLTF.UNSIGNED_INT: databuffer = new Uint32Array( size ); break;
-			case RD.GLTF.SHORT: databuffer = new Int16Array( size );  break;
-			case RD.GLTF.UNSIGNED_SHORT: databuffer = new Uint16Array( size );  break;
-			case RD.GLTF.BYTE: databuffer = new Int8Array( size );  break;
-			case RD.GLTF.UNSIGNED_BYTE: databuffer = new Uint8Array( size );  break;
-			default:
-				console.warn("gltf accessor of unsupported type: ", accessor.componentType);
-				databuffer = new Float32Array( size );
-		}
-
-		var bufferViewIndex = accessor.bufferView;
-		if( accessor.sparse && accessor.sparse.values )
-			bufferViewIndex = accessor.sparse.values.bufferView;
-
-		bufferView = json.bufferViews[ bufferViewIndex ];
-
-		if(!bufferView)
-		{
-			console.warn("gltf bufferView not found");
-			return null;
-		}
-
-		var buffer = json.buffers[ bufferView.buffer ];
-		if(!buffer || !buffer.data)
-		{
-			console.warn("gltf buffer not found or data not loaded");
-			return null;
-		}
-
-		var databufferview = new Uint8Array( databuffer.buffer );
-
-		if(bufferView.byteOffset == null)//could happend when is 0
-			bufferView.byteOffset = 0;
-
-		var start = bufferView.byteOffset + (accessor.byteOffset || 0);
-
-		//is interlaved, then we need to separate it
-		if(bufferView.byteStride && bufferView.byteStride != components * databuffer.BYTES_PER_ELEMENT)
-		{
-			var item_size = components * databuffer.BYTES_PER_ELEMENT;
-			var chunk = buffer.dataview.subarray( start, start + bufferView.byteLength );
-			var temp = new databuffer.constructor(components);
-			var temp_bytes = new Uint8Array(temp.buffer);
-			var index = 0;
-			for(var i = 0; i < accessor.count; ++i)
+			bufferView = json.bufferViews[ accessor.bufferView ];
+			if(!bufferView)
 			{
-				temp_bytes.set( chunk.subarray(index,index+item_size) );
-				databuffer.set( temp, i*components );
-				index += bufferView.byteStride;
+				console.warn("gltf bufferView not found");
+				return null;
 			}
-			//console.warn("gltf buffer data is not tightly packed, not supported");
-			//return null;
-		}
-		else
-		{
-			//extract chunk from binary (not using the size from the bufferView because sometimes it doesnt match!)
-			var chunk = buffer.dataview.subarray( start, start + databufferview.length );
+			var buffer = json.buffers[ bufferView.buffer ];
+			if(!buffer || !buffer.data)
+			{
+				console.warn("gltf buffer not found or data not loaded");
+				return null;
+			}
 
-			//copy data to buffer
-			databufferview.set( chunk );
+			var databufferview = new Uint8Array( databuffer.buffer );
+
+			if(bufferView.byteOffset == null)//could happend when is 0
+				bufferView.byteOffset = 0;
+
+			var start = bufferView.byteOffset + (accessor.byteOffset || 0);
+
+			//is interlaved, then we need to separate it
+			if(bufferView.byteStride && bufferView.byteStride != components * databuffer.BYTES_PER_ELEMENT)
+			{
+				var item_size = components * databuffer.BYTES_PER_ELEMENT;
+				var chunk = buffer.dataview.subarray( start, start + bufferView.byteLength );
+				var temp = new databuffer.constructor(components);
+				var temp_bytes = new Uint8Array(temp.buffer);
+				var index = 0;
+				for(var i = 0; i < accessor.count; ++i)
+				{
+					temp_bytes.set( chunk.subarray(index,index+item_size) );
+					databuffer.set( temp, i*components );
+					index += bufferView.byteStride;
+				}
+			}
+			else
+			{
+				//extract chunk from binary (not using the size from the bufferView because sometimes it doesnt match!)
+				var chunk = buffer.dataview.subarray( start, start + databufferview.length );
+
+				//copy data to buffer
+				databufferview.set( chunk );
+			}
+		}
+		else if( accessor.sparse ) //data is indexed to save space in GLTF
+		{
+			var indices;
+			if( accessor.sparse.indices.componentType === RD.GLTF.UNSIGNED_INT )
+				indices = new Uint32Array( accessor.sparse.count );
+			else if( accessor.sparse.indices.componentType === RD.GLTF.UNSIGNED_SHORT )
+				indices = new Uint16Array( accessor.sparse.count );
+			else if( accessor.sparse.indices.componentType === RD.GLTF.UNSIGNED_BYTE )
+				indices = new Uint8Array( accessor.sparse.count );
+			else
+				throw "indices in gltf in wrong format";
+	
+			var start = accessor.sparse.indices.byteOffset || 0;
+			var indices_chunk = this.parseBufferView( json, accessor.sparse.indices.bufferView );
+			var indices_u8 = new Uint8Array( indices_chunk );
+			var indices_temp = new indices.constructor( indices_u8.buffer );
+			indices.set(indices_temp);
+
+			//values
+			var values;
+			var values_size = accessor.sparse.count * components;
+			var values = this.createTypedBuffer( accessor.componentType, values_size );
+			start = accessor.sparse.values.byteOffset || 0;		
+			var values_chunk = this.parseBufferView( json, accessor.sparse.values.bufferView );
+			var values_u8 = new Uint8Array( values_chunk );
+			var values_temp = new values.constructor( values_u8.buffer );
+			values.set( values_temp );
+
+			for(let i = 0; i < indices.length; ++i)			
+			{
+				var index = indices[i];
+				var value = values.subarray(i*components,(i + 1) * components);
+				databuffer.set(value, index*components)
+			}
+		}
+
+		//debug
+		if(accessor.min && accessor.max)
+		{
+			var min = accessor.min;
+			var max = accessor.max;
+			for(var i = 0; i < databuffer.length; i++)
+			{
+				if(	databuffer[i] < min[i%components] - 0.00001 || 
+					databuffer[i] > max[i%components] + 0.00001 )
+					console.log("wrong value:", databuffer[i], min[i%components], max[i%components]);
+			}
 		}
 
 
@@ -10076,6 +10235,39 @@ RD.GLTF = {
 				databuffer[i] = 1.0 - databuffer[i]; 
 
 		return databuffer;
+	},
+
+	//returns a Uint8Array
+	parseBufferView: function( json, bufferview_index )
+	{
+		var bufferView = json.bufferViews[ bufferview_index ];
+		if(!bufferView)
+		{
+			console.warn("gltf bufferView not found");
+			return null;
+		}
+		var buffer = json.buffers[ bufferView.buffer ];
+		if(!buffer || !buffer.data)
+		{
+			console.warn("gltf buffer not found or data not loaded");
+			return null;
+		}
+		return new Uint8Array( buffer.data, bufferView.byteOffset || 0, bufferView.byteLength );
+		//return buffer.dataview.subarray(bufferView.byteOffset || 0, );
+	},
+
+	createTypedBuffer: function(componentType,size) {
+		switch( componentType )
+		{
+			case RD.GLTF.FLOAT: return new Float32Array( size ); break;
+			case RD.GLTF.UNSIGNED_INT: return new Uint32Array( size ); break;
+			case RD.GLTF.SHORT: return new Int16Array( size );  break;
+			case RD.GLTF.UNSIGNED_SHORT: return new Uint16Array( size );  break;
+			case RD.GLTF.BYTE: return new Int8Array( size );  break;
+			case RD.GLTF.UNSIGNED_BYTE: return new Uint8Array( size );  break;
+		}	
+		console.warn("gltf accessor of unsupported type: ", componentType);
+		return new Float32Array( size );
 	},
 
 	installDracoModule: function( callback )
@@ -10432,8 +10624,17 @@ RD.GLTF = {
 		skin.joints = [];
 		for(var i = 0; i < info.joints.length; ++i)
 		{
-			var joint = json.nodes[ info.joints[i] ];
-			skin.joints.push( joint.id || joint.name );
+			var node_index = info.joints[i];
+			var joint = json.nodes[ node_index ];
+			var name = joint.id || joint.name;
+			if(!name)
+			{
+				var node = this.nodes_by_index[node_index];
+				if(!node.name)
+					node.name = "Node_" + node_index;
+				name = joint.name = node.name;
+			}
+			skin.joints.push( name );
 		}
 		return skin;
 	},
@@ -10526,7 +10727,7 @@ RD.GLTF = {
 				console.warn("gltf unknown type:",type);
 				continue;
 			}
-			var num_elements = keyframedata.length;
+			var num_elements = timestamps.length;
 			var keyframes = new Float32Array( (1+num_components) * num_elements );
 			for(var j = 0; j < num_elements; ++j)
 			{
@@ -10544,7 +10745,7 @@ RD.GLTF = {
 			animation.addTrack( track );
 		}
 
-		animation.duration = duration;
+		animation.duration = duration || 1/25;
 
 		return animation;
 	},
@@ -10994,6 +11195,7 @@ RD.SceneNode.prototype.loadGLTF = function( url, callback, force )
 }
 
 function _base64ToArrayBuffer(base64) {
+	////buffer.data = Uint8Array.from(atob(base64_string), c => c.charCodeAt(0)) ??
     var binary_string = window.atob(base64);
     var len = binary_string.length;
     var bytes = new Uint8Array(len);
@@ -11137,7 +11339,8 @@ PBRPipeline.MACROS = {
 	POINTS:		1<<2,
 	INSTANCING: 1<<3,
 	SKINNING:	1<<4,
-	PARALLAX_REFLECTION: 1<<5
+	MORPHTARGETS:	1<<5,
+	PARALLAX_REFLECTION: 1<<6
 };
 
 PBRPipeline.maps = ["albedo","metallicRoughness","occlusion","normal","emissive","opacity","displacement","detail"];
@@ -11309,13 +11512,8 @@ PBRPipeline.prototype.renderRenderables = function( renderables, camera, layers 
 				this.alpha_composite_callback( GL.FBO.current, this.alpha_composite_target_texture );
 		}
 
-		//in case of instancing
-		var model = renderable.model;
-		if( renderable.instances && renderable.instances.length )
-			model = GL.linearizeArray( renderable.instances, Float32Array );
-
 		//render opaque stuff
-		this.renderMeshWithMaterial( model, renderable.mesh, renderable.material, renderable.index_buffer_name, renderable.group_index, renderable.primitive, renderable.node.extra_uniforms, renderable.reverse_faces, renderable.skin );
+		this.renderRenderable( renderable, camera );
 	}
 }
 
@@ -11405,25 +11603,22 @@ PBRPipeline.prototype.getShader = function( macros, fragment_shader_name, vertex
 	return shader;
 }
 
-PBRPipeline.prototype.renderRenderable = function( rc )
-{
-	var model = rc.model;
-	if( rc.instances && rc.instances.length )
-		model = new Float32Array( rc.instances.flat() );
-
-	this.renderMeshWithMaterial( model, rc.mesh, rc.material, rc.index_buffer_name, rc.group_index, rc.primitive, rc.node?.extra_uniforms, rc.reverse_faces, rc.skin );
-}
 
 PBRPipeline.default_backface_color = [0.1,0.1,0.1];
 
-PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, material, index_buffer_name, group_index, primitive, extra_uniforms, reverse_faces, skinning_info )
+PBRPipeline.prototype.renderRenderable = function( rc, camera )
 {
+	var model = rc.model;
+	var material = rc.material;
+	var mesh = rc.mesh;
+	var skeleton = rc.skin;
 	var renderer = this.renderer;
+	var primitive = rc.primitive;
+	var group_index = rc.group_index;
 
 	var shader = null;
-
 	if(!material || material.constructor === String)
-		throw("no material in renderMeshWithMaterial");
+		throw("no material in renderRenderable");
 
 	//not visible
 	if(material.alphaMode == "BLEND" && material.color[3] <= 0.0)
@@ -11431,7 +11626,7 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 
 	var material_uniforms = this.material_uniforms;
 	var sampler_uniforms = this.sampler_uniforms;
-	var num_instances = model_matrix.length / 16;
+	var num_instances = rc.instances ? rc.instances.length : 1;
 
 	//materials
 	material_uniforms.u_albedo = material.color.subarray(0,3);
@@ -11448,8 +11643,10 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 		macros |= PBRPipeline.MACROS.UVS2;
 	if(mesh.vertexBuffers.colors)
 		macros |= PBRPipeline.MACROS.COLOR;
-	if( skinning_info )
+	if( skeleton )
 		macros |= PBRPipeline.MACROS.SKINNING;
+	if( rc.morphs )
+		macros |= PBRPipeline.MACROS.MORPHTARGETS;
 
 	if( this.parallax_reflection )
 		macros |= PBRPipeline.MACROS.PARALLAX_REFLECTION;
@@ -11511,6 +11708,7 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 
 	//textures
 	var slot = 2; //skip 0 and 1 as are in use
+	var last_slot = 2;
 	var maps_info = material_uniforms.u_maps_info;
 	for(var i = 0; i < PBRPipeline.maps.length; ++i)
 	{
@@ -11551,13 +11749,17 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 			maps_info[i] = Math.clamp( texture_info.uv_channel, 0, 3 );
 		else
 			maps_info[i] = 0;
+		last_slot = tex_slot;
 	}
 
+	if(rc.morphs)
+		shader.uniforms({u_morph_texture:rc.morphs.bind(++last_slot)});
+
 	//flags
-	if( !reverse_faces )
+	if( !rc.reverse_faces )
 		gl.frontFace( GL.CCW );
 	renderer.enableItemFlags( material );
-	if( reverse_faces )
+	if( rc.reverse_faces )
 		gl.frontFace( GL.CW );
 
 	if(material.alphaMode == "BLEND")
@@ -11582,6 +11784,19 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 		gl.disable(gl.BLEND);
 	}
 
+	//skinning
+	if( skeleton && shader.uniformInfo.u_bones )
+	{
+		if(skeleton.constructor === RD.Skeleton)
+		{
+			this.bones = skeleton.computeFinalBoneMatrices( this.bones, mesh );
+			shader.setUniform("u_bones", this.bones );
+		}
+		else if(skeleton._bone_matrices)
+			shader.setUniform("u_bones", skeleton._bone_matrices );
+	}
+
+	/*
 	if(skinning_info)
 	{
 		if( skinning_info.constructor === RD.Skeleton )
@@ -11603,11 +11818,12 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 		if( skinning_info.joints )
 			skinning_info.skip_model = true;
 	}
+	*/
 
 	if( num_instances == 1 )
-		renderer._uniforms.u_model.set( model_matrix );
+		renderer._uniforms.u_model.set( model );
 
-	if( skinning_info && skinning_info.skip_model )
+	if( skeleton && skeleton.skip_model )
 		mat4.identity( renderer._uniforms.u_model );
 
 	shader.uniforms( renderer._uniforms ); //globals
@@ -11616,8 +11832,8 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 	shader.uniforms( material.uniforms ); //custom
 	shader.uniforms( material_uniforms ); //locals
 	shader.uniforms( sampler_uniforms ); //locals
-	if(extra_uniforms)
-		shader.uniforms( extra_uniforms );
+	//if(extra_uniforms)
+	//	shader.uniforms( extra_uniforms );
 
 	if( material.primitive == GL.POINTS )
 		shader.setUniform("u_pointSize", material.point_size || -1);
@@ -11631,7 +11847,10 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 		primitive = material.primitive;
 
 	var instancing_uniforms = this._instancing_uniforms;
-	instancing_uniforms.u_model = model_matrix;
+	if( rc.instances )
+		instancing_uniforms.u_model = rc.instances.flat();
+
+	var index_buffer_name = rc.index_buffer_name || "triangles"
 
 	//hack to render alpha objects first in the depth buffer, and then again (used in very specific cases)
 	//doesnt work well with instancing
@@ -11670,7 +11889,7 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 	this.rendered_renderables++;
 
 	renderer.disableItemFlags( material );
-	if( reverse_faces )
+	if( rc.reverse_faces )
 		gl.frontFace( GL.CCW );
 
 	gl.depthFunc( gl.LESS );
@@ -12313,7 +12532,7 @@ RD.PBRPipeline = PBRPipeline;
 
 })(typeof(window) != "undefined" ? window : (typeof(self) != "undefined" ? self : global ));
 //This file contains two animation methods, one for single track animations (used in GLTF)
-//and one for a full skeletal animation (which is more efficient when working with skeletal characters)
+//and a custom one for a full skeletal animation (which is more efficient when working with skeletal characters)
 
 (function(global){
 
@@ -12353,7 +12572,7 @@ Animation.prototype.applyAnimation = function( root_node, time, interpolation, l
 		if(track.enabled === false)
 			continue;
 		if( loop )
-			time = time % this.duration;
+			time = this.duration ? time % this.duration : 0;
 		track.applyTrack( root_node, time, interpolation );
 	}
 }
@@ -12782,7 +13001,7 @@ Track.prototype.applyTrack = function( root, time, interpolation )
 			node = root.findNodeByName( this.target_node );
 		if(node)
 		{
-			if(node.morphs && this.target_property === "weights")
+			if(node.morphs && this.target_property === "weights" && node.morphs.length === sample.length)
 			{
 				for(let i = 0; i < this.num_components; ++i)
 					node.morphs[i].weight = sample[i];
@@ -13426,32 +13645,6 @@ Skeleton.blend = function(a, b, w, result, layer, skip_normalize )
 	}
 }
 
-//shader block to include
-Skeleton.shader_code = `
-	#ifdef WEBGL1
-	attribute vec4 a_bone_indices;
-	attribute vec4 a_weights;
-	#else
-	in vec4 a_bone_indices;
-	in vec4 a_weights;
-	#endif
-	uniform mat4 u_bones[64];
-	void computeSkinning(inout vec3 vertex, inout vec3 normal)
-	{
-		vec4 v = vec4(vertex,1.0);
-		vertex = (u_bones[int(a_bone_indices.x)] * a_weights.x * v + 
-				u_bones[int(a_bone_indices.y)] * a_weights.y * v + 
-				u_bones[int(a_bone_indices.z)] * a_weights.z * v + 
-				u_bones[int(a_bone_indices.w)] * a_weights.w * v).xyz;
-		vec4 N = vec4(normal,0.0);
-		normal =	(u_bones[int(a_bone_indices.x)] * a_weights.x * N + 
-				u_bones[int(a_bone_indices.y)] * a_weights.y * N + 
-				u_bones[int(a_bone_indices.z)] * a_weights.z * N + 
-				u_bones[int(a_bone_indices.w)] * a_weights.w * N).xyz;
-		normal = normalize(normal);
-	}
-`;
-
 //example of full vertex shader that supports skinning
 Skeleton.vertex_shader_code = `
 	precision highp float;
@@ -13467,7 +13660,7 @@ Skeleton.vertex_shader_code = `
 	uniform mat4 u_model;
 	uniform mat4 u_normal_matrix;
 	
-	${Skeleton.shader_code} //
+	${RD.Renderer.shader_snippets} //
 	
 	void main() {
 		v_wPosition = a_vertex;
@@ -13489,7 +13682,7 @@ function SkeletalAnimation()
 {
 	this.skeleton = new Skeleton();
 
-	this.duration = 0;
+	this.duration = 1;
 	this.samples_per_second = 30;
 	this.num_animated_bones = 0;
 	this.num_keyframes = 0;
@@ -13529,7 +13722,7 @@ SkeletalAnimation.prototype.assignTime = function(time, loop, interpolate, layer
 	if(!this.duration || !this.samples_per_second)
 		return;
 
-	if (loop || loop === undefined)
+	if ((loop || loop === undefined) && this.duration)
 	{
 		time = time % this.duration;
 		if (time < 0)
@@ -13935,74 +14128,6 @@ if(RD.SceneNode)
 	{
 		this.assignSkeleton( skeletal_animation.skeleton );
 	}
-
-	RD.SceneNode.prototype.updateSkinningBones = function(root)
-	{
-		root = root || this;
-
-		if(this.skin && this.mesh)
-			RD.collectBones( root, this.skin, gl.meshes[ this.mesh ] );
-
-		if(this.children && this.children.length)
-			for(var i = 0; i < this.children.length; ++i)
-				this.children[i].updateSkinningBones(root);
-	}
-}
-
-
-RD.collectBones = function( root, skin_info, mesh )
-{
-	if(!mesh || !mesh.bones)
-		return;
-
-	var num_bones = mesh.bones.length;
-	if(!skin_info._bone_matrices)
-		skin_info._bone_matrices = new Float32Array( 16 * num_bones );
-	var bone_matrices = skin_info._bone_matrices;
-	var inner_m = mat4.create();
-	var root_node = null;
-	if(skin_info.skeleton_root)
-		root_node = root.findNodeByName( skin_info.skeleton_root );
-	if(!root_node)
-		root_node = root;
-	var bm = mat4.create();
-	var inv = mat4.invert(mat4.create(),root.getGlobalMatrix());
-
-	for (var i = 0; i < mesh.bones.length; ++i)
-	{
-		var bone_info = mesh.bones[i];
-		var m = bone_matrices.subarray(i*16,i*16+16);
-		var bone_name = bone_info[0];
-		var bone_node = root.findNodeByName( bone_name );
-		if(!bone_node)
-			continue;
-		mat4.identity( bm );
-		inner_getGlobalMatrix( bone_node, root_node, bm );
-		//bm = bone_node.getGlobalMatrix();
-		if( inv ) //as joints have the root transform applied, we need to remove it
-			mat4.multiply( bm, inv, bm );
-		mat4.multiply( m, bm, bone_info[1] ); //use globals
-		//skin_info.bindMatrices are in mesh.bones[i][1]
-		if( mesh.bind_matrix )
-			mat4.multiply( m, m, mesh.bind_matrix );
-	}
-
-	function inner_getGlobalMatrix( node, root_node, bm )
-	{
-		if(!root_node || !node)
-			return bm;
-
-		if(node == root_node)
-		{
-			mat4.mul( bm, node.getGlobalMatrix(), bm );
-			return bm;
-		}
-
-		mat4.mul( bm, node.matrix, bm );
-		return inner_getGlobalMatrix( node._parent, root_node, bm );
-	}
-
-	return bone_matrices;
 }
 
 //use it with a collada.js or GLTF to extract all info

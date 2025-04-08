@@ -1,5 +1,5 @@
 //This file contains two animation methods, one for single track animations (used in GLTF)
-//and one for a full skeletal animation (which is more efficient when working with skeletal characters)
+//and a custom one for a full skeletal animation (which is more efficient when working with skeletal characters)
 
 (function(global){
 
@@ -39,7 +39,7 @@ Animation.prototype.applyAnimation = function( root_node, time, interpolation, l
 		if(track.enabled === false)
 			continue;
 		if( loop )
-			time = time % this.duration;
+			time = this.duration ? time % this.duration : 0;
 		track.applyTrack( root_node, time, interpolation );
 	}
 }
@@ -468,7 +468,7 @@ Track.prototype.applyTrack = function( root, time, interpolation )
 			node = root.findNodeByName( this.target_node );
 		if(node)
 		{
-			if(node.morphs && this.target_property === "weights")
+			if(node.morphs && this.target_property === "weights" && node.morphs.length === sample.length)
 			{
 				for(let i = 0; i < this.num_components; ++i)
 					node.morphs[i].weight = sample[i];
@@ -1112,32 +1112,6 @@ Skeleton.blend = function(a, b, w, result, layer, skip_normalize )
 	}
 }
 
-//shader block to include
-Skeleton.shader_code = `
-	#ifdef WEBGL1
-	attribute vec4 a_bone_indices;
-	attribute vec4 a_weights;
-	#else
-	in vec4 a_bone_indices;
-	in vec4 a_weights;
-	#endif
-	uniform mat4 u_bones[64];
-	void computeSkinning(inout vec3 vertex, inout vec3 normal)
-	{
-		vec4 v = vec4(vertex,1.0);
-		vertex = (u_bones[int(a_bone_indices.x)] * a_weights.x * v + 
-				u_bones[int(a_bone_indices.y)] * a_weights.y * v + 
-				u_bones[int(a_bone_indices.z)] * a_weights.z * v + 
-				u_bones[int(a_bone_indices.w)] * a_weights.w * v).xyz;
-		vec4 N = vec4(normal,0.0);
-		normal =	(u_bones[int(a_bone_indices.x)] * a_weights.x * N + 
-				u_bones[int(a_bone_indices.y)] * a_weights.y * N + 
-				u_bones[int(a_bone_indices.z)] * a_weights.z * N + 
-				u_bones[int(a_bone_indices.w)] * a_weights.w * N).xyz;
-		normal = normalize(normal);
-	}
-`;
-
 //example of full vertex shader that supports skinning
 Skeleton.vertex_shader_code = `
 	precision highp float;
@@ -1153,7 +1127,7 @@ Skeleton.vertex_shader_code = `
 	uniform mat4 u_model;
 	uniform mat4 u_normal_matrix;
 	
-	${Skeleton.shader_code} //
+	${RD.Renderer.shader_snippets} //
 	
 	void main() {
 		v_wPosition = a_vertex;
@@ -1175,7 +1149,7 @@ function SkeletalAnimation()
 {
 	this.skeleton = new Skeleton();
 
-	this.duration = 0;
+	this.duration = 1;
 	this.samples_per_second = 30;
 	this.num_animated_bones = 0;
 	this.num_keyframes = 0;
@@ -1215,7 +1189,7 @@ SkeletalAnimation.prototype.assignTime = function(time, loop, interpolate, layer
 	if(!this.duration || !this.samples_per_second)
 		return;
 
-	if (loop || loop === undefined)
+	if ((loop || loop === undefined) && this.duration)
 	{
 		time = time % this.duration;
 		if (time < 0)
@@ -1621,74 +1595,6 @@ if(RD.SceneNode)
 	{
 		this.assignSkeleton( skeletal_animation.skeleton );
 	}
-
-	RD.SceneNode.prototype.updateSkinningBones = function(root)
-	{
-		root = root || this;
-
-		if(this.skin && this.mesh)
-			RD.collectBones( root, this.skin, gl.meshes[ this.mesh ] );
-
-		if(this.children && this.children.length)
-			for(var i = 0; i < this.children.length; ++i)
-				this.children[i].updateSkinningBones(root);
-	}
-}
-
-
-RD.collectBones = function( root, skin_info, mesh )
-{
-	if(!mesh || !mesh.bones)
-		return;
-
-	var num_bones = mesh.bones.length;
-	if(!skin_info._bone_matrices)
-		skin_info._bone_matrices = new Float32Array( 16 * num_bones );
-	var bone_matrices = skin_info._bone_matrices;
-	var inner_m = mat4.create();
-	var root_node = null;
-	if(skin_info.skeleton_root)
-		root_node = root.findNodeByName( skin_info.skeleton_root );
-	if(!root_node)
-		root_node = root;
-	var bm = mat4.create();
-	var inv = mat4.invert(mat4.create(),root.getGlobalMatrix());
-
-	for (var i = 0; i < mesh.bones.length; ++i)
-	{
-		var bone_info = mesh.bones[i];
-		var m = bone_matrices.subarray(i*16,i*16+16);
-		var bone_name = bone_info[0];
-		var bone_node = root.findNodeByName( bone_name );
-		if(!bone_node)
-			continue;
-		mat4.identity( bm );
-		inner_getGlobalMatrix( bone_node, root_node, bm );
-		//bm = bone_node.getGlobalMatrix();
-		if( inv ) //as joints have the root transform applied, we need to remove it
-			mat4.multiply( bm, inv, bm );
-		mat4.multiply( m, bm, bone_info[1] ); //use globals
-		//skin_info.bindMatrices are in mesh.bones[i][1]
-		if( mesh.bind_matrix )
-			mat4.multiply( m, m, mesh.bind_matrix );
-	}
-
-	function inner_getGlobalMatrix( node, root_node, bm )
-	{
-		if(!root_node || !node)
-			return bm;
-
-		if(node == root_node)
-		{
-			mat4.mul( bm, node.getGlobalMatrix(), bm );
-			return bm;
-		}
-
-		mat4.mul( bm, node.matrix, bm );
-		return inner_getGlobalMatrix( node._parent, root_node, bm );
-	}
-
-	return bone_matrices;
 }
 
 //use it with a collada.js or GLTF to extract all info

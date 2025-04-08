@@ -128,7 +128,8 @@ PBRPipeline.MACROS = {
 	POINTS:		1<<2,
 	INSTANCING: 1<<3,
 	SKINNING:	1<<4,
-	PARALLAX_REFLECTION: 1<<5
+	MORPHTARGETS:	1<<5,
+	PARALLAX_REFLECTION: 1<<6
 };
 
 PBRPipeline.maps = ["albedo","metallicRoughness","occlusion","normal","emissive","opacity","displacement","detail"];
@@ -300,13 +301,8 @@ PBRPipeline.prototype.renderRenderables = function( renderables, camera, layers 
 				this.alpha_composite_callback( GL.FBO.current, this.alpha_composite_target_texture );
 		}
 
-		//in case of instancing
-		var model = renderable.model;
-		if( renderable.instances && renderable.instances.length )
-			model = GL.linearizeArray( renderable.instances, Float32Array );
-
 		//render opaque stuff
-		this.renderMeshWithMaterial( model, renderable.mesh, renderable.material, renderable.index_buffer_name, renderable.group_index, renderable.primitive, renderable.node.extra_uniforms, renderable.reverse_faces, renderable.skin );
+		this.renderRenderable( renderable, camera );
 	}
 }
 
@@ -396,25 +392,22 @@ PBRPipeline.prototype.getShader = function( macros, fragment_shader_name, vertex
 	return shader;
 }
 
-PBRPipeline.prototype.renderRenderable = function( rc )
-{
-	var model = rc.model;
-	if( rc.instances && rc.instances.length )
-		model = new Float32Array( rc.instances.flat() );
-
-	this.renderMeshWithMaterial( model, rc.mesh, rc.material, rc.index_buffer_name, rc.group_index, rc.primitive, rc.node?.extra_uniforms, rc.reverse_faces, rc.skin );
-}
 
 PBRPipeline.default_backface_color = [0.1,0.1,0.1];
 
-PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, material, index_buffer_name, group_index, primitive, extra_uniforms, reverse_faces, skinning_info )
+PBRPipeline.prototype.renderRenderable = function( rc, camera )
 {
+	var model = rc.model;
+	var material = rc.material;
+	var mesh = rc.mesh;
+	var skeleton = rc.skin;
 	var renderer = this.renderer;
+	var primitive = rc.primitive;
+	var group_index = rc.group_index;
 
 	var shader = null;
-
 	if(!material || material.constructor === String)
-		throw("no material in renderMeshWithMaterial");
+		throw("no material in renderRenderable");
 
 	//not visible
 	if(material.alphaMode == "BLEND" && material.color[3] <= 0.0)
@@ -422,7 +415,7 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 
 	var material_uniforms = this.material_uniforms;
 	var sampler_uniforms = this.sampler_uniforms;
-	var num_instances = model_matrix.length / 16;
+	var num_instances = rc.instances ? rc.instances.length : 1;
 
 	//materials
 	material_uniforms.u_albedo = material.color.subarray(0,3);
@@ -439,8 +432,10 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 		macros |= PBRPipeline.MACROS.UVS2;
 	if(mesh.vertexBuffers.colors)
 		macros |= PBRPipeline.MACROS.COLOR;
-	if( skinning_info )
+	if( skeleton )
 		macros |= PBRPipeline.MACROS.SKINNING;
+	if( rc.morphs )
+		macros |= PBRPipeline.MACROS.MORPHTARGETS;
 
 	if( this.parallax_reflection )
 		macros |= PBRPipeline.MACROS.PARALLAX_REFLECTION;
@@ -502,6 +497,7 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 
 	//textures
 	var slot = 2; //skip 0 and 1 as are in use
+	var last_slot = 2;
 	var maps_info = material_uniforms.u_maps_info;
 	for(var i = 0; i < PBRPipeline.maps.length; ++i)
 	{
@@ -542,13 +538,17 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 			maps_info[i] = Math.clamp( texture_info.uv_channel, 0, 3 );
 		else
 			maps_info[i] = 0;
+		last_slot = tex_slot;
 	}
 
+	if(rc.morphs)
+		shader.uniforms({u_morph_texture:rc.morphs.bind(++last_slot)});
+
 	//flags
-	if( !reverse_faces )
+	if( !rc.reverse_faces )
 		gl.frontFace( GL.CCW );
 	renderer.enableItemFlags( material );
-	if( reverse_faces )
+	if( rc.reverse_faces )
 		gl.frontFace( GL.CW );
 
 	if(material.alphaMode == "BLEND")
@@ -573,6 +573,19 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 		gl.disable(gl.BLEND);
 	}
 
+	//skinning
+	if( skeleton && shader.uniformInfo.u_bones )
+	{
+		if(skeleton.constructor === RD.Skeleton)
+		{
+			this.bones = skeleton.computeFinalBoneMatrices( this.bones, mesh );
+			shader.setUniform("u_bones", this.bones );
+		}
+		else if(skeleton._bone_matrices)
+			shader.setUniform("u_bones", skeleton._bone_matrices );
+	}
+
+	/*
 	if(skinning_info)
 	{
 		if( skinning_info.constructor === RD.Skeleton )
@@ -594,11 +607,12 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 		if( skinning_info.joints )
 			skinning_info.skip_model = true;
 	}
+	*/
 
 	if( num_instances == 1 )
-		renderer._uniforms.u_model.set( model_matrix );
+		renderer._uniforms.u_model.set( model );
 
-	if( skinning_info && skinning_info.skip_model )
+	if( skeleton && skeleton.skip_model )
 		mat4.identity( renderer._uniforms.u_model );
 
 	shader.uniforms( renderer._uniforms ); //globals
@@ -607,8 +621,8 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 	shader.uniforms( material.uniforms ); //custom
 	shader.uniforms( material_uniforms ); //locals
 	shader.uniforms( sampler_uniforms ); //locals
-	if(extra_uniforms)
-		shader.uniforms( extra_uniforms );
+	//if(extra_uniforms)
+	//	shader.uniforms( extra_uniforms );
 
 	if( material.primitive == GL.POINTS )
 		shader.setUniform("u_pointSize", material.point_size || -1);
@@ -622,7 +636,10 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 		primitive = material.primitive;
 
 	var instancing_uniforms = this._instancing_uniforms;
-	instancing_uniforms.u_model = model_matrix;
+	if( rc.instances )
+		instancing_uniforms.u_model = rc.instances.flat();
+
+	var index_buffer_name = rc.index_buffer_name || "triangles"
 
 	//hack to render alpha objects first in the depth buffer, and then again (used in very specific cases)
 	//doesnt work well with instancing
@@ -661,7 +678,7 @@ PBRPipeline.prototype.renderMeshWithMaterial = function( model_matrix, mesh, mat
 	this.rendered_renderables++;
 
 	renderer.disableItemFlags( material );
-	if( reverse_faces )
+	if( rc.reverse_faces )
 		gl.frontFace( GL.CCW );
 
 	gl.depthFunc( gl.LESS );

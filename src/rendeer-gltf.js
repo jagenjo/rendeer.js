@@ -37,6 +37,8 @@ RD.GLTF = {
 	supports_anisotropy: false,
 	force_anisotropy: false,
 
+	nodes_by_index: {},
+
 	load: function( url, callback, extension, callback_progress )
 	{
 		if(!url)
@@ -118,7 +120,7 @@ RD.GLTF = {
 			json = main.data;
 
 			//gltf
-			this.parseBuffers();
+			this.parseBuffers(json);
 
 			onFetchComplete();
 		}
@@ -201,7 +203,10 @@ RD.GLTF = {
 				continue;
 			var data = null;
 			if( buffer.uri && buffer.uri.substr(0,5) == "data:")
-				buffer.data = _base64ToArrayBuffer( buffer.uri.substr(37) );
+			{
+				var index = buffer.uri.indexOf(",");
+				buffer.data = _base64ToArrayBuffer( buffer.uri.substr(index+1) );
+			}
 			else
 			{
 				if(!files_data)
@@ -283,6 +288,7 @@ RD.GLTF = {
 
 		var root = null;
 		var nodes_by_id = {};
+		this.nodes_by_index = {};
 		if( json.scenes.length > 1 )
 			console.warn("gltf importer only supports one scene per file, skipping the rest");
 
@@ -323,19 +329,33 @@ RD.GLTF = {
 			root.name = "root";
 		}
 
-		//build hierarchy
+		//build hierarchy first so if somebody references it exists already
+		for(var i = 0; i < json.nodes.length; ++i)
+		{
+			var info = json.nodes[i];
+			var node = null;
+			if(info.extensions && info.extensions.KHR_lights_punctual)
+				node = new RD.Light();
+			else
+				node = new RD.SceneNode();
+			if(info.name)
+				node.name = info.name;
+			this.nodes_by_index[i] = node;				
+		}
+	
+		//now parse content
 		for(var i = 0; i < nodes_info.length; ++i)
 		{
-			var info = nodes_info[i];
-			var index = info;
-			if(info.node != null)
-				index = info.node;
-			var node = RD.GLTF.parseNode( null, index, json );
+			var index = nodes_info[i];
+			//if(info.node != null)//????
+			//	index = info.node;
+			var node = this.nodes_by_index[index];
+			RD.GLTF.parseNode( node, index, json );
 			if(!root)
 				root = node;
 			if(nodes_info.length > 1)
 				root.addChild( node );
-			node.id = json.url.replace(/\//gi,"_") + "::node_" + i;
+			node.id = json.url.replace(/\//gi,"_") + "::node_" + index;
 			nodes_by_id[ node.id ] = nodes_by_id[ i ] = node;
 		}
 
@@ -697,72 +717,104 @@ RD.GLTF = {
 
 		//num numbers
 		var size = accessor.count * components;
-		var databuffer = null;
 
 		//create buffer
-		switch( accessor.componentType )
+		var databuffer = this.createTypedBuffer( accessor.componentType, size );
+
+		//regular buffer
+		if(accessor.bufferView !== undefined)
 		{
-			case RD.GLTF.FLOAT: databuffer = new Float32Array( size ); break;
-			case RD.GLTF.UNSIGNED_INT: databuffer = new Uint32Array( size ); break;
-			case RD.GLTF.SHORT: databuffer = new Int16Array( size );  break;
-			case RD.GLTF.UNSIGNED_SHORT: databuffer = new Uint16Array( size );  break;
-			case RD.GLTF.BYTE: databuffer = new Int8Array( size );  break;
-			case RD.GLTF.UNSIGNED_BYTE: databuffer = new Uint8Array( size );  break;
-			default:
-				console.warn("gltf accessor of unsupported type: ", accessor.componentType);
-				databuffer = new Float32Array( size );
-		}
-
-		var bufferViewIndex = accessor.bufferView;
-		if( accessor.sparse && accessor.sparse.values )
-			bufferViewIndex = accessor.sparse.values.bufferView;
-
-		bufferView = json.bufferViews[ bufferViewIndex ];
-
-		if(!bufferView)
-		{
-			console.warn("gltf bufferView not found");
-			return null;
-		}
-
-		var buffer = json.buffers[ bufferView.buffer ];
-		if(!buffer || !buffer.data)
-		{
-			console.warn("gltf buffer not found or data not loaded");
-			return null;
-		}
-
-		var databufferview = new Uint8Array( databuffer.buffer );
-
-		if(bufferView.byteOffset == null)//could happend when is 0
-			bufferView.byteOffset = 0;
-
-		var start = bufferView.byteOffset + (accessor.byteOffset || 0);
-
-		//is interlaved, then we need to separate it
-		if(bufferView.byteStride && bufferView.byteStride != components * databuffer.BYTES_PER_ELEMENT)
-		{
-			var item_size = components * databuffer.BYTES_PER_ELEMENT;
-			var chunk = buffer.dataview.subarray( start, start + bufferView.byteLength );
-			var temp = new databuffer.constructor(components);
-			var temp_bytes = new Uint8Array(temp.buffer);
-			var index = 0;
-			for(var i = 0; i < accessor.count; ++i)
+			bufferView = json.bufferViews[ accessor.bufferView ];
+			if(!bufferView)
 			{
-				temp_bytes.set( chunk.subarray(index,index+item_size) );
-				databuffer.set( temp, i*components );
-				index += bufferView.byteStride;
+				console.warn("gltf bufferView not found");
+				return null;
 			}
-			//console.warn("gltf buffer data is not tightly packed, not supported");
-			//return null;
-		}
-		else
-		{
-			//extract chunk from binary (not using the size from the bufferView because sometimes it doesnt match!)
-			var chunk = buffer.dataview.subarray( start, start + databufferview.length );
+			var buffer = json.buffers[ bufferView.buffer ];
+			if(!buffer || !buffer.data)
+			{
+				console.warn("gltf buffer not found or data not loaded");
+				return null;
+			}
 
-			//copy data to buffer
-			databufferview.set( chunk );
+			var databufferview = new Uint8Array( databuffer.buffer );
+
+			if(bufferView.byteOffset == null)//could happend when is 0
+				bufferView.byteOffset = 0;
+
+			var start = bufferView.byteOffset + (accessor.byteOffset || 0);
+
+			//is interlaved, then we need to separate it
+			if(bufferView.byteStride && bufferView.byteStride != components * databuffer.BYTES_PER_ELEMENT)
+			{
+				var item_size = components * databuffer.BYTES_PER_ELEMENT;
+				var chunk = buffer.dataview.subarray( start, start + bufferView.byteLength );
+				var temp = new databuffer.constructor(components);
+				var temp_bytes = new Uint8Array(temp.buffer);
+				var index = 0;
+				for(var i = 0; i < accessor.count; ++i)
+				{
+					temp_bytes.set( chunk.subarray(index,index+item_size) );
+					databuffer.set( temp, i*components );
+					index += bufferView.byteStride;
+				}
+			}
+			else
+			{
+				//extract chunk from binary (not using the size from the bufferView because sometimes it doesnt match!)
+				var chunk = buffer.dataview.subarray( start, start + databufferview.length );
+
+				//copy data to buffer
+				databufferview.set( chunk );
+			}
+		}
+		else if( accessor.sparse ) //data is indexed to save space in GLTF
+		{
+			var indices;
+			if( accessor.sparse.indices.componentType === RD.GLTF.UNSIGNED_INT )
+				indices = new Uint32Array( accessor.sparse.count );
+			else if( accessor.sparse.indices.componentType === RD.GLTF.UNSIGNED_SHORT )
+				indices = new Uint16Array( accessor.sparse.count );
+			else if( accessor.sparse.indices.componentType === RD.GLTF.UNSIGNED_BYTE )
+				indices = new Uint8Array( accessor.sparse.count );
+			else
+				throw "indices in gltf in wrong format";
+	
+			var start = accessor.sparse.indices.byteOffset || 0;
+			var indices_chunk = this.parseBufferView( json, accessor.sparse.indices.bufferView );
+			var indices_u8 = new Uint8Array( indices_chunk );
+			var indices_temp = new indices.constructor( indices_u8.buffer );
+			indices.set(indices_temp);
+
+			//values
+			var values;
+			var values_size = accessor.sparse.count * components;
+			var values = this.createTypedBuffer( accessor.componentType, values_size );
+			start = accessor.sparse.values.byteOffset || 0;		
+			var values_chunk = this.parseBufferView( json, accessor.sparse.values.bufferView );
+			var values_u8 = new Uint8Array( values_chunk );
+			var values_temp = new values.constructor( values_u8.buffer );
+			values.set( values_temp );
+
+			for(let i = 0; i < indices.length; ++i)			
+			{
+				var index = indices[i];
+				var value = values.subarray(i*components,(i + 1) * components);
+				databuffer.set(value, index*components)
+			}
+		}
+
+		//debug
+		if(accessor.min && accessor.max)
+		{
+			var min = accessor.min;
+			var max = accessor.max;
+			for(var i = 0; i < databuffer.length; i++)
+			{
+				if(	databuffer[i] < min[i%components] - 0.00001 || 
+					databuffer[i] > max[i%components] + 0.00001 )
+					console.log("wrong value:", databuffer[i], min[i%components], max[i%components]);
+			}
 		}
 
 
@@ -775,6 +827,39 @@ RD.GLTF = {
 				databuffer[i] = 1.0 - databuffer[i]; 
 
 		return databuffer;
+	},
+
+	//returns a Uint8Array
+	parseBufferView: function( json, bufferview_index )
+	{
+		var bufferView = json.bufferViews[ bufferview_index ];
+		if(!bufferView)
+		{
+			console.warn("gltf bufferView not found");
+			return null;
+		}
+		var buffer = json.buffers[ bufferView.buffer ];
+		if(!buffer || !buffer.data)
+		{
+			console.warn("gltf buffer not found or data not loaded");
+			return null;
+		}
+		return new Uint8Array( buffer.data, bufferView.byteOffset || 0, bufferView.byteLength );
+		//return buffer.dataview.subarray(bufferView.byteOffset || 0, );
+	},
+
+	createTypedBuffer: function(componentType,size) {
+		switch( componentType )
+		{
+			case RD.GLTF.FLOAT: return new Float32Array( size ); break;
+			case RD.GLTF.UNSIGNED_INT: return new Uint32Array( size ); break;
+			case RD.GLTF.SHORT: return new Int16Array( size );  break;
+			case RD.GLTF.UNSIGNED_SHORT: return new Uint16Array( size );  break;
+			case RD.GLTF.BYTE: return new Int8Array( size );  break;
+			case RD.GLTF.UNSIGNED_BYTE: return new Uint8Array( size );  break;
+		}	
+		console.warn("gltf accessor of unsupported type: ", componentType);
+		return new Float32Array( size );
 	},
 
 	installDracoModule: function( callback )
@@ -1131,8 +1216,17 @@ RD.GLTF = {
 		skin.joints = [];
 		for(var i = 0; i < info.joints.length; ++i)
 		{
-			var joint = json.nodes[ info.joints[i] ];
-			skin.joints.push( joint.id || joint.name );
+			var node_index = info.joints[i];
+			var joint = json.nodes[ node_index ];
+			var name = joint.id || joint.name;
+			if(!name)
+			{
+				var node = this.nodes_by_index[node_index];
+				if(!node.name)
+					node.name = "Node_" + node_index;
+				name = joint.name = node.name;
+			}
+			skin.joints.push( name );
 		}
 		return skin;
 	},
@@ -1225,7 +1319,7 @@ RD.GLTF = {
 				console.warn("gltf unknown type:",type);
 				continue;
 			}
-			var num_elements = keyframedata.length;
+			var num_elements = timestamps.length;
 			var keyframes = new Float32Array( (1+num_components) * num_elements );
 			for(var j = 0; j < num_elements; ++j)
 			{
@@ -1243,7 +1337,7 @@ RD.GLTF = {
 			animation.addTrack( track );
 		}
 
-		animation.duration = duration;
+		animation.duration = duration || 1/25;
 
 		return animation;
 	},
@@ -1693,6 +1787,7 @@ RD.SceneNode.prototype.loadGLTF = function( url, callback, force )
 }
 
 function _base64ToArrayBuffer(base64) {
+	////buffer.data = Uint8Array.from(atob(base64_string), c => c.charCodeAt(0)) ??
     var binary_string = window.atob(base64);
     var len = binary_string.length;
     var bytes = new Uint8Array(len);

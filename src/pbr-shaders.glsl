@@ -17,8 +17,8 @@ tonemapper @SCREEN_300 tonemapper.fs
 
 \skinning
 
-attribute vec4 a_bone_indices;
-attribute vec4 a_weights;
+in vec4 a_bone_indices;
+in vec4 a_weights;
 uniform mat4 u_bones[64];
 
 void computeSkinning(inout vec4 vertex, inout vec4 normal)
@@ -33,7 +33,6 @@ void computeSkinning(inout vec4 vertex, inout vec4 normal)
 			u_bones[int(a_bone_indices.w)] * a_weights.w * normal;
 	normal = normalize(normal);
 }
-
 
 \default.vs
 	#version 300 es
@@ -73,6 +72,11 @@ void computeSkinning(inout vec4 vertex, inout vec4 normal)
 	uniform int u_maps_info[10];
 	uniform float u_displacement_factor;
 
+	#ifdef MORPHTARGETS
+		uniform sampler2D u_morph_texture;
+	#endif
+
+
 	vec2 getUV( int index )
 	{
 		if(index == 0)
@@ -103,6 +107,11 @@ void computeSkinning(inout vec4 vertex, inout vec4 normal)
 
 		vec4 vertex4 = vec4(a_vertex,1.0);
 		vec4 normal4 = vec4(a_normal,0.0);
+
+		#ifdef MORPHTARGETS
+			vertex4.xyz += texelFetch(u_morph_texture,ivec2(gl_VertexID,1),0).xyz;
+			normal4.xyz += texelFetch(u_morph_texture,ivec2(gl_VertexID,0),0).xyz;
+		#endif
 
 		#ifdef SKINNING
 			computeSkinning(vertex4,normal4);
