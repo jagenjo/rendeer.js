@@ -78,6 +78,7 @@
 		//global settings
 		var bg_color = vec4.fromValues(0.0,0.0,0.0,1);
 		renderer.ambient_light = [0.1,0.1,0.1];
+		renderer.light_color = [0,0,0];
 
 		var viewdepth_shader = new GL.Shader.createFX(`
 				float z_n = 2.0 * color.x - 1.0;
@@ -104,11 +105,14 @@
 			//update
 			scene.update(dt);
 
-			gl.viewport(0,0,400,400);
 			gl.disable( gl.DEPTH_TEST );
 			gl.disable( gl.BLEND );
 			if(renderer.shadows_info?.texture)
+			{
+				gl.viewport(0,0,400,400);
+				renderer.shadows_info.texture.setParameter( gl.TEXTURE_MAG_FILTER, gl.NEAREST );
 				renderer.shadows_info.texture.toViewport(viewdepth_shader,{u_zNear: 0.01, u_zFar: light.max_distance});
+			}
 		}
 
 		//input

@@ -444,7 +444,7 @@ class SceneNode {
 		if(this.submesh != null)
 			r.submesh = this.submesh;
 		if(this.flags)
-			r.flags = JSON.parse( JSON.stringify( this.flags ) );
+			r.flags = structuredClone( this.flags );
 		if(this.extras)
 			r.extras = this.extras;
 		if(this.animation)
@@ -466,6 +466,8 @@ class SceneNode {
 		}
 		if(this.skeleton)
 			r.skeleton = this.skeleton.toJSON();
+		if(this.morphs)
+			r.morphs = this.morphs.concat();
 
 		if(this.onSerialize)
 			this.onSerialize(r);
@@ -541,6 +543,9 @@ class SceneNode {
 					else
 						this.material = o[i];
 					continue;
+					break;
+				case "morphs":
+					this.morphs = structuredClone(o.morphs);
 					break;
 				case "name":
 				case "mesh":
@@ -3502,9 +3507,9 @@ class Material
 					continue;
 				}
 				else if(v.constructor === Object) //avoid sharing objects between materials
-					v = JSON.parse(JSON.stringify(v)); //clone
+					v = structuredClone(v); //clone
 				else if(v.constructor === Array)
-					v = v.concat();
+					v = structuredClone(v);
 				else if(v.constructor === Float32Array)
 					v = new Float32Array(v);
 			}
@@ -3515,8 +3520,8 @@ class Material
 	toJSON()
 	{
 		var o = {
-			flags: JSON.parse( JSON.stringify(this.flags)),
-			textures: JSON.parse( JSON.stringify(this.textures) ) //clone
+			flags: structuredClone(this.flags),
+			textures: structuredClone(this.textures)
 		};
 
 		o.color = Array.from( this._color );
@@ -3991,7 +3996,8 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 		return rc.material.render(this, rc, lights);
 
 	//remove lights that do not overlap with this renderable
-	lights = lights.filter(l=>l.overlaps(rc))
+	if(!this.rendering_only_depth) //no need as it is always empty
+		lights = lights.filter(l=>l.overlaps(rc))
 
 	var mesh = rc.mesh;
 	var node = rc.node;
@@ -4035,6 +4041,8 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 
 	//get shader
 	var shader = null;
+	var shader_hash = 0;
+
 	if (this.on_getShader)
 	{
 		shader = this.on_getShader( rc.node, camera );
@@ -4053,8 +4061,6 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 		else
 		{
 			//generate automatic shader
-			var shader_hash = 0;
-
 			if( skeleton )
 				shader_hash |= SHADER_MACROS.SKINNING;
 			if( rc.morphs )
@@ -4066,7 +4072,7 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 			{
 				if(primitive !== GL.TRIANGLES && primitive !== GL.TRIANGLE_STRIP && primitive !== GL.TRIANGLE_FAN)
 					shader_hash |= SHADER_MACROS.NO_TRIANGLES;
-				if(this.use_alpha_hash && material.blend_mode != 0)
+				if(this.use_alpha_hash && (material.blend_mode != 0 || material.alphaMode === "BLEND") )
 					shader_hash |= SHADER_MACROS.ALPHA_HASH;
 				if(this.use_flat_normal)
 					shader_hash |= SHADER_MACROS.FLAT_NORMAL;
@@ -4183,7 +4189,7 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 	if(lights.length)
 		shader.uniforms( this._lights_uniforms );
 	shader.uniforms( camera._uniforms ); //camera
-	if(this.use_fog)
+	if(shader_hash & SHADER_MACROS.FOG)
 		shader.uniforms( this._fog_uniforms );
 	shader.uniforms( this._phong_uniforms ); //light
 	shader.setUniform("u_color", material._color);
@@ -4200,6 +4206,8 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 		shader.uniforms({u_morph_texture:rc.morphs.bind(slot++)});
 	if(has_shadows)
 	{
+		this.shadows_info.texture.setParameter( gl.TEXTURE_MAG_FILTER, gl.NEAREST );
+		this.shadows_info.texture.setParameter( gl.TEXTURE_MIN_FILTER, gl.NEAREST );
 		this.shadows_info.uniforms.u_shadowmap = this.shadows_info.texture.bind(slot++);
 		shader.uniforms(this.shadows_info.uniforms);
 	}
@@ -4261,11 +4269,15 @@ Renderer.shader_snippets = {
 	{
 		const float bias = 0.004;
 		vec4 proj = vp * vec4(pos, 1.0);
-		vec2 sample = (proj.xy / proj.w) * vec2(0.5) + vec2(0.5);
-		if(sample.x >= 0.0 && sample.x <= 1.0 && sample.y >= 0.0 && sample.y <= 1.0 )
+		vec2 shadowSample = (proj.xy / proj.w) * vec2(0.5) + vec2(0.5);
+		if(shadowSample.x >= 0.0 && shadowSample.x <= 1.0 && shadowSample.y >= 0.0 && shadowSample.y <= 1.0 )
 		{
-			sample = remap( sample, vec2(0.0), vec2(1.0), rect.xy, rect.zw );
-			float depth = texture( u_shadowmap, sample ).x;
+			shadowSample = remap( shadowSample, vec2(0.0), vec2(1.0), rect.xy, rect.zw );
+			#ifdef WEBGL1
+			float depth = texture2D( u_shadowmap, shadowSample).x;
+			#else
+			float depth = texture( u_shadowmap, shadowSample).x;
+			#endif
 			if( depth > 0.0 && depth < 1.0 && depth <= ( ((proj.z-bias) / proj.w) * 0.5 + 0.5) )
 				return 0.0;
 		}
@@ -4537,7 +4549,7 @@ Renderer.getMasterFragmentShader = function(){ return `#version 300 es
 			${Renderer.shader_snippets.modify_attenuation}
 
 			#ifdef SHADOWS
-				if (u_light_params[i].z != -1.0) //has shadowmap
+				if ( u_light_params[i].z != -1.0 && (NdotL*att) > 0.0) //has shadowmap
 				{
 					att *= testShadowmap( v_pos, u_shadowmap_rect[ i ], u_shadowmap_vps[ i ] );
 				}
@@ -4773,7 +4785,7 @@ Renderer.prototype.updateShadowmaps = function( lights, renderables, main_camera
 	}
 
 	this.shadows_info.fbo.bind();
-	gl.clear( gl.DEPTH_BUFFER_BIT  ); //| gl.COLOR_BUFFER_BIT
+	gl.clear( gl.DEPTH_BUFFER_BIT ); //| gl.COLOR_BUFFER_BIT
 
 	var shadow_size = SHADOWMAP_ATLAS_SIZE / 2;
 	if(!this.shadow_camera)
@@ -4825,9 +4837,8 @@ Renderer.prototype.updateShadowmaps = function( lights, renderables, main_camera
 
 	this.shadows_info.num_shadows = casting_lights.length;
 	this.shadows_info.fbo.unbind();
-	this.shadows_info.texture.bind();
-	gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR );
-	gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST );
+	this.shadows_info.texture.setParameter( gl.TEXTURE_MIN_FILTER, gl.NEAREST );
+	this.shadows_info.texture.setParameter( gl.TEXTURE_MAG_FILTER, gl.LINEAR );
 	this.rendering_only_depth = false;
 }
 
@@ -10213,7 +10224,7 @@ RD.GLTF = {
 		}
 
 		//debug
-		if(accessor.min && accessor.max)
+		if(accessor.min && accessor.max && 0)
 		{
 			var min = accessor.min;
 			var max = accessor.max;
@@ -10715,12 +10726,30 @@ RD.GLTF = {
 				console.warn("animation accedor missing")
 				continue;
 			}
+
 			var out_accessor = json.accessors[ sampler.output ];
 			var type = out_accessor.type;
 			var type_enum = RD.TYPES[type];
 			if( type_enum == RD.VEC4 && track.target_property == "rotation")
 				type_enum = RD.QUAT;
 			track.type = type_enum;
+
+			//tough mode, we dont support it but we need to convert the data ignoring tangents
+			//more info here: https://github.com/KhronosGroup/glTF-Tutorials/blob/main/gltfTutorial/gltfTutorial_007_Animations.md
+			if( sampler.interpolation === "CUBICSPLINE") 
+			{
+				var num_entries = timestamps.length;
+				var new_keyframedata = new keyframedata.constructor( keyframedata.length / 3 );
+				var num_comps = new_keyframedata.length / num_entries;
+				for(let j = 0; j < num_entries; ++j)
+				{
+					//tangent left, value, tangent right, so we want the middle one
+					var sample = keyframedata.subarray(num_comps + j * num_comps * 3, num_comps + j * num_comps * 3 + num_comps);
+					new_keyframedata.set( sample, j * num_comps );
+				}
+				keyframedata = new_keyframedata;
+			}
+
 			var num_components = keyframedata.length / timestamps.length;
 			if(!num_components)
 			{
@@ -12642,6 +12671,17 @@ Animation.prototype.findNearestRight = function( time )
 	return nearest_time;
 }
 
+// checks if at least one track has valid target
+Animation.prototype.isValid = function(root) {
+	for(var i = 0; i < this.tracks.length; ++i)
+	{
+		var track = this.tracks[i];
+		if(track.getTarget(root))
+			return true;
+	}
+	return false;
+}
+
 RD.Animation = Animation;
 
 //a Track stores a set of keyframes that affect a single property of an object (usually transform info from nodes)
@@ -12981,16 +13021,9 @@ Track.prototype.getSamplePacked = function( time, interpolation, result )
 	return null;
 }
 
-//it samples and applies the result to the given node
-//root can be a RD.SceneNode or a RD.Skeleton (if skeleton only mat4 work)
-Track.prototype.applyTrack = function( root, time, interpolation )
+//checks if the target node exists
+Track.prototype.getTarget = function(root)
 {
-	if(!root)
-		return;
-
-	//reads value stored in track
-	var sample = this.getSample( time, interpolation );
-
 	//tryes to apply it to target
 	if( root.constructor === RD.SceneNode ) //apply to scene ierarchy
 	{
@@ -13000,24 +13033,46 @@ Track.prototype.applyTrack = function( root, time, interpolation )
 		else
 			node = root.findNodeByName( this.target_node );
 		if(node)
-		{
-			if(node.morphs && this.target_property === "weights" && node.morphs.length === sample.length)
-			{
-				for(let i = 0; i < this.num_components; ++i)
-					node.morphs[i].weight = sample[i];
-			}
-			else
-				node[ this.target_property ] = sample;
-		}
+			return node;
 	}
 	else if( root.constructor === RD.Skeleton )
 	{
 		var bone = root.getBone( this.target_node );
 		if( bone && this.type == RD.MAT4 )
+			return bone;
+	}
+	return null;
+}
+
+//it samples and applies the result to the given node
+//root can be a RD.SceneNode or a RD.Skeleton (if skeleton only mat4 work)
+Track.prototype.applyTrack = function( root, time, interpolation )
+{
+	if(!root)
+		return;
+
+	var target = this.getTarget( root );
+	if(!target)
+		return;
+
+	//reads value stored in track
+	var sample = this.getSample( time, interpolation );
+
+	//tryes to apply it to target
+	if( target instanceof RD.SceneNode ) //apply to scene ierarchy
+	{
+		if(target.morphs && this.target_property === "weights" && target.morphs.length === sample.length)
 		{
-			this._bone = bone;
-			bone.model.set( sample );
+			for(let i = 0; i < this.num_components; ++i)
+			target.morphs[i].weight = sample[i];
 		}
+		else
+			target[ this.target_property ] = sample;
+	}
+	else if( target.constructor === RD.Bone )
+	{
+		this._bone = target;
+		target.model.set( sample );
 	}
 
 	return sample;

@@ -12,7 +12,6 @@
 	<script type="text/javascript" src="../external/litegl.js"></script>
 	<script type="text/javascript" src="../external/draco_decoder.js"></script>
 	<script type="text/javascript" src="../src/rendeer.js"></script>
-	<script type="text/javascript" src="../src/rendeer-extended.js"></script>
 	<script type="text/javascript" src="../src/rendeer-animation.js"></script>
 	<script type="text/javascript" src="../src/rendeer-gltf.js"></script>
 	<script type="text/javascript">
@@ -22,6 +21,7 @@
 	var scene = null;
 	var gltf_node = null;
 	var animation = null;
+	var anim_index = 0;
 	
 	function init()
 	{
@@ -57,6 +57,8 @@
 		requestAnimationFrame(animate);
 		function animate() {
 			requestAnimationFrame( animate );
+
+			camera.near = vec3.distance( camera.position, camera.target ) * 0.1;
 
 			last = now;
 			now = getTime();
@@ -94,6 +96,17 @@
 			var direction = (e.wheel > 0) ? 1 : -1;
 			var offset = 1 + direction * -0.1;
 			camera.orbitDistanceFactor( offset );
+		}
+
+		renderer.context.captureKeys(true);
+		renderer.context.onkeydown = function(e)
+		{
+			if(e.code === "KeyN")
+			{
+				anim_index++;
+				anim_index = anim_index % gltf_node.animations.length;
+				animation = gltf_node.animations[ anim_index ];
+			}
 		}
 
 		enableDrop();
@@ -139,7 +152,10 @@
 		console.log(node);
 		window.root = node;
 		if(node.animations)
-			animation = node.animations[0];
+		{
+			anim_index = anim_index % node.animations.length;
+			animation = node.animations[anim_index];
+		}
 	}
 
 	function onFileDrop(evt)

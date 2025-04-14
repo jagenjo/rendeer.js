@@ -805,7 +805,7 @@ RD.GLTF = {
 		}
 
 		//debug
-		if(accessor.min && accessor.max)
+		if(accessor.min && accessor.max && 0)
 		{
 			var min = accessor.min;
 			var max = accessor.max;
@@ -1307,12 +1307,30 @@ RD.GLTF = {
 				console.warn("animation accedor missing")
 				continue;
 			}
+
 			var out_accessor = json.accessors[ sampler.output ];
 			var type = out_accessor.type;
 			var type_enum = RD.TYPES[type];
 			if( type_enum == RD.VEC4 && track.target_property == "rotation")
 				type_enum = RD.QUAT;
 			track.type = type_enum;
+
+			//tough mode, we dont support it but we need to convert the data ignoring tangents
+			//more info here: https://github.com/KhronosGroup/glTF-Tutorials/blob/main/gltfTutorial/gltfTutorial_007_Animations.md
+			if( sampler.interpolation === "CUBICSPLINE") 
+			{
+				var num_entries = timestamps.length;
+				var new_keyframedata = new keyframedata.constructor( keyframedata.length / 3 );
+				var num_comps = new_keyframedata.length / num_entries;
+				for(let j = 0; j < num_entries; ++j)
+				{
+					//tangent left, value, tangent right, so we want the middle one
+					var sample = keyframedata.subarray(num_comps + j * num_comps * 3, num_comps + j * num_comps * 3 + num_comps);
+					new_keyframedata.set( sample, j * num_comps );
+				}
+				keyframedata = new_keyframedata;
+			}
+
 			var num_components = keyframedata.length / timestamps.length;
 			if(!num_components)
 			{

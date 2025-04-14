@@ -442,7 +442,7 @@ class SceneNode {
 		if(this.submesh != null)
 			r.submesh = this.submesh;
 		if(this.flags)
-			r.flags = JSON.parse( JSON.stringify( this.flags ) );
+			r.flags = structuredClone( this.flags );
 		if(this.extras)
 			r.extras = this.extras;
 		if(this.animation)
@@ -464,6 +464,8 @@ class SceneNode {
 		}
 		if(this.skeleton)
 			r.skeleton = this.skeleton.toJSON();
+		if(this.morphs)
+			r.morphs = this.morphs.concat();
 
 		if(this.onSerialize)
 			this.onSerialize(r);
@@ -539,6 +541,9 @@ class SceneNode {
 					else
 						this.material = o[i];
 					continue;
+					break;
+				case "morphs":
+					this.morphs = structuredClone(o.morphs);
 					break;
 				case "name":
 				case "mesh":
@@ -3500,9 +3505,9 @@ class Material
 					continue;
 				}
 				else if(v.constructor === Object) //avoid sharing objects between materials
-					v = JSON.parse(JSON.stringify(v)); //clone
+					v = structuredClone(v); //clone
 				else if(v.constructor === Array)
-					v = v.concat();
+					v = structuredClone(v);
 				else if(v.constructor === Float32Array)
 					v = new Float32Array(v);
 			}
@@ -3513,8 +3518,8 @@ class Material
 	toJSON()
 	{
 		var o = {
-			flags: JSON.parse( JSON.stringify(this.flags)),
-			textures: JSON.parse( JSON.stringify(this.textures) ) //clone
+			flags: structuredClone(this.flags),
+			textures: structuredClone(this.textures)
 		};
 
 		o.color = Array.from( this._color );
@@ -3989,7 +3994,8 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 		return rc.material.render(this, rc, lights);
 
 	//remove lights that do not overlap with this renderable
-	lights = lights.filter(l=>l.overlaps(rc))
+	if(!this.rendering_only_depth) //no need as it is always empty
+		lights = lights.filter(l=>l.overlaps(rc))
 
 	var mesh = rc.mesh;
 	var node = rc.node;
@@ -4033,6 +4039,8 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 
 	//get shader
 	var shader = null;
+	var shader_hash = 0;
+
 	if (this.on_getShader)
 	{
 		shader = this.on_getShader( rc.node, camera );
@@ -4051,8 +4059,6 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 		else
 		{
 			//generate automatic shader
-			var shader_hash = 0;
-
 			if( skeleton )
 				shader_hash |= SHADER_MACROS.SKINNING;
 			if( rc.morphs )
@@ -4064,7 +4070,7 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 			{
 				if(primitive !== GL.TRIANGLES && primitive !== GL.TRIANGLE_STRIP && primitive !== GL.TRIANGLE_FAN)
 					shader_hash |= SHADER_MACROS.NO_TRIANGLES;
-				if(this.use_alpha_hash && material.blend_mode != 0)
+				if(this.use_alpha_hash && (material.blend_mode != 0 || material.alphaMode === "BLEND") )
 					shader_hash |= SHADER_MACROS.ALPHA_HASH;
 				if(this.use_flat_normal)
 					shader_hash |= SHADER_MACROS.FLAT_NORMAL;
@@ -4181,7 +4187,7 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 	if(lights.length)
 		shader.uniforms( this._lights_uniforms );
 	shader.uniforms( camera._uniforms ); //camera
-	if(this.use_fog)
+	if(shader_hash & SHADER_MACROS.FOG)
 		shader.uniforms( this._fog_uniforms );
 	shader.uniforms( this._phong_uniforms ); //light
 	shader.setUniform("u_color", material._color);
@@ -4198,6 +4204,8 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 		shader.uniforms({u_morph_texture:rc.morphs.bind(slot++)});
 	if(has_shadows)
 	{
+		this.shadows_info.texture.setParameter( gl.TEXTURE_MAG_FILTER, gl.NEAREST );
+		this.shadows_info.texture.setParameter( gl.TEXTURE_MIN_FILTER, gl.NEAREST );
 		this.shadows_info.uniforms.u_shadowmap = this.shadows_info.texture.bind(slot++);
 		shader.uniforms(this.shadows_info.uniforms);
 	}
@@ -4259,11 +4267,15 @@ Renderer.shader_snippets = {
 	{
 		const float bias = 0.004;
 		vec4 proj = vp * vec4(pos, 1.0);
-		vec2 sample = (proj.xy / proj.w) * vec2(0.5) + vec2(0.5);
-		if(sample.x >= 0.0 && sample.x <= 1.0 && sample.y >= 0.0 && sample.y <= 1.0 )
+		vec2 shadowSample = (proj.xy / proj.w) * vec2(0.5) + vec2(0.5);
+		if(shadowSample.x >= 0.0 && shadowSample.x <= 1.0 && shadowSample.y >= 0.0 && shadowSample.y <= 1.0 )
 		{
-			sample = remap( sample, vec2(0.0), vec2(1.0), rect.xy, rect.zw );
-			float depth = texture( u_shadowmap, sample ).x;
+			shadowSample = remap( shadowSample, vec2(0.0), vec2(1.0), rect.xy, rect.zw );
+			#ifdef WEBGL1
+			float depth = texture2D( u_shadowmap, shadowSample).x;
+			#else
+			float depth = texture( u_shadowmap, shadowSample).x;
+			#endif
 			if( depth > 0.0 && depth < 1.0 && depth <= ( ((proj.z-bias) / proj.w) * 0.5 + 0.5) )
 				return 0.0;
 		}
@@ -4535,7 +4547,7 @@ Renderer.getMasterFragmentShader = function(){ return `#version 300 es
 			${Renderer.shader_snippets.modify_attenuation}
 
 			#ifdef SHADOWS
-				if (u_light_params[i].z != -1.0) //has shadowmap
+				if ( u_light_params[i].z != -1.0 && (NdotL*att) > 0.0) //has shadowmap
 				{
 					att *= testShadowmap( v_pos, u_shadowmap_rect[ i ], u_shadowmap_vps[ i ] );
 				}
@@ -4771,7 +4783,7 @@ Renderer.prototype.updateShadowmaps = function( lights, renderables, main_camera
 	}
 
 	this.shadows_info.fbo.bind();
-	gl.clear( gl.DEPTH_BUFFER_BIT  ); //| gl.COLOR_BUFFER_BIT
+	gl.clear( gl.DEPTH_BUFFER_BIT ); //| gl.COLOR_BUFFER_BIT
 
 	var shadow_size = SHADOWMAP_ATLAS_SIZE / 2;
 	if(!this.shadow_camera)
@@ -4823,9 +4835,8 @@ Renderer.prototype.updateShadowmaps = function( lights, renderables, main_camera
 
 	this.shadows_info.num_shadows = casting_lights.length;
 	this.shadows_info.fbo.unbind();
-	this.shadows_info.texture.bind();
-	gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR );
-	gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST );
+	this.shadows_info.texture.setParameter( gl.TEXTURE_MIN_FILTER, gl.NEAREST );
+	this.shadows_info.texture.setParameter( gl.TEXTURE_MAG_FILTER, gl.LINEAR );
 	this.rendering_only_depth = false;
 }
 

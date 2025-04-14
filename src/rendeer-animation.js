@@ -109,6 +109,17 @@ Animation.prototype.findNearestRight = function( time )
 	return nearest_time;
 }
 
+// checks if at least one track has valid target
+Animation.prototype.isValid = function(root) {
+	for(var i = 0; i < this.tracks.length; ++i)
+	{
+		var track = this.tracks[i];
+		if(track.getTarget(root))
+			return true;
+	}
+	return false;
+}
+
 RD.Animation = Animation;
 
 //a Track stores a set of keyframes that affect a single property of an object (usually transform info from nodes)
@@ -448,16 +459,9 @@ Track.prototype.getSamplePacked = function( time, interpolation, result )
 	return null;
 }
 
-//it samples and applies the result to the given node
-//root can be a RD.SceneNode or a RD.Skeleton (if skeleton only mat4 work)
-Track.prototype.applyTrack = function( root, time, interpolation )
+//checks if the target node exists
+Track.prototype.getTarget = function(root)
 {
-	if(!root)
-		return;
-
-	//reads value stored in track
-	var sample = this.getSample( time, interpolation );
-
 	//tryes to apply it to target
 	if( root.constructor === RD.SceneNode ) //apply to scene ierarchy
 	{
@@ -467,24 +471,46 @@ Track.prototype.applyTrack = function( root, time, interpolation )
 		else
 			node = root.findNodeByName( this.target_node );
 		if(node)
-		{
-			if(node.morphs && this.target_property === "weights" && node.morphs.length === sample.length)
-			{
-				for(let i = 0; i < this.num_components; ++i)
-					node.morphs[i].weight = sample[i];
-			}
-			else
-				node[ this.target_property ] = sample;
-		}
+			return node;
 	}
 	else if( root.constructor === RD.Skeleton )
 	{
 		var bone = root.getBone( this.target_node );
 		if( bone && this.type == RD.MAT4 )
+			return bone;
+	}
+	return null;
+}
+
+//it samples and applies the result to the given node
+//root can be a RD.SceneNode or a RD.Skeleton (if skeleton only mat4 work)
+Track.prototype.applyTrack = function( root, time, interpolation )
+{
+	if(!root)
+		return;
+
+	var target = this.getTarget( root );
+	if(!target)
+		return;
+
+	//reads value stored in track
+	var sample = this.getSample( time, interpolation );
+
+	//tryes to apply it to target
+	if( target instanceof RD.SceneNode ) //apply to scene ierarchy
+	{
+		if(target.morphs && this.target_property === "weights" && target.morphs.length === sample.length)
 		{
-			this._bone = bone;
-			bone.model.set( sample );
+			for(let i = 0; i < this.num_components; ++i)
+			target.morphs[i].weight = sample[i];
 		}
+		else
+			target[ this.target_property ] = sample;
+	}
+	else if( target.constructor === RD.Bone )
+	{
+		this._bone = target;
+		target.model.set( sample );
 	}
 
 	return sample;
