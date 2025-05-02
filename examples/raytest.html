@@ -22,6 +22,11 @@
 		var renderer = new RD.Renderer({ width: window.innerWidth, height:window.innerHeight });
 		document.body.appendChild( renderer.canvas ); //attach
 
+		var info = document.createElement("div");
+		info.style.cssText = "position: fixed; top: 0; left: 0; color: white; font-size: 2em; width: 100%; height: 40px; background-color: rgba(0,0,0,0.5);"
+		info.innerText = "FOO";
+		document.body.appendChild(info);
+
 		//create camera
 		var camera = new RD.Camera();
 		camera.perspective( 45, gl.canvas.width / gl.canvas.height, 1, 1000 );
@@ -79,7 +84,8 @@
 				node.getMaterial().color = [Math.random(),Math.random(),Math.random(),1];
 			}
 			var after = getTime();
-			console.log( "Test time:", ((after - before)).toFixed(0), "ms", RD.Scene._ray_tested_objects, "objects" );
+			//console.log(  );
+			info.innerText = `Test time: ${((after - before)).toFixed(0)}ms ${RD.Scene._ray_tested_objects} objects`;
 		}
 	}
 

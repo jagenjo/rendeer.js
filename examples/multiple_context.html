@@ -20,10 +20,10 @@
 		var scene = new RD.Scene();
 
 		//create the rendering context
-		var context = GL.create({canvas: document.getElementById("canvas_one") });
+		var context = GL.create({canvas: document.getElementById("canvas_one"), version: 2 });
 		var renderer = new RD.Renderer(context);
 
-		var context2 = GL.create({canvas: document.getElementById("canvas_two") });
+		var context2 = GL.create({canvas: document.getElementById("canvas_two"), version: 2 });
 		var renderer2 = new RD.Renderer(context2);
 
 		context.makeCurrent();

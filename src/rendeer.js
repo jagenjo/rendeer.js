@@ -97,6 +97,12 @@ RD.NO_INTERPOLATION = 0;
 RD.LINEAR = 1;
 RD.CUBIC = 2;
 
+RD.VIEWMODES = {
+	DEFAULT: 1,
+	NORMAL: 2,
+	DEPTH: 3
+};
+
 var DEG2RAD = RD.DEG2RAD = 0.0174532925;
 var RAD2DEG = RD.RAD2DEG = 57.295779578552306;
 
@@ -123,7 +129,13 @@ var SHADER_MACROS = {
 
 	SECOND_BUFFER:1<<18,
 	FLAT_COLOR:	1<<19,
+	VIEWNORMAL: 1<<20,
+	TRUE_DEPTH: 1<<21 //used for point light shadowmaps
 };
+
+//renderables flags
+var RENDERABLE_IGNORE_BOUNDING = 1;
+var RENDERABLE_NO_SHADOWS = 2;
 
 var temp_vec3 = vec3.create();
 var temp_vec3b = vec3.create();
@@ -217,16 +229,20 @@ class SceneNode {
 	_global_matrix = mat4.create(); //in global space
 	_must_update_matrix = false;
 
-	//bounding box in world space
-	bounding_box = null; //use updateBoundingBox to update it
+	//use updateBoundingBox to update them
+	bounding_box = null; //bounding box in world space of this node mesh and its children
+	mesh_bounding_box = null; //the mesh bounding box in world space
 
 	layers = 0x3|0; //first two layers
 
+	//string with the name of the mesh, as it is stored in gl.meshes
 	mesh = null;
 
 	instances = null; //array of mat4 with the model for every instance
 	draw_range = null
 	submesh = -1; //used if not primitives used
+	morphs = null;
+	skin = null;
 
 	//in case this object has multimaterial this will contain { index: submesh index, material: material name, mode: render primitive };
 	primitives = []; 
@@ -420,10 +436,13 @@ class SceneNode {
 	/**
 	* Returns an object that represents the current state of this object an its children
 	* @method toJSON
+	* @param {number} layers to filter to only the ones that matches layers
 	* @return {Object} object
 	*/
-	toJSON()
+	toJSON( layers )
 	{
+		if( layers === undefined || !isNumber(layers) )
+			layers = 0xFFFF;
 		var r = {
 			position: [ this._position[0], this._position[1], this._position[2] ],
 			rotation: [ this._rotation[0], this._rotation[1], this._rotation[2], this._rotation[3] ],
@@ -474,6 +493,8 @@ class SceneNode {
 		for(var i = 0, l = this.children.length; i < l; i++)
 		{
 			var node = this.children[i];
+			if(!(node.layers & layers))
+				continue;
 			r.children.push( node.toJSON() );
 		}
 
@@ -645,15 +666,15 @@ class SceneNode {
 				var index = node._scene._nodes.indexOf(node);
 				if(index != -1)
 					node._scene._nodes.splice(index,1);
-				if(node.id && node._scene._nodes_by_id[node.id] == node)
-					delete node._scene._nodes_by_id[node.id];
+				if(node.id && node._scene._nodes_by_id.get(node.id) == node)
+					node._scene._nodes_by_id.delete(node.id);
 			}
 			node._scene = scene;
 			if(scene)
 			{
 				scene._nodes.push(node);
 				if(node.id && scene)
-					scene._nodes_by_id[node.id] = node;
+					scene._nodes_by_id.set(node.id, node);
 			}
 			if(node.children)
 				for(var i = 0, l = node.children.length; i < l; i++)
@@ -698,8 +719,8 @@ class SceneNode {
 		{
 			if( node._scene )
 			{
-				if( node.id && node._scene._nodes_by_id[node.id] == node )
-					delete node._scene._nodes_by_id[ node.id ];
+				if( node.id && node._scene._nodes_by_id.get(node.id) == node )
+					node._scene._nodes_by_id.delete(node.id);
 				var index = node._scene._nodes.indexOf(node);
 				if(index != -1)
 					node._scene._nodes.splice(index,1);
@@ -1458,7 +1479,7 @@ class SceneNode {
 	// *** OTHER *************
 
 	/**
-	* Updates the bounding box in this node, taking into account the mesh bounding box and its children
+	* Updates the bounding box in this node, it updates the mesh_bounding_box and the bounding_box (taking into account children)
 	* @method updateBoundingBox
 	* @param { Boolean } force [optional] force to destroy the resource now instead of deferring it till the update ends
 	*/
@@ -1467,17 +1488,22 @@ class SceneNode {
 		var model = this._global_matrix;
 		var mesh = gl.meshes[ this.mesh ];
 
-		var bb = null;
 		if( mesh )
 		{
 			var mesh_bb = mesh.getBoundingBox();
-			if(!this.bounding_box)
-				this.bounding_box = BBox.create();
-			bb = BBox.transformMat4( this.bounding_box, mesh_bb, model );
+			if(!this.mesh_bounding_box)
+				this.mesh_bounding_box = BBox.create();
+			BBox.transformMat4( this.mesh_bounding_box, mesh_bb, model );
+		}
+
+		if(!this.bounding_box && this.mesh_bounding_box)
+		{
+			this.bounding_box = BBox.create();
+			this.bounding_box.set(this.mesh_bounding_box);
 		}
 
 		if(ignore_children || !this.children || this.children.length == 0)
-			return bb;
+			return this.bounding_box;
 
 		for(var i = 0; i < this.children.length; ++i)
 		{
@@ -1485,16 +1511,16 @@ class SceneNode {
 			var child_bb = child.updateBoundingBox();
 			if(!child_bb)
 				continue;
-			if(!bb)
+			if(!this.bounding_box)
 			{
-				bb = this.bounding_box = BBox.create();
-				bb.set( child_bb );
+				this.bounding_box = BBox.create();
+				this.bounding_box.set( child_bb );
 			}
 			else
-				BBox.merge( bb, bb, child_bb );
+				BBox.merge( this.bounding_box, this.bounding_box, child_bb );
 		}
 
-		return bb;
+		return this.bounding_box;
 	}
 
 	/**
@@ -1748,10 +1774,18 @@ SceneNode.prototype.testRay = (function(){
 			result.set( local_result );
 			node = child_collided;
 		}
-		
+	
 		return node;
 	}
 })();
+
+/*
+SceneNode.prototype.testRayFast( ray, result, max_dist, layers, test_against_mesh, test_primitives )
+{
+	var objects = [];
+	//TODO
+}
+*/
 
 var last_ray_distance = -1;
 
@@ -2252,7 +2286,7 @@ Camera.prototype.orthographic = function(frustum_size, near, far, aspect)
 {
 	this.type = Camera.ORTHOGRAPHIC;
 	this._frustum_size = frustum_size;
-	if(arguments.lenth > 1)
+	if(arguments.length > 1)
 	{
 		this._near = near;
 		this._far = far;
@@ -2960,7 +2994,7 @@ class Scene {
 		this._root = new RD.SceneNode();
 		this._root.flags.no_transform = true; //avoid extra matrix multiplication
 		this._root._scene = this;
-		this._nodes_by_id = {};
+		this._nodes_by_id = new Map();
 		this._nodes = [];
 		this._to_destroy = [];
 
@@ -2977,10 +3011,13 @@ RD.Scene = Scene;
 */
 Scene.prototype.clear = function()
 {
+	var nodes = this._nodes.concat();
+	for(let i = 0; i < nodes.length; ++i)
+		nodes[i].remove();
 	this._root = new RD.SceneNode();
 	this._root._scene = this;
 	this._nodes.length = 0;
-	this._nodes_by_id = {};
+	this._nodes_by_id = new Map();
 	this.time = 0;
 }
 
@@ -3008,7 +3045,7 @@ Scene.prototype.remove = function(node)
 */
 Scene.prototype.getNodeById = function(id)
 {
-	return this._nodes_by_id[id];
+	return this._nodes_by_id.get(id);
 	//return this._root.findNode(id);
 }
 
@@ -3568,12 +3605,13 @@ class Light extends RD.SceneNode
 	static DEFAULT_SHADOWMAP_RESOLUTION = 2048;
 
 	intensity = 1;
-	area = 10; //frustum
+	area = 10; //frustum for directional
 	cast_shadows = false;
 	max_distance = 10;
 	light_type = RD.SPOT_LIGHT;
 	cone_start = 30;
 	cone_end = 45;
+	shadow_bias = 0.001;
 
 	_shadowmap_index = -1;
 
@@ -3621,8 +3659,10 @@ class View {
 	width = 0;
 	height = 0;
 	layers = 0xFF;
-	textures = {};
+	fbos_textures = {};
 	fbos = {};
+	scene = null;
+	camera = null;
 }
 
 RD.View = View;
@@ -3640,6 +3680,7 @@ class Renderer {
 	_ambient_light = vec3.fromValues(0.9,0.9,0.9);
 	_light_color = vec3.fromValues(0.1,0.1,0.1);
 	_light_vector = vec3.fromValues(0.5442, 0.6385, 0.544);
+	_bg_color = vec4.create(); //only used if a fbo is passed to the render function
 
 	_main_view = new View();
 
@@ -3715,11 +3756,12 @@ class Renderer {
 			throw("litegl GL context not found.");
 		if(context != global.gl)
 			gl.makeCurrent();
-		//GL.Shader.use_async = false; //set to false if you plan to code shaders, it helps debug in the console
+		GL.Shader.use_async = false; //set to false if you plan to code shaders, it helps debug in the console
 
 		//init stuff
 		this.assets_folder = "";
 				
+		this.view_mode = RD.VIEWMODES.DEFAULT;
 		this.use_alpha_hash = false;
 		this.use_flat_normal = false;
 		this.use_fog = false;
@@ -3728,8 +3770,10 @@ class Renderer {
 		this.allow_instancing = true;
 		this.allow_morphtargets = true;
 		this.allow_skinning = true;
+		this.allow_shadowmaps = true;
 		this.force_update_bones = true; //set to false if you want to handle it manually
 		this.point_size = 1;
+		this.shadowmaps_grid_size = 2; //allows 2x2 shadowmaps
 
 		this.reverse_normals = false; //used for reflections or shadowmaps
 		this.disable_cull_face = false;
@@ -3810,6 +3854,8 @@ class Renderer {
 		this.stats = {
 			draw_calls: 0,
 			updated_shadowmaps: 0,
+			num_renderables: 0,
+			num_visible_renderables: 0,
 		};
 
 		this.supports_instancing = gl.extensions.ANGLE_instanced_arrays || gl.webgl_version > 1;
@@ -3878,10 +3924,12 @@ Renderer.prototype.destroy = function()
 * @param {Array} nodes [Optional] array with nodes to render, otherwise all nodes will be rendered
 * @param {Number} layers [Optional] bit mask with which layers should be rendered, if omited then 0xFFFF is used (8 first layers)
 * @param {CustomPipeline} pipeline [Optional] allows to pass a class that will handle the rendering of the scene, check PBRPipeline from the repo for an example 
-* @param {Boolean} skip_fbo [Optional] in case you are rendering to a texture and you have already set your own FBOs (for custom pipelineS)
+* @param {GL.FBO} target_fbo [Optional] in case you are rendering to a texture
 */
-Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, skip_fbo )
+Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, target_fbo )
 {
+	this.resetStats();
+
 	if(layers == null)
 		layers = 0xFFFF;
 
@@ -3906,7 +3954,7 @@ Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, sk
 		scene._root.getVisibleChildren( this._nodes, layers, this.layers_affect_children );
 	nodes = nodes || this._nodes;
 
-	if(!nodes.length && 0)//even if no nodes in the scene, somebody may want to render something using the callbacks
+	if(!nodes.length)//even if no nodes in the scene, somebody may want to render something using the callbacks
 	{
 		scene.frame++;
 		this.frame++;
@@ -3917,14 +3965,14 @@ Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, sk
 		if(nodes[i].preRender)
 			nodes[i].preRender();
 
-	//prepass
-	var renderables = this.getAllRenderables(nodes, layers, camera);
+	//gather renderables and lights, if you pass the camera then it will only generate renderables if they are visible
+	//which could lead to problems if they cast shadows
+	var renderables = this.getAllRenderables(nodes, layers, this.allow_shadowmaps ? undefined : camera );
 	var lights = this.lights; //getAllRenderables already gathers them
 
 	//stack to store state
 	this._state = [];
 	this._meshes_missing = 0;
-	this.resetStats();
 	this._current_scene = scene;
 
 	//set globals
@@ -3940,40 +3988,66 @@ Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, sk
 		visible_renderables = visible_renderables.filter(rc=>(rc.flags & RENDERABLE_IGNORE_BOUNDING) || camera.computeAproximateScreenSize(rc.bounding) > this.small_objects_ratio_threshold );
 	//first opaque, then semitransparent
 	visible_renderables = visible_renderables.sort((a,b)=>a.material.blend_mode - b.material.blend_mode);
+	this.stats.num_visible_renderables = visible_renderables.length;	
 
 	//filter lights that are too small
 	var visible_lights = this.lights.filter(l=>l.insideCamera(camera) && (!this.small_objects_ratio_threshold || camera.projectedSphereSize(l._center,l.max_distance) > this.small_objects_ratio_threshold));
 
 	//update 
-	this.updateShadowmaps( visible_lights, renderables, visible_renderables );
+	if(this.allow_shadowmaps)
+		this.updateShadowmaps( visible_lights, renderables, visible_renderables );
 
 	//prepare camera stuff
 	this.enableCamera( camera );
-	this._uniforms.u_res[0] = gl.viewport_data[2];
-	this._uniforms.u_res[1] = gl.viewport_data[3];
-	this._uniforms.u_res[2] = 1 / gl.viewport_data[2];
-	this._uniforms.u_res[3] = 1 / gl.viewport_data[3];
+	this._uniforms.u_res[0] = target_fbo ? target_fbo.width : gl.viewport_data[2];
+	this._uniforms.u_res[1] = target_fbo ? target_fbo.height : gl.viewport_data[3];
+	this._uniforms.u_res[2] = 1 / this._uniforms.u_res[0];
+	this._uniforms.u_res[3] = 1 / this._uniforms.u_res[1];
 	this._uniforms.u_point_size = this.point_size;
 
 	if( pipeline )
-		pipeline.render( this, visible_renderables, visible_lights, camera, scene, skip_fbo );
+		pipeline.render( this, visible_renderables, visible_lights, camera, scene, target_fbo );
 	else
 	{
 		//group by instancing
 		if( this.allow_instancing && this.supports_instancing )
 			visible_renderables = this.groupRenderablesForInstancing(visible_renderables);
-		
-		//render skybox
-		if(this.skybox_texture)
-			this.renderSkybox(camera, this.skybox_texture);
 
-		//rendering
-		for (var i = 0; i < visible_renderables.length; ++i)
+		if(target_fbo)
 		{
-			var rc = visible_renderables[i];
-			rc.node.flags.was_rendered = true;
-			this.renderRenderable( rc, visible_lights );
+			target_fbo.bind();
+			gl.clearColor( this._bg_color[0], this._bg_color[1], this._bg_color[2], this._bg_color[3] );
+			gl.clear( GL.DEPTH_BUFFER_BIT | GL.COLOR_BUFFER_BIT );
 		}
+
+		this.renderForward(camera, visible_renderables, visible_lights);
+
+		if(target_fbo)
+			target_fbo.unbind();
+	}
+
+	scene.frame++;
+	this.frame++;
+	this._current_scene = null;
+}
+
+Renderer.prototype.renderView = function( view )
+{
+	//TODO
+}
+
+Renderer.prototype.renderForward = function(camera, visible_renderables, visible_lights)
+{
+	//render skybox
+	if(this.skybox_texture)
+		this.renderSkybox(camera, this.skybox_texture);
+
+	//rendering
+	for (var i = 0; i < visible_renderables.length; ++i)
+	{
+		var rc = visible_renderables[i];
+		rc.node.flags.was_rendered = true;
+		this.renderRenderable( rc, visible_lights );
 	}
 
 	//outline
@@ -3982,10 +4056,6 @@ Renderer.prototype.render = function( scene, camera, nodes, layers, pipeline, sk
 
 	if(this.onPostRender)
 		this.onPostRender( camera );
-	
-	scene.frame++;
-	this.frame++;
-	this._current_scene = null;
 }
 
 Renderer.prototype.renderRenderable = function( rc, lights )
@@ -4008,7 +4078,7 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 
 	//assign all light info for this renderable
 	var has_shadows = false;
-	if( lights.length && !this.rendering_only_depth )
+	if( lights.length && !this.rendering_only_depth && this.view_mode === RD.VIEWMODES.DEFAULT)
 	{	
 		var num = this._lights_uniforms.u_num_lights = Math.min( lights.length, 4 );
 		for(var i = 0; i < num; ++i)
@@ -4018,16 +4088,14 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 			this._lights_uniforms.u_light_color[i*4+1] = light.color[1] * light.intensity;
 			this._lights_uniforms.u_light_color[i*4+2] = light.color[2] * light.intensity;
 			this._lights_uniforms.u_light_color[i*4 + 3] = light.light_type;
-			if(light.light_type !== RD.DIRECTIONAL_LIGHT)
-			{
-				this._lights_uniforms.u_light_position.set(light._center,i*4);
-				this._lights_uniforms.u_light_position[i*4 + 3] = light.max_distance;
-			}
+			this._lights_uniforms.u_light_position.set(light._center,i*4);
+			this._lights_uniforms.u_light_position[i*4 + 3] = light.max_distance;
 			this._lights_uniforms.u_light_front.set(light._front,i*4);
 			this._lights_uniforms.u_light_params[i*4] = Math.cos( light.cone_start * DEG2RAD * 0.5 );
 			this._lights_uniforms.u_light_params[i*4+1] = Math.cos( light.cone_end * DEG2RAD  * 0.5);
 			this._lights_uniforms.u_light_params[i*4+2] = light._shadowmap_index;
-			if(light._shadowmap_index !== -1)
+			this._lights_uniforms.u_light_params[i*4+3] = light.shadow_bias;
+			if(light._shadowmap_index !== -1 && this.allow_shadowmaps)
 			{
 				var info = this.shadows_info.shadows[ light._shadowmap_index ];
 				this.shadows_info.uniforms.u_shadowmap_rect.set( info.rect, i*4 );
@@ -4036,6 +4104,11 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 			}
 		}
 	}	
+
+	//check if shader supports instancing
+	var instancing = false;
+	if( rc.instances && this.supports_instancing && rc.instances.length )
+		instancing = true;
 
 	//get shader
 	var shader = null;
@@ -4063,7 +4136,7 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 				shader_hash |= SHADER_MACROS.SKINNING;
 			if( rc.morphs )
 				shader_hash |= SHADER_MACROS.MORPHTARGETS;
-			if( rc.instances && this.supports_instancing)
+			if( instancing )
 				shader_hash |= SHADER_MACROS.INSTANCING;
 
 			if( !this.rendering_only_depth )
@@ -4103,12 +4176,14 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 						shader_hash |= SHADER_MACROS.UV_TRANSFORM;
 					if( material.model === "unlit" )
 						shader_hash |= SHADER_MACROS.UNLIT;
-					if( lights.length )
+					if( lights.length && this.view_mode === RD.VIEWMODES.DEFAULT)
 					{
 						shader_hash |= SHADER_MACROS.LIGHTS;
 						if( has_shadows )
 							shader_hash |= SHADER_MACROS.SHADOWS;
 					}
+					if(this.view_mode === RD.VIEWMODES.NORMAL)
+						shader_hash |= SHADER_MACROS.VIEWNORMAL;
 				}
 
 			}
@@ -4117,15 +4192,18 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 		}
 	}
 
-	//check if shader supports instancing
-	var instancing = false;
-	if( rc.instances && this.supports_instancing )
-		instancing = true;	
 	if( instancing && !shader.attributes.u_model )
-		instancing = false;
+		instancing = false;	
 
 	//prepare textures
 	var slot = 0;
+	if(has_shadows)
+	{
+		this.shadows_info.texture.setParameter( gl.TEXTURE_MAG_FILTER, gl.NEAREST );
+		this.shadows_info.texture.setParameter( gl.TEXTURE_MIN_FILTER, gl.NEAREST );
+		this.shadows_info.uniforms.u_shadowmap = this.shadows_info.texture.bind(slot++);
+	}
+
 	var texture = null;
 	for(var i in material.textures)
 	{
@@ -4198,17 +4276,12 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 	shader.uniforms( material.uniforms ); //customs
 	if( this.onNodeShaderUniforms )
 		this.onNodeShaderUniforms( this, shader, node );
-	if(shader.hasUniform("u_bayer_texture"))
-		shader.uniforms({u_bayer_texture:this._bayer_texture.bind(slot++)});
+	//if(shader.hasUniform("u_bayer_texture"))
+	//	shader.uniforms({u_bayer_texture:this._bayer_texture.bind(slot++)});
 	if(rc.morphs)
 		shader.uniforms({u_morph_texture:rc.morphs.bind(slot++)});
 	if(has_shadows)
-	{
-		this.shadows_info.texture.setParameter( gl.TEXTURE_MAG_FILTER, gl.NEAREST );
-		this.shadows_info.texture.setParameter( gl.TEXTURE_MIN_FILTER, gl.NEAREST );
-		this.shadows_info.uniforms.u_shadowmap = this.shadows_info.texture.bind(slot++);
 		shader.uniforms(this.shadows_info.uniforms);
-	}
 
 	//draw calls
 	var group = null;
@@ -4258,14 +4331,17 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 
 //you can modify this ones to tune your shader
 Renderer.shader_snippets = {
+	header:``,
 	testShadowmap: `
-	uniform vec4 u_shadowmap_rect[4];
-	uniform mat4 u_shadowmap_vps[4];
+	#ifndef MAX_SHADOWMAPS
+		#define MAX_SHADOWMAPS 4
+	#endif
+	uniform vec4 u_shadowmap_rect[ MAX_SHADOWMAPS ];
+	uniform mat4 u_shadowmap_vps[ MAX_SHADOWMAPS ];
 	uniform sampler2D u_shadowmap;
 
-	float testShadowmap( vec3 pos, vec4 rect, mat4 vp )
+	float testShadowmap( vec3 pos, vec4 rect, mat4 vp, float bias )
 	{
-		const float bias = 0.004;
 		vec4 proj = vp * vec4(pos, 1.0);
 		vec2 shadowSample = (proj.xy / proj.w) * vec2(0.5) + vec2(0.5);
 		if(shadowSample.x >= 0.0 && shadowSample.x <= 1.0 && shadowSample.y >= 0.0 && shadowSample.y <= 1.0 )
@@ -4274,13 +4350,41 @@ Renderer.shader_snippets = {
 			#ifdef WEBGL1
 			float depth = texture2D( u_shadowmap, shadowSample).x;
 			#else
-			float depth = texture( u_shadowmap, shadowSample).x;
+			float depth = texture( u_shadowmap, shadowSample, 0.0).x;
 			#endif
 			if( depth > 0.0 && depth < 1.0 && depth <= ( ((proj.z-bias) / proj.w) * 0.5 + 0.5) )
 				return 0.0;
 		}
 		return 1.0;
 	}
+
+	vec2 encodeOctahedral(vec3 dir) {
+		dir /= (abs(dir.x) + abs(dir.y) + abs(dir.z));
+		vec2 uv = dir.xy;
+		if (dir.z < 0.0) {
+			uv = (1.0 - abs(uv.yx)) * sign(uv.xy);
+		}
+		return uv * 0.5 + 0.5;
+	}
+
+	float testShadowmapPointLight( vec3 pos, vec3 lightpos, vec4 rect, vec2 planes, float bias )
+	{
+		vec3 L = pos - lightpos;
+		float dist = length(L);
+		L /= dist;
+		float real_depth = (dist - planes.x) / (planes.y - planes.x);
+		vec2 shadowSample = encodeOctahedral(L);
+		shadowSample = remap( shadowSample, vec2(0.0), vec2(1.0), rect.xy, rect.zw );
+		#ifdef WEBGL1
+		float depth = texture2D( u_shadowmap, shadowSample).x;
+		#else
+		float depth = texture( u_shadowmap, shadowSample, 0.0).x;
+		#endif
+		if( depth > 0.0 && depth < 1.0 && depth <= real_depth )
+			return 0.0;
+		return 1.0;
+	}
+
 	`,
 	fog_code: `
 		//float normalized_depth = linearize_depth(gl_FragCoord.z);//(gl_FragCoord.z * gl_FragCoord.w);
@@ -4438,15 +4542,26 @@ Renderer.getMasterFragmentShader = function(){ return `#version 300 es
 		uniform vec4 u_light_params[4]; //cos cone start, cos cone end, shadowmap index, ?
 	#endif
 
+	${Renderer.shader_snippets.header}	
+
 	#ifdef SHADOWS
 	${Renderer.shader_snippets.testShadowmap}
 	#endif
 
-	uniform sampler2D u_bayer_texture;
+	const int bayer[64] = int[64]( 0, 48, 12, 60, 3, 51, 15, 63,
+			32, 16, 44, 28, 35, 19, 47, 31,
+			8,  56, 4,  52, 11, 59, 7,  55,
+			40, 24, 36, 20, 43, 27, 39, 23,
+			2,  50, 14, 62, 1,  49, 13, 61,
+			34, 18, 46, 30, 33, 17, 45, 29,
+			10, 58, 6,  54, 9,  57, 5,  53,
+			42, 26, 38, 22, 41, 25, 37, 21 );
+	//uniform sampler2D u_bayer_texture;
 	float bayer8x8() {
 		int x = int(mod(gl_FragCoord.x, 8.0));
 		int y = int(mod(gl_FragCoord.y, 8.0));
-		return texture( u_bayer_texture, vec2(float(x)/8.0,float(y)/8.0)).x * 4.0;
+		//return texture( u_bayer_texture, vec2(float(x)/8.0,float(y)/8.0)).x * 4.0;
+		return float(bayer[y*8+x]) / 63.0;
 	}
 
 	uniform vec4 u_res;
@@ -4468,6 +4583,10 @@ Renderer.getMasterFragmentShader = function(){ return `#version 300 es
 		#ifdef FLAT_COLOR
 			FragColor = color;
 			return;
+		#endif
+
+		#ifdef TRUE_DEPTH
+			gl_FragDepth = length( v_pos - u_camera_position ) / u_camera_planes.y;
 		#endif
 
 		#ifndef COORD1
@@ -4547,9 +4666,13 @@ Renderer.getMasterFragmentShader = function(){ return `#version 300 es
 			${Renderer.shader_snippets.modify_attenuation}
 
 			#ifdef SHADOWS
-				if ( u_light_params[i].z != -1.0 && (NdotL*att) > 0.0) //has shadowmap
+				if ( u_light_params[i].z != -1.0 && (NdotL*att) > 0.0) //has shadowmap and is in the good side of the light
 				{
-					att *= testShadowmap( v_pos, u_shadowmap_rect[ i ], u_shadowmap_vps[ i ] );
+					float normalBias = u_light_params[i].w + 0.001 * (1.0 - dot(N, L));
+					if( light_type == 2 )
+						att *= testShadowmapPointLight( v_pos, u_light_position[i].xyz, u_shadowmap_rect[ i ], vec2(u_light_position[i].w*0.001, u_light_position[i].w), normalBias );
+					else
+						att *= testShadowmap( v_pos, u_shadowmap_rect[ i ], u_shadowmap_vps[ i ], normalBias );
 				}
 			#endif
 
@@ -4574,6 +4697,10 @@ Renderer.getMasterFragmentShader = function(){ return `#version 300 es
 		#endif
 
 		${Renderer.shader_snippets.modify_color}
+
+		#ifdef VIEWNORMAL
+			color = vec4(N * 0.5 + vec3(0.5),1.0);
+		#endif
 
 		FragColor = color;
 		#ifdef SECOND_BUFFER
@@ -4761,9 +4888,10 @@ Renderer.prototype.updateShadowmaps = function( lights, renderables, main_camera
 	var SHADOWMAP_ATLAS_SIZE = 2048;
 
 	lights.forEach(l=>l._shadowmap_index = -1);
-	var casting_lights = lights.filter(l=>l.cast_shadows && l.light_type !== RD.POINT_LIGHT);
+	var casting_lights = lights.filter(l=>l.cast_shadows);// && l.light_type !== RD.POINT_LIGHT);
 	if(casting_lights.length == 0)
 		return;
+	var max_shadowmaps = this.shadowmaps_grid_size * this.shadowmaps_grid_size;
 
 	///prepare shadowmap texture
 	if(!this.shadows_info)
@@ -4775,53 +4903,81 @@ Renderer.prototype.updateShadowmaps = function( lights, renderables, main_camera
 			fbo: new GL.FBO(null,texture),
 			uniforms: {
 				u_shadowmap: 0,
-				u_shadowmap_rect: new Float32Array(4*4),
-				u_shadowmap_vps: new Float32Array(16*4),
+				u_shadowmap_rect: new Float32Array(4*max_shadowmaps),
+				u_shadowmap_vps: new Float32Array(16*max_shadowmaps),
 			},
 			shadows: []
 		}
 	}
 
-	this.shadows_info.fbo.bind();
-	gl.clear( gl.DEPTH_BUFFER_BIT ); //| gl.COLOR_BUFFER_BIT
-
-	var shadow_size = SHADOWMAP_ATLAS_SIZE / 2;
+	var shadow_size = SHADOWMAP_ATLAS_SIZE / this.shadowmaps_grid_size;
 	if(!this.shadow_camera)
 		this.shadow_camera = new Camera();
 	var camera = this.shadow_camera;
 	this.rendering_only_depth = true;
+	
+	var target = vec3.create();
+
+	for(var i = 0; i < casting_lights.length; ++i)
+	{
+		var light = casting_lights[i];
+		if(light.light_type !== RD.POINT_LIGHT)
+			continue;
+		var facesize = shadow_size/2;
+
+		if(!this.shadows_info.point_texture)
+		{
+			var ptex = new GL.Texture( facesize, facesize * 6, { format: gl.DEPTH_COMPONENT, type: gl.UNSIGNED_INT, filter: gl.NEAREST });
+			this.shadows_info.point_texture = ptex;
+			this.shadows_info.point_fbo = new GL.FBO(null,ptex);
+		}
+
+		if(!gl.shaders["cubeToOcto"])
+			gl.shaders["cubeToOcto"] = new GL.Shader(GL.Shader.SCREEN_300_VERTEX_SHADER, Renderer.cubeToOctoFragment);
+
+		this.shadows_info.point_fbo.bind();
+		camera.perspective(90, 1, 0.1, light.max_distance );
+		gl.clear( gl.DEPTH_BUFFER_BIT );
+		for(var j = 0; j < 6; ++j)
+		{
+			gl.viewport(0,j*facesize,facesize,facesize);
+			var params = GL.Texture.cubemap_camera_parameters[j];
+			var eye = light._center;
+			vec3.add( target, eye, params.dir);
+			camera.lookAt( eye, target, params.up );
+			this.enableCamera( camera );
+
+			//render content
+			var visible_renderables = renderables.filter(rc=>rc.instances || rc.skin || (!(rc.flags & RENDERABLE_NO_SHADOWS) && camera.testMesh( rc.mesh, rc.model) !== RD.CLIP_OUTSIDE) );
+			visible_renderables = this.groupRenderablesForInstancing(visible_renderables); //grouped
+			for(var k = 0; k < visible_renderables.length; ++k)
+			{
+				var rc = visible_renderables[k];
+				this.renderRenderable( rc, [] );
+			}
+		}
+		this.shadows_info.point_fbo.unbind();
+		this.shadows_info.point_light = light;
+
+		break; //max one point light
+	}
+
+
+	//shadow atlas 
+	this.shadows_info.fbo.bind();
+	gl.clear( gl.DEPTH_BUFFER_BIT );
 
 	for(var i = 0; i < casting_lights.length; ++i)
 	{
 		var light = casting_lights[i];
 
 		//assign area
-		var x = (i%2) * shadow_size;
-		var y = Math.floor(i/2)*shadow_size;
+		var x = (i%this.shadowmaps_grid_size) * shadow_size;
+		var y = Math.floor(i/this.shadowmaps_grid_size)*shadow_size;
 		gl.viewport(x,y,shadow_size,shadow_size);
-
-		//prepare camera
-		if(light.light_type === RD.SPOT_LIGHT)
-			camera.perspective(light.cone_end, 1, 0.1, light.max_distance);
-		else
-			camera.orthographic(light.area, 0.1, light.max_distance, 1);
-		camera.lookAt( light.getGlobalPosition(), light.localToGlobal([0,0,-1]), [0,1,0]);
-
-		this.enableCamera( camera );
-		gl.enable(gl.DEPTH_TEST);
-		
-		//render content
-		var visible_renderables = renderables.filter(rc=>rc.instances || rc.skin || camera.testMesh( rc.mesh, rc.model) !== RD.CLIP_OUTSIDE);
-		visible_renderables = this.groupRenderablesForInstancing(visible_renderables); //grouped
-		for(var j = 0; j < visible_renderables.length; ++j)
-		{
-			var rc = visible_renderables[j];
-			this.renderRenderable( rc, [] );
-		}
 
 		//copy info
 		light._shadowmap_index = i;
-
 		var info = this.shadows_info.shadows[i];
 		if(!info)
 			info = this.shadows_info.shadows[i] = {
@@ -4829,6 +4985,35 @@ Renderer.prototype.updateShadowmaps = function( lights, renderables, main_camera
 				vp: mat4.create()
 			};
 		info.rect.set([x/SHADOWMAP_ATLAS_SIZE,y/SHADOWMAP_ATLAS_SIZE,(x+shadow_size)/SHADOWMAP_ATLAS_SIZE,(y+shadow_size)/SHADOWMAP_ATLAS_SIZE]);
+
+		if(light.light_type === RD.POINT_LIGHT && light === this.shadows_info.point_light)
+		{
+			//convert from six sides to octo
+			this.shadows_info.point_texture.toViewport( gl.shaders["cubeToOcto"], {
+				u_camera_planes: [light.max_distance * 0.001, light.max_distance]
+			});
+			this.stats.updated_shadowmaps++;
+			continue;
+		}
+
+		//prepare camera
+		if(light.light_type === RD.SPOT_LIGHT)
+			camera.perspective(light.cone_end, 1, 0.1, light.max_distance);
+		else
+			camera.orthographic(light.area, light.max_distance * 0.001, light.max_distance, 1);
+		camera.lookAt( light.getGlobalPosition(), light.localToGlobal([0,0,-1]), [0,1,0]);
+
+		this.enableCamera( camera );
+		
+		//render content
+		var visible_renderables = renderables.filter(rc=>rc.instances || rc.skin || (!(rc.flags & RENDERABLE_NO_SHADOWS) && camera.testMesh( rc.mesh, rc.model) !== RD.CLIP_OUTSIDE) );
+		visible_renderables = this.groupRenderablesForInstancing(visible_renderables); //grouped
+		for(var j = 0; j < visible_renderables.length; ++j)
+		{
+			var rc = visible_renderables[j];
+			this.renderRenderable( rc, [] );
+		}
+
 		info.vp.set(camera._viewprojection_matrix);
 		this.stats.updated_shadowmaps++;
 	}
@@ -4839,6 +5024,97 @@ Renderer.prototype.updateShadowmaps = function( lights, renderables, main_camera
 	this.shadows_info.texture.setParameter( gl.TEXTURE_MAG_FILTER, gl.LINEAR );
 	this.rendering_only_depth = false;
 }
+
+Renderer.cubeToOctoFragment = `#version 300 es
+precision highp float;
+out vec4 FragColor;
+
+in vec2 v_coord;
+uniform sampler2D u_texture;
+uniform vec2 u_camera_planes;
+
+vec3 decodeOctahedral(vec2 uv) {
+    uv = uv * 2.0 - 1.0;
+    vec3 dir = vec3(uv.x, uv.y, 1.0 - abs(uv.x) - abs(uv.y));
+    if (dir.z < 0.0) {
+        dir.xy = (1.0 - abs(dir.yx)) * sign(dir.xy);
+    }
+    return normalize(dir);
+}
+
+vec2 cubemapUVFromDirection(vec3 dir) {
+    vec3 absDir = abs(dir);
+    float ma;  // major axis
+    int face;
+    vec2 uv;
+
+    if (absDir.x >= absDir.y && absDir.x >= absDir.z) {
+        ma = absDir.x;
+        if (dir.x > 0.0) {
+            face = 0; // +X
+            uv = vec2(-dir.z, -dir.y);
+        } else {
+            face = 1; // -X
+            uv = vec2(dir.z, -dir.y);
+        }
+    } else if (absDir.y >= absDir.x && absDir.y >= absDir.z) {
+        ma = absDir.y;
+        if (dir.y > 0.0) {
+            face = 2; // +Y
+            uv = vec2(dir.x, dir.z);
+        } else {
+            face = 3; // -Y
+            uv = vec2(dir.x, -dir.z);
+        }
+    } else {
+        ma = absDir.z;
+        if (dir.z > 0.0) {
+            face = 4; // +Z
+            uv = vec2(dir.x, -dir.y);
+        } else {
+            face = 5; // -Z
+            uv = vec2(-dir.x, -dir.y);
+        }
+    }
+
+    uv = (-uv / ma + 1.0) * 0.5;
+    float vOffset = float(face) / 6.0;
+    float faceHeight = 1.0 / 6.0;
+    return vec2(uv.x, uv.y * faceHeight + vOffset);
+}
+
+float linearize_depth(float d,float zNear,float zFar)
+{
+    float z_n = 2.0 * d - 1.0;
+    return 2.0 * zNear * zFar / (zFar + zNear - z_n * (zFar - zNear));
+}
+
+float linearize_depth_01(float d, float zNear, float zFar)
+{
+    float z = linearize_depth(d, zNear, zFar);
+    return (z - zNear) / (zFar - zNear); // Map to [0, 1]
+}
+
+void main()
+{
+	FragColor = vec4(1.0);
+
+	//find the unit vector from octaedral warping
+	vec3 dir = decodeOctahedral(v_coord);
+
+	//convert from 3D vector to 2D of 6 faces stacked cubemap
+	vec2 uv_cube6 = cubemapUVFromDirection(dir);
+
+	//read depth
+	float depth = texture( u_texture, uv_cube6 ).x;
+
+	//linearize
+	float lz = linearize_depth_01( depth, u_camera_planes.x, u_camera_planes.y );
+
+	//store
+	gl_FragDepth = lz;
+}
+`;
 
 //used to render skybox, boundings, ...
 Renderer.prototype.renderMesh = function( model, mesh, texture, color, shader, mode, index_buffer_name, group_index )
@@ -4897,12 +5173,15 @@ Renderer.prototype.getAllRenderables = function( nodes, layers, camera )
 	//sort by alpha and distance
 	if(this.onFilterRenderables)
 		this.onFilterRenderables( rcs );
+
 	if(camera)
 	{
 		for(var i = 0; i < rcs.length; ++i)
 			rcs[i].computeRenderPriority( camera._position );
 		rcs = rcs.sort( (a,b)=>b._render_priority - a._render_priority );
 	}
+
+	this.stats.num_renderables = rcs.length;
 	return rcs;
 }
 
@@ -4910,6 +5189,8 @@ Renderer.prototype.resetStats = function()
 {
 	this.stats.draw_calls = 0;
 	this.stats.updated_shadowmaps = 0;
+	this.stats.num_renderables = 0;
+	this.stats.num_visible_renderables = 0;
 }
 
 Renderer.prototype.resetRenderablesPool = function()
@@ -5015,8 +5296,12 @@ Renderer.prototype.getNodeRenderables = function( node, camera )
 			rc.draw_range = null;
 			rc._render_priority = material.render_priority || 0;
 			rc.instances = node._instances;
-			rc.flags = (rc.instances || skinning || morphs) ? RENDERABLE_IGNORE_BOUNDING : 0;
-			rc.reverse_faces = node.flags.frontFace == GL.CW;
+			rc.flags = 0;
+			if(rc.instances || skinning || morphs)
+				rc.flags |= RENDERABLE_IGNORE_BOUNDING;
+			if(node.flags.cast_shadows === false)
+				rc.flags |= RENDERABLE_NO_SHADOWS;
+			rc.reverse_faces = material.flags.flip_normals;
 			rc.skin = skinning;
 			rc.index_buffer_name = "triangles";
 			rc.primitive = prim.mode != null ? prim.mode : material.primitive;
@@ -5052,11 +5337,13 @@ Renderer.prototype.getNodeRenderables = function( node, camera )
 			rc.draw_range = node.draw_range;
 			rc.primitive = node.primitive != null ? node.primitive : material.primitive;
 			rc._render_priority = material.render_priority || 0;
-			rc.reverse_faces = node.flags.frontFace == GL.CW;
+			rc.reverse_faces = material.flags.flip_normals;
 			rc.bounding.set( aabb );
 			rc.index_buffer_name = node.indices_name || "triangles";
 			rc.morphs = morphs;
 			rc.flags = (rc.instances || skinning || morphs) ? RENDERABLE_IGNORE_BOUNDING : 0;
+			if(node.flags.cast_shadows === false)
+				rc.flags |= RENDERABLE_NO_SHADOWS;
 			this.renderables.push( rc );
 
 			if(node.flags.outline)
@@ -5211,7 +5498,7 @@ Renderer.prototype.enableItemFlags = function(item)
 
 Renderer.prototype.disableItemFlags = function(item)
 {
-	if( item.flags.flip_normals ) gl.frontFace( gl.CCW );
+	if( item.flags.flip_normals || this.reverse_normals ) gl.frontFace( gl.CCW );
 	if( item.flags.depth_test === false ) gl.enable( gl.DEPTH_TEST );
 	if( item.blend_mode !== RD.BLEND_NONE ) gl.disable( gl.BLEND );
 	if( item.flags.two_sided ) gl.disable( gl.CULL_FACE );
@@ -6409,7 +6696,7 @@ class Renderable {
 	group_index = -1;
 	draw_range = null;
 	material = null;
-	reverse_faces = false;
+	reverse_faces = false; //never used
 	primitive = -1;
 	skin = null; //could be RD.Skeleton or { bindMatrices:[], joints:[], skeleton_root }
 	morphs = null; //should be [{morph,weight}]
@@ -6654,8 +6941,6 @@ RD.parseTextConfig = function(text)
 	return root;
 }
 
-
-var RENDERABLE_IGNORE_BOUNDING = 1;
 
 //****************************
 

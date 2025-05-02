@@ -137,10 +137,11 @@ PBRPipeline.maps_sampler = [];
 for( var i = 0; i <  PBRPipeline.maps.length; ++i )
 	PBRPipeline.maps_sampler[i] = "u_" + PBRPipeline.maps[i] + "_texture";
 
-PBRPipeline.prototype.render = function( renderer, renderables, lights, camera, scene, skip_fbo, layers )
+PBRPipeline.prototype.render = function( renderer, renderables, lights, camera, scene, target_fbo, layers )
 {
 	this.renderer = renderer;
 	this.current_camera = camera;
+	var skip_fbo = false;
 
 	//render
 	if(this.mode == PBRPipeline.FORWARD)

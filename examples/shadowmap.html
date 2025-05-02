@@ -42,6 +42,10 @@
 		floor.createMaterial({color:[0.5,0.5,0.5]});
 		pivot.addChild(floor);
 
+		var ceiling = new RD.SceneNode({ mesh: "planeXZ", position: [0,200,0], scale: 1000, material: {color:[0.5,0.5,0.5]}});
+		ceiling.rotate(180*DEG2RAD,[1,0,0]);
+		//pivot.addChild(ceiling);
+
 		//create the human
 		var man = new RD.SceneNode();
 		man.createMaterial();
@@ -71,9 +75,14 @@
 		var light3 = new RD.Light();
 		light3.light_type = RD.POINT_LIGHT;
 		light3.color = [1,1,0];
-		light3.max_distance = 100;
+		light3.intensity = 1;
+		light3.max_distance = 500;
+		light3.cast_shadows = false;
 		light3.position = [50,20,0];
 		scene.root.addChild(light3);
+
+		var sphere = new RD.SceneNode({mesh:"sphere",flags:{ cast_shadows: false }, material:{emissive:light3.color}});
+		light3.addChild(sphere);
 
 		//global settings
 		var bg_color = vec4.fromValues(0.0,0.0,0.0,1);
@@ -98,6 +107,8 @@
 
 			gl.viewport(0,0,gl.canvas.width,gl.canvas.height);
 
+			light3.position = [0,Math.sin(now*0.001) * 30 + 100, 50];
+
 			//render final pass
 			renderer.clear(bg_color);
 			renderer.render(scene, camera);
@@ -120,7 +131,10 @@
 		renderer.context.onmousemove = function(e)
 		{
 			if(e.dragging)
+			{
 				camera.orbit( e.deltax * 0.01, RD.UP );
+				camera.orbit( e.deltay * 0.01, RD.RIGHT, null, true );
+			}
 		}
 	}
 
