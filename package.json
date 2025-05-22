@@ -8,6 +8,7 @@
     "example": "examples"
   },
   "scripts": {
+    "build" : "cd utils;./build.sh",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {

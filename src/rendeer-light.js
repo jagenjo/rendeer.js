@@ -1,4 +1,4 @@
-/* This is an example of how a light could be coded */
+/* lights are now integrated in rendeer.js */
 (function(global){
 
 

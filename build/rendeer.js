@@ -572,10 +572,12 @@ class SceneNode {
 				case "mesh":
 				case "ref":
 				case "draw_range":
+				case "indices_name":
 				case "submesh":
 				case "skin":
 				case "extra":
 				case "extras":
+				case "primitive":
 				case "animation":
 					this[i] = o[i];
 					continue;
@@ -3775,7 +3777,8 @@ class Renderer {
 		this.allow_shadowmaps = true;
 		this.force_update_bones = true; //set to false if you want to handle it manually
 		this.point_size = 1;
-		this.shadowmaps_grid_size = 2; //allows 2x2 shadowmaps
+		this.shadowmaps_grid_size = [2,2]; //allows 4x2 shadowmaps
+		this.shadowmaps_atlas_size = [2048,2048]
 
 		this.reverse_normals = false; //used for reflections or shadowmaps
 		this.disable_cull_face = false;
@@ -4152,7 +4155,7 @@ Renderer.prototype.renderRenderable = function( rc, lights )
 				if(this.use_secondary_buffer)
 					shader_hash |= SHADER_MACROS.SECOND_BUFFER;
 
-				if(this.rendering_flat)
+				if(this.rendering_flat || material.unlit )
 					shader_hash |= SHADER_MACROS.FLAT_COLOR;
 				else
 				{
@@ -4541,7 +4544,7 @@ Renderer.getMasterFragmentShader = function(){ return `#version 300 es
 		uniform vec4 u_light_color[4]; //color, type
 		uniform vec4 u_light_position[4]; //pos or vector, max_dist
 		uniform vec4 u_light_front[4]; //front, 
-		uniform vec4 u_light_params[4]; //cos cone start, cos cone end, shadowmap index, ?
+		uniform vec4 u_light_params[4]; //cos cone start, cos cone end, shadowmap index, num_cascades?
 	#endif
 
 	${Renderer.shader_snippets.header}	
@@ -4887,18 +4890,18 @@ Renderer.prototype.setGlobalUniforms = function( uniforms )
 
 Renderer.prototype.updateShadowmaps = function( lights, renderables, main_camera_renderables )
 {
-	var SHADOWMAP_ATLAS_SIZE = 2048;
+	var atlas_size = this.shadowmaps_atlas_size;
 
 	lights.forEach(l=>l._shadowmap_index = -1);
 	var casting_lights = lights.filter(l=>l.cast_shadows);// && l.light_type !== RD.POINT_LIGHT);
 	if(casting_lights.length == 0)
 		return;
-	var max_shadowmaps = this.shadowmaps_grid_size * this.shadowmaps_grid_size;
+	var max_shadowmaps = this.shadowmaps_grid_size[0] * this.shadowmaps_grid_size[1];
 
 	///prepare shadowmap texture
 	if(!this.shadows_info)
 	{
-		var texture = new GL.Texture( SHADOWMAP_ATLAS_SIZE, SHADOWMAP_ATLAS_SIZE, { format: gl.DEPTH_COMPONENT, type: gl.UNSIGNED_INT, filter: gl.NEAREST });
+		var texture = new GL.Texture( atlas_size[0], atlas_size[1], { format: gl.DEPTH_COMPONENT, type: gl.UNSIGNED_INT, filter: gl.NEAREST });
 		this.shadows_info = {
 			num_shadows: 0,
 			texture,
@@ -4912,20 +4915,23 @@ Renderer.prototype.updateShadowmaps = function( lights, renderables, main_camera
 		}
 	}
 
-	var shadow_size = SHADOWMAP_ATLAS_SIZE / this.shadowmaps_grid_size;
+	var shadow_width = atlas_size[0] / this.shadowmaps_grid_size[0];
+	var shadow_height = atlas_size[1] / this.shadowmaps_grid_size[1];
 	if(!this.shadow_camera)
 		this.shadow_camera = new Camera();
 	var camera = this.shadow_camera;
 	this.rendering_only_depth = true;
+	var max_cascades = 0; //WIP
 	
 	var target = vec3.create();
 
+	//for point lights...
 	for(var i = 0; i < casting_lights.length; ++i)
 	{
 		var light = casting_lights[i];
 		if(light.light_type !== RD.POINT_LIGHT)
 			continue;
-		var facesize = shadow_size/2;
+		var facesize = shadow_width/2;
 
 		if(!this.shadows_info.point_texture)
 		{
@@ -4969,55 +4975,67 @@ Renderer.prototype.updateShadowmaps = function( lights, renderables, main_camera
 	this.shadows_info.fbo.bind();
 	gl.clear( gl.DEPTH_BUFFER_BIT );
 
+	//for directionals and spotlights
+	var light_index = 0;
 	for(var i = 0; i < casting_lights.length; ++i)
 	{
+		if(light_index >= max_shadowmaps)
+			break;
+
 		var light = casting_lights[i];
 
-		//assign area
-		var x = (i%this.shadowmaps_grid_size) * shadow_size;
-		var y = Math.floor(i/this.shadowmaps_grid_size)*shadow_size;
-		gl.viewport(x,y,shadow_size,shadow_size);
+		var num_cascades = light.light_type === RD.DIRECTIONAL_LIGHT ? max_cascades : 0;
 
-		//copy info
-		light._shadowmap_index = i;
-		var info = this.shadows_info.shadows[i];
-		if(!info)
-			info = this.shadows_info.shadows[i] = {
-				rect: vec4.create(),
-				vp: mat4.create()
-			};
-		info.rect.set([x/SHADOWMAP_ATLAS_SIZE,y/SHADOWMAP_ATLAS_SIZE,(x+shadow_size)/SHADOWMAP_ATLAS_SIZE,(y+shadow_size)/SHADOWMAP_ATLAS_SIZE]);
-
-		if(light.light_type === RD.POINT_LIGHT && light === this.shadows_info.point_light)
+		for(var iCascade = 0; iCascade <= num_cascades; ++iCascade)
 		{
-			//convert from six sides to octo
-			this.shadows_info.point_texture.toViewport( gl.shaders["cubeToOcto"], {
-				u_camera_planes: [light.max_distance * 0.001, light.max_distance]
-			});
+			camera.lookAt( light.getGlobalPosition(), light.localToGlobal([0,0,-1]), [0,1,0]);
+
+			//prepare camera
+			if(light.light_type === RD.SPOT_LIGHT)
+				camera.perspective(light.cone_end, 1, 0.1, light.max_distance);
+			else
+				camera.orthographic(light.area / (iCascade+1), light.max_distance * 0.001, light.max_distance, 1);
+
+			//assign area
+			var x = (light_index%this.shadowmaps_grid_size[0]) * shadow_width;
+			var y = Math.floor(light_index/this.shadowmaps_grid_size[0])*shadow_height;
+			gl.viewport(x,y,shadow_width,shadow_height);
+
+			//copy info
+			light._shadowmap_index = light_index;
+			var info = this.shadows_info.shadows[light_index];
+			if(!info)
+				info = this.shadows_info.shadows[light_index] = {
+					rect: vec4.create(),
+					vp: mat4.create()
+				};
+			info.rect.set([x/atlas_size[0],y/atlas_size[1],(x+shadow_width)/atlas_size[0],(y+shadow_height)/atlas_size[1]]);
+
+			if(light.light_type === RD.POINT_LIGHT && light === this.shadows_info.point_light)
+			{
+				//convert from six sides to octo
+				this.shadows_info.point_texture.toViewport( gl.shaders["cubeToOcto"], {
+					u_camera_planes: [light.max_distance * 0.001, light.max_distance]
+				});
+				this.stats.updated_shadowmaps++;
+				continue;
+			}
+
+			//render content
+			this.enableCamera( camera );
+			
+			var visible_renderables = renderables.filter(rc=>rc.instances || rc.skin || (!(rc.flags & RENDERABLE_NO_SHADOWS) && camera.testMesh( rc.mesh, rc.model) !== RD.CLIP_OUTSIDE) );
+			visible_renderables = this.groupRenderablesForInstancing(visible_renderables); //grouped
+			for(var j = 0; j < visible_renderables.length; ++j)
+			{
+				var rc = visible_renderables[j];
+				this.renderRenderable( rc, [] );
+			}
+
+			info.vp.set(camera._viewprojection_matrix);
 			this.stats.updated_shadowmaps++;
-			continue;
+			light_index++;
 		}
-
-		//prepare camera
-		if(light.light_type === RD.SPOT_LIGHT)
-			camera.perspective(light.cone_end, 1, 0.1, light.max_distance);
-		else
-			camera.orthographic(light.area, light.max_distance * 0.001, light.max_distance, 1);
-		camera.lookAt( light.getGlobalPosition(), light.localToGlobal([0,0,-1]), [0,1,0]);
-
-		this.enableCamera( camera );
-		
-		//render content
-		var visible_renderables = renderables.filter(rc=>rc.instances || rc.skin || (!(rc.flags & RENDERABLE_NO_SHADOWS) && camera.testMesh( rc.mesh, rc.model) !== RD.CLIP_OUTSIDE) );
-		visible_renderables = this.groupRenderablesForInstancing(visible_renderables); //grouped
-		for(var j = 0; j < visible_renderables.length; ++j)
-		{
-			var rc = visible_renderables[j];
-			this.renderRenderable( rc, [] );
-		}
-
-		info.vp.set(camera._viewprojection_matrix);
-		this.stats.updated_shadowmaps++;
 	}
 
 	this.shadows_info.num_shadows = casting_lights.length;
@@ -12839,7 +12857,7 @@ RD.PBRPipeline = PBRPipeline;
 
 
 })(this);
-/* This is an example of how a light could be coded */
+/* lights are now integrated in rendeer.js */
 (function(global){
 
 

@@ -25,7 +25,7 @@
 
 		//create camera
 		var camera = new RD.Camera();
-		camera.perspective( 45, gl.canvas.width / gl.canvas.height, 1, 1000 );
+		camera.perspective( 45, gl.canvas.width / gl.canvas.height, 1, 10000 );
 		camera.lookAt( [0,200,300],[0,100,0],[0,1,0] );
 
 		//create a root node
@@ -38,9 +38,25 @@
 		//create the floor
 		var floor = new RD.SceneNode();
 		floor.mesh = "planeXZ"; //this mesh comes by default
-		floor.scaling = 1000;
+		floor.scaling = 10000;
 		floor.createMaterial({color:[0.5,0.5,0.5]});
 		pivot.addChild(floor);
+
+		(new RD.Material()).register("gray")
+
+		var items = new RD.SceneNode({
+			mesh:"cube",
+			material:"gray"
+		});
+		items._instances = [];
+		for(let i = 0; i < 100; ++i)
+		{
+			var m = mat4.create();
+			mat4.translate(m,m,[Math.random()*5000-2500,50,Math.random()*5000-2500])
+			mat4.scale(m,m,[100,100,100]);
+			items._instances.push(m);
+		}
+		pivot.addChild(items);
 
 		var ceiling = new RD.SceneNode({ mesh: "planeXZ", position: [0,200,0], scale: 1000, material: {color:[0.5,0.5,0.5]}});
 		ceiling.rotate(180*DEG2RAD,[1,0,0]);
@@ -66,10 +82,10 @@
 		var light2 = new RD.Light();
 		light2.light_type = RD.DIRECTIONAL_LIGHT;
 		light2.color = [0.5,0.3,0.1];
-		light2.area = 100;
+		light2.area = 1000;
 		light2.cast_shadows = true;
-		light2.max_distance = 1000;
-		light2.lookAt([-50,500,0],[0,0,0],[0,1,0]);
+		light2.max_distance = 5000;
+		light2.lookAt([-500,1500,200],[0,0,0],[0,1,0]);
 		scene.root.addChild(light2);
 
 		var light3 = new RD.Light();
@@ -127,7 +143,7 @@
 		}
 
 		//input
-		renderer.context.captureMouse();
+		renderer.context.captureMouse(true);
 		renderer.context.onmousemove = function(e)
 		{
 			if(e.dragging)
@@ -135,6 +151,10 @@
 				camera.orbit( e.deltax * 0.01, RD.UP );
 				camera.orbit( e.deltay * 0.01, RD.RIGHT, null, true );
 			}
+		}
+		renderer.context.onmousewheel = function(e)
+		{
+			camera.orbitDistanceFactor( 1 + (100 / e.deltaY) * 0.1 )
 		}
 	}
 
